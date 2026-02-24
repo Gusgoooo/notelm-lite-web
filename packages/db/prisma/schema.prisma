@@ -1,0 +1,163 @@
+// Prisma schema for NotebookLM-lite (Postgres)
+// Matches db/schema.sql
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id
+  email     String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  notebooks Notebook[]
+}
+
+model Notebook {
+  id        String   @id
+  userId    String   @map("user_id")
+  title     String
+  createdAt BigInt   @map("created_at")
+  updatedAt BigInt   @map("updated_at")
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sources       Source[]
+  conversations Conversation[]
+  notes         Note[]
+}
+
+model Source {
+  id            String  @id
+  notebookId    String  @map("notebook_id")
+  type          String  // 'pdf' | 'web' | 'md'
+  title         String
+  originalUri   String? @map("original_uri")
+  originalName  String? @map("original_name")
+  storedUri     String? @map("stored_uri")
+  status        String  // 'pending' | 'processing' | 'ready' | 'failed'
+  errorMessage  String? @map("error_message")
+  contentHash   String  @map("content_hash")
+  parseMetaJson String? @map("parse_meta_json")
+  createdAt     BigInt  @map("created_at")
+  updatedAt     BigInt  @map("updated_at")
+
+  notebook        Notebook          @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+  sourceSegments  SourceSegment[]
+  chunks          Chunk[]
+}
+
+model SourceSegment {
+  id           String @id
+  sourceId     String @map("source_id")
+  segmentType  String @map("segment_type") // 'pdf_page' | 'web_para' | 'md_section'
+  segmentIndex Int    @map("segment_index")
+  anchor       String?
+  text         String
+  createdAt    BigInt @map("created_at")
+
+  source Source @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  chunks Chunk[]
+}
+
+model Chunk {
+  id          String  @id
+  sourceId    String  @map("source_id")
+  segmentId   String? @map("segment_id")
+  chunkIndex  Int     @map("chunk_index")
+  text        String
+  textHash    String  @map("text_hash")
+  charStart   Int?    @map("char_start")
+  charEnd     Int?    @map("char_end")
+  pageOrIndex Int?    @map("page_or_index")
+  anchor      String?
+  snippet     String?
+  tokenCount  Int?    @map("token_count")
+  createdAt   BigInt  @map("created_at")
+  updatedAt   BigInt  @map("updated_at")
+
+  source           Source             @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  segment          SourceSegment?     @relation(fields: [segmentId], references: [id], onDelete: SetNull)
+  chunkEmbedding   ChunkEmbedding?
+  messageCitations MessageCitation[]
+  noteCitations    NoteCitation[]
+}
+
+model ChunkEmbedding {
+  chunkId   String @id @map("chunk_id")
+  embedding Bytes
+  dim       Int
+  createdAt BigInt @map("created_at")
+
+  chunk Chunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+}
+
+model Conversation {
+  id         String  @id
+  notebookId String @map("notebook_id")
+  title     String?
+  createdAt BigInt  @map("created_at")
+  updatedAt BigInt  @map("updated_at")
+
+  notebook Notebook  @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+  messages Message[]
+}
+
+model Message {
+  id             String   @id
+  conversationId String  @map("conversation_id")
+  role          String   // 'system' | 'user' | 'assistant'
+  content       String
+  createdAt     BigInt   @map("created_at")
+
+  conversation     Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  messageCitations MessageCitation[]
+}
+
+model MessageCitation {
+  id           String  @id
+  messageId    String  @map("message_id")
+  citeKey      String  @map("cite_key")
+  chunkId      String  @map("chunk_id")
+  score        Float?
+  sourceId     String  @map("source_id")
+  pageOrIndex  Int?    @map("page_or_index")
+  anchor       String?
+  snippet      String?
+  createdAt    BigInt  @map("created_at")
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  chunk   Chunk   @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+}
+
+model Note {
+  id         String @id
+  notebookId String @map("notebook_id")
+  title      String
+  contentMd  String  @map("content_md")
+  type       String // 'manual' | 'artifact_summary' | etc.
+  createdAt  BigInt @map("created_at")
+  updatedAt  BigInt @map("updated_at")
+
+  notebook       Notebook        @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+  noteCitations  NoteCitation[]
+}
+
+model NoteCitation {
+  id          String @id
+  noteId      String @map("note_id")
+  citeKey     String @map("cite_key")
+  chunkId     String @map("chunk_id")
+  sourceId    String @map("source_id")
+  pageOrIndex Int?   @map("page_or_index")
+  anchor      String?
+  snippet     String?
+  createdAt   BigInt @map("created_at")
+
+  note Note  @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  chunk Chunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+}
