@@ -1,15 +1,32 @@
-import { neon } from "@neondatabase/serverless";
+import { Pool } from "pg";
 
-// Lazy singleton — avoids top-level throw during Next.js build-time module scan
-let _sql: ReturnType<typeof neon> | null = null;
+let _pool: Pool | null = null;
 
-export function sql(...args: Parameters<ReturnType<typeof neon>>) {
-  if (!_sql) {
+function getPool(): Pool {
+  if (!_pool) {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error("DATABASE_URL is not set");
-    _sql = neon(url);
+    _pool = new Pool({ connectionString: url, ssl: { rejectUnauthorized: false } });
   }
-  return _sql(...args);
+  return _pool;
+}
+
+/**
+ * Tagged-template SQL helper — mirrors the @neondatabase/serverless API.
+ * Usage: await sql`SELECT * FROM "User" WHERE id = ${id}`
+ */
+export async function sql(
+  strings: TemplateStringsArray,
+  ...values: unknown[]
+): Promise<Record<string, unknown>[]> {
+  let query = "";
+  strings.forEach((s, i) => {
+    query += s;
+    if (i < values.length) query += `$${i + 1}`;
+  });
+  const pool = getPool();
+  const result = await pool.query(query, values as unknown[]);
+  return result.rows;
 }
 
 export const DEV_USER_ID = process.env.DEV_USER_ID ?? "dev-user";

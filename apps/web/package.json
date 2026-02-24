@@ -11,7 +11,7 @@
     "next": "^15.0.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@neondatabase/serverless": "^0.10.4",
+    "pg": "^8.13.3",
     "uuid": "^11.1.0",
     "@vercel/blob": "^2.3.0",
     "pdfjs-dist": "^4.10.38"
@@ -20,6 +20,7 @@
     "@types/node": "^22.10.1",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.1",
+    "@types/pg": "^8.11.10",
     "@types/uuid": "^10.0.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
