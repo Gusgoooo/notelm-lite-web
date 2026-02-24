@@ -1,34 +1,12 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
+import { put as blobPut } from "@vercel/blob";
 
-const UPLOAD_DIR =
-  process.env.UPLOAD_DIR ?? path.join(process.cwd(), "uploads");
-const STORAGE_PROVIDER = (
-  process.env.STORAGE_PROVIDER ?? "local"
-).toLowerCase();
-
-export type StorageProvider = "local" | "blob";
-
-function resolveProvider(): StorageProvider {
-  if (STORAGE_PROVIDER === "blob") return "blob";
-  return "local";
-}
-
-const provider = resolveProvider();
-
+/**
+ * Upload a buffer to Vercel Blob and return the public URL.
+ * Requires BLOB_READ_WRITE_TOKEN env var.
+ */
 export async function put(pathname: string, buffer: Buffer): Promise<string> {
-  if (provider === "local") {
-    await fs.promises.mkdir(UPLOAD_DIR, { recursive: true });
-    const absolutePath = path.join(UPLOAD_DIR, pathname);
-    await fs.promises.writeFile(absolutePath, buffer);
-    return path.relative(process.cwd(), absolutePath);
-  }
-  if (provider === "blob") {
-    const { put: blobPut } = await import("@vercel/blob");
-    const blob = await blobPut(pathname, buffer, { access: "public" });
-    return blob.url;
-  }
-  throw new Error(`Unsupported STORAGE_PROVIDER: ${provider}`);
+  const blob = await blobPut(pathname, buffer, { access: "public" });
+  return blob.url;
 }
 
 export function isStoredUriUrl(uri: string): boolean {
@@ -36,14 +14,10 @@ export function isStoredUriUrl(uri: string): boolean {
 }
 
 export async function get(uri: string): Promise<Buffer> {
-  if (isStoredUriUrl(uri)) {
-    const res = await fetch(uri);
-    if (!res.ok) throw new Error(`Failed to fetch stored file: ${res.status}`);
-    const ab = await res.arrayBuffer();
-    return Buffer.from(ab);
+  if (!isStoredUriUrl(uri)) {
+    throw new Error("Only URL-based storage is supported");
   }
-  const absolutePath = path.isAbsolute(uri)
-    ? uri
-    : path.resolve(process.cwd(), uri);
-  return fs.promises.readFile(absolutePath);
+  const res = await fetch(uri);
+  if (!res.ok) throw new Error(`Failed to fetch stored file: ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
 }

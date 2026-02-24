@@ -1,7 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@notelm/db", "@notelm/core"],
+  webpack: (config) => {
+    // pdfjs-dist uses canvas optionally; ignore it in server builds
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      canvas: false,
+    };
+    return config;
+  },
 };
 
 export default nextConfig;

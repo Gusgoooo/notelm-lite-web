@@ -1,5 +1,3 @@
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-
 export const LLM_ERROR_CODES = {
   LLM_CONFIG: "LLM_CONFIG",
   LLM_NETWORK: "LLM_NETWORK",
@@ -20,16 +18,21 @@ export class LLMError extends Error {
 export async function generateCompletion(
   messages: Array<{ role: string; content: string }>
 ): Promise<string> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const baseUrl = (
+    process.env.LLM_BASE_URL ?? "https://api.openai.com/v1"
+  ).replace(/\/$/, "");
+  const apiKey = process.env.LLM_API_KEY;
+  const model = process.env.LLM_MODEL ?? "gpt-3.5-turbo";
+
   if (!apiKey) {
-    throw new LLMError("OPENROUTER_API_KEY is not set", "LLM_CONFIG");
+    throw new LLMError("LLM_API_KEY is not set", "LLM_CONFIG");
   }
 
-  const model = process.env.OPENROUTER_MODEL ?? "openai/gpt-3.5-turbo";
+  const url = `${baseUrl}/chat/completions`;
 
   let res: Response;
   try {
-    res = await fetch(OPENROUTER_URL, {
+    res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -39,42 +42,26 @@ export async function generateCompletion(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (
-      msg.includes("fetch") ||
-      msg.includes("ECONNREFUSED") ||
-      msg.includes("ETIMEDOUT")
-    ) {
-      throw new LLMError(`Network error: ${msg}`, "LLM_NETWORK");
-    }
-    throw new LLMError(`LLM unavailable: ${msg}`, "LLM_UNAVAILABLE");
+    throw new LLMError(`Network error: ${msg}`, "LLM_NETWORK");
   }
 
   const text = await res.text();
 
   if (res.status === 403 || res.status === 451) {
-    throw new LLMError(
-      `Region or access denied: ${text.slice(0, 200)}`,
-      "LLM_REGION"
-    );
+    throw new LLMError(`Region or access denied: ${text.slice(0, 200)}`, "LLM_REGION");
   }
   if (res.status === 401 || res.status === 402) {
-    throw new LLMError(
-      `Invalid or missing API key / quota: ${text.slice(0, 200)}`,
-      "LLM_CONFIG"
-    );
+    throw new LLMError(`Invalid or missing API key / quota: ${text.slice(0, 200)}`, "LLM_CONFIG");
   }
   if (!res.ok) {
-    throw new LLMError(
-      `OpenRouter error ${res.status}: ${text.slice(0, 200)}`,
-      "LLM_UNAVAILABLE"
-    );
+    throw new LLMError(`LLM error ${res.status}: ${text.slice(0, 200)}`, "LLM_UNAVAILABLE");
   }
 
   let data: { choices?: Array<{ message?: { content?: string } }> };
   try {
     data = JSON.parse(text);
   } catch {
-    throw new LLMError("Invalid JSON from OpenRouter", "LLM_UNAVAILABLE");
+    throw new LLMError("Invalid JSON from LLM", "LLM_UNAVAILABLE");
   }
   return data.choices?.[0]?.message?.content ?? "";
 }
