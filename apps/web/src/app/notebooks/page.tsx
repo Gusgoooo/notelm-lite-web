@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { parseJsonResponse } from "@/lib/api";
 
 const DEV_USER_ID = process.env.NEXT_PUBLIC_DEV_USER_ID ?? "dev-user";
 
@@ -21,22 +20,26 @@ function apiHeaders(): HeadersInit {
   };
 }
 
+async function apiFetch(url: string, init?: RequestInit) {
+  const res = await fetch(url, { ...init, headers: { ...apiHeaders(), ...(init?.headers ?? {}) } });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  return data;
+}
+
 export default function NotebooksPage() {
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const fetchNotebooks = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/notebooks", {
-        headers: apiHeaders(),
-      });
-      if (!res.ok) throw new Error(res.statusText);
-      const data = await parseJsonResponse<Notebook[]>(res);
-      setNotebooks(data);
+      const data = await apiFetch("/api/notebooks");
+      setNotebooks(Array.isArray(data) ? data : []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load notebooks");
     } finally {
@@ -51,27 +54,26 @@ export default function NotebooksPage() {
   const createNotebook = async (e: React.FormEvent) => {
     e.preventDefault();
     const t = title.trim() || "Untitled";
-    setTitle("");
+    setCreating(true);
+    setError(null);
     try {
-      const res = await fetch("/api/notebooks", {
+      await apiFetch("/api/notebooks", {
         method: "POST",
-        headers: apiHeaders(),
         body: JSON.stringify({ title: t }),
       });
-      if (!res.ok) throw new Error(res.statusText);
+      setTitle("");
       await fetchNotebooks();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create");
+    } finally {
+      setCreating(false);
     }
   };
 
   const deleteNotebook = async (id: string) => {
+    setError(null);
     try {
-      const res = await fetch(`/api/notebooks/${id}`, {
-        method: "DELETE",
-        headers: apiHeaders(),
-      });
-      if (!res.ok) throw new Error(res.statusText);
+      await apiFetch(`/api/notebooks/${id}`, { method: "DELETE" });
       await fetchNotebooks();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to delete");
@@ -94,17 +96,19 @@ export default function NotebooksPage() {
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Notebook title"
           className="flex-1 border border-slate-300 rounded px-3 py-2"
+          disabled={creating}
         />
         <button
           type="submit"
-          className="bg-slate-800 text-white rounded px-4 py-2 hover:bg-slate-700"
+          disabled={creating}
+          className="bg-slate-800 text-white rounded px-4 py-2 hover:bg-slate-700 disabled:opacity-50"
         >
-          Create
+          {creating ? "Creating…" : "Create"}
         </button>
       </form>
 
       {error && (
-        <p className="text-red-600 text-sm mb-4" role="alert">
+        <p className="text-red-600 text-sm mb-4 border border-red-200 bg-red-50 rounded px-3 py-2" role="alert">
           {error}
         </p>
       )}
@@ -131,8 +135,8 @@ export default function NotebooksPage() {
                   Open
                 </Link>
                 <button
-                type="button"
-                onClick={() => deleteNotebook(nb.id)}
+                  type="button"
+                  onClick={() => deleteNotebook(nb.id)}
                   className="text-red-600 hover:text-red-800 text-sm"
                 >
                   Delete
