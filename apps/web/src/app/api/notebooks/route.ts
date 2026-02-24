@@ -34,28 +34,23 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const userId = getUserId(request);
-  console.log("[v0] notebooks POST userId:", userId);
   const body = await request.json().catch(() => ({}));
   const title = (body?.title as string | undefined)?.trim() || "Untitled";
   const now = Date.now();
   const id = `nb-${now}-${Math.random().toString(36).slice(2, 9)}`;
-  console.log("[v0] notebooks POST title:", title, "id:", id);
 
   try {
-    console.log("[v0] notebooks POST calling ensureSeedUser");
     await ensureSeedUser();
-    console.log("[v0] notebooks POST inserting notebook");
     await sql`
       INSERT INTO "Notebook" (id, user_id, title, created_at, updated_at)
       VALUES (${id}, ${userId}, ${title}, ${now}, ${now})
     `;
-    console.log("[v0] notebooks POST success");
     return NextResponse.json(
       { id, userId, title, createdAt: String(now), updatedAt: String(now) },
       { status: 201 }
     );
   } catch (err) {
-    console.error("[v0] notebooks POST error:", err);
+    console.error("[notebooks POST]", err);
     return NextResponse.json({ error: String(err) }, { status: 503 });
   }
 }
