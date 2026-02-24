@@ -6,7 +6,7 @@
     "build": "pnpm -r run build",
     "build:prod": "pnpm --filter @notelm/db db:migrate:deploy && pnpm build",
     "db:seed": "pnpm --filter @notelm/db db:seed",
-    "postinstall": "pnpm --filter @notelm/db db:generate"
+    "postinstall": "echo 'skipping prisma generate'"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

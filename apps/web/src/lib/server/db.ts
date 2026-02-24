@@ -11,8 +11,8 @@ const DEV_USER_EMAIL = process.env.DEV_USER_EMAIL ?? "dev@localhost";
 
 export async function ensureSeedUser() {
   await sql`
-    INSERT INTO "User" (id, email, "createdAt", "updatedAt")
-    VALUES (${DEV_USER_ID}, ${DEV_USER_EMAIL}, ${Date.now()}, ${Date.now()})
+    INSERT INTO "User" (id, email)
+    VALUES (${DEV_USER_ID}, ${DEV_USER_EMAIL})
     ON CONFLICT (id) DO NOTHING
   `;
 }
