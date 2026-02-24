@@ -1,4 +1,3 @@
-import * as path from "node:path";
 import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { sql, DEV_USER_ID } from "@/lib/server/db";
@@ -89,7 +88,7 @@ export async function POST(request: NextRequest) {
     const contentHash = createHash("sha256").update(buffer).digest("hex");
     const now = Date.now();
     const sourceId = `src-${now}-${Math.random().toString(36).slice(2, 9)}`;
-    const title = path.basename(filename, ".pdf") || "Untitled PDF";
+    const title = filename.replace(/\.pdf$/i, "").split("/").pop() || "Untitled PDF";
 
     // Store file in Vercel Blob if configured, else skip storedUri
     let storedUri: string | null = null;
