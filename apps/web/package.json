@@ -10,7 +10,11 @@
   "dependencies": {
     "next": "^15.0.3",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@notelm/core": "workspace:*",
+    "@notelm/db": "workspace:*",
+    "@vercel/blob": "^2.3.0",
+    "pdfjs-dist": "^4.10.38"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
