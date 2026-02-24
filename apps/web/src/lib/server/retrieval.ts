@@ -1,4 +1,4 @@
-import { prisma } from "./db";
+import { sql } from "./db";
 
 export interface RetrievalItem {
   chunkId: string;
@@ -14,28 +14,21 @@ export async function retrieveChunks(
   q: string,
   k: number
 ): Promise<RetrievalItem[]> {
-  const chunks = await prisma.chunk.findMany({
-    where: {
-      source: { notebookId },
-      text: { contains: q, mode: "insensitive" },
-    },
-    orderBy: { createdAt: "desc" },
-    take: k,
-    select: {
-      id: true,
-      sourceId: true,
-      segmentId: true,
-      pageOrIndex: true,
-      snippet: true,
-      text: true,
-    },
-  });
-  return chunks.map((c) => ({
-    chunkId: c.id,
-    sourceId: c.sourceId,
-    segmentId: c.segmentId ?? null,
-    pageOrIndex: c.pageOrIndex ?? null,
-    snippet: c.snippet ?? null,
-    text: c.text,
+  const rows = await sql`
+    SELECT c.id, c.source_id, c.segment_id, c.page_or_index, c.snippet, c.text
+    FROM "Chunk" c
+    JOIN "Source" s ON s.id = c.source_id
+    WHERE s.notebook_id = ${notebookId}
+      AND c.text ILIKE ${"%" + q + "%"}
+    ORDER BY c.created_at DESC
+    LIMIT ${k}
+  `;
+  return rows.map((r) => ({
+    chunkId: r.id as string,
+    sourceId: r.source_id as string,
+    segmentId: (r.segment_id as string | null) ?? null,
+    pageOrIndex: (r.page_or_index as number | null) ?? null,
+    snippet: (r.snippet as string | null) ?? null,
+    text: r.text as string,
   }));
 }

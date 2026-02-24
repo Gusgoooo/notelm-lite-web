@@ -1,79 +1,56 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma, isDbError } from "@/lib/server/db";
+import { sql, DEV_USER_ID, ensureSeedUser } from "@/lib/server/db";
 
 const USER_ID_HEADER = "x-user-id";
 
-function notebookToJson(nb: {
-  id: string;
-  userId: string;
-  title: string;
-  createdAt: bigint;
-  updatedAt: bigint;
-}) {
-  return {
-    id: nb.id,
-    userId: nb.userId,
-    title: nb.title,
-    createdAt: String(nb.createdAt),
-    updatedAt: String(nb.updatedAt),
-  };
+function getUserId(request: NextRequest): string {
+  return request.headers.get(USER_ID_HEADER)?.trim() || DEV_USER_ID;
 }
 
 export async function GET(request: NextRequest) {
-  const userId = request.headers.get(USER_ID_HEADER)?.trim() ?? null;
-  if (!userId) {
-    return NextResponse.json(
-      { error: "Missing X-User-Id header" },
-      { status: 401 }
-    );
-  }
+  const userId = getUserId(request);
   try {
-    const list = await prisma.notebook.findMany({
-      where: { userId },
-      orderBy: { updatedAt: "desc" },
-    });
-    return NextResponse.json(list.map(notebookToJson));
+    await ensureSeedUser();
+    const rows = await sql`
+      SELECT id, user_id, title, created_at, updated_at
+      FROM "Notebook"
+      WHERE user_id = ${userId}
+      ORDER BY updated_at DESC
+    `;
+    return NextResponse.json(
+      rows.map((r) => ({
+        id: r.id,
+        userId: r.user_id,
+        title: r.title,
+        createdAt: String(r.created_at),
+        updatedAt: String(r.updated_at),
+      }))
+    );
   } catch (err) {
-    if (isDbError(err)) {
-      return NextResponse.json(
-        {
-          error:
-            "Database unavailable. Set DATABASE_URL and ensure Postgres is running.",
-        },
-        { status: 503 }
-      );
-    }
-    throw err;
+    console.error("[notebooks GET]", err);
+    return NextResponse.json({ error: "Database error" }, { status: 503 });
   }
 }
 
 export async function POST(request: NextRequest) {
-  const userId = request.headers.get(USER_ID_HEADER)?.trim() ?? null;
-  if (!userId) {
-    return NextResponse.json(
-      { error: "Missing X-User-Id header" },
-      { status: 401 }
-    );
-  }
+  const userId = getUserId(request);
   const body = await request.json().catch(() => ({}));
-  const title = (body?.title as string | undefined)?.trim() ?? "Untitled";
-  const now = BigInt(Date.now());
+  const title = (body?.title as string | undefined)?.trim() || "Untitled";
+  const now = Date.now();
   const id = `nb-${now}-${Math.random().toString(36).slice(2, 9)}`;
+
   try {
-    const notebook = await prisma.notebook.create({
-      data: { id, userId, title, createdAt: now, updatedAt: now },
-    });
-    return NextResponse.json(notebookToJson(notebook), { status: 201 });
+    await ensureSeedUser();
+    await sql`
+      INSERT INTO "Notebook" (id, user_id, title, created_at, updated_at)
+      VALUES (${id}, ${userId}, ${title}, ${now}, ${now})
+    `;
+    return NextResponse.json(
+      { id, userId, title, createdAt: String(now), updatedAt: String(now) },
+      { status: 201 }
+    );
   } catch (err) {
-    if (isDbError(err)) {
-      return NextResponse.json(
-        {
-          error:
-            "Database unavailable. Set DATABASE_URL and ensure Postgres is running.",
-        },
-        { status: 503 }
-      );
-    }
-    throw err;
+    console.error("[notebooks POST]", err);
+    return NextResponse.json({ error: "Database error" }, { status: 503 });
   }
 }

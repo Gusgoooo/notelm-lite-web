@@ -11,8 +11,7 @@
     "next": "^15.0.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@notelm/core": "workspace:*",
-    "@notelm/db": "workspace:*",
+    "@neondatabase/serverless": "^0.10.4",
     "@vercel/blob": "^2.3.0",
     "pdfjs-dist": "^4.10.38"
   },

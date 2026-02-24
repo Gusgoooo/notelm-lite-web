@@ -1,36 +1,20 @@
-import { PrismaClient } from "@notelm/db";
+import { neon } from "@neondatabase/serverless";
 
-// Reuse Prisma Client across hot reloads in dev
-declare global {
-  // eslint-disable-next-line no-var
-  var __prisma: PrismaClient | undefined;
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is not set");
 }
 
-export const prisma: PrismaClient =
-  globalThis.__prisma ?? (globalThis.__prisma = new PrismaClient());
+export const sql = neon(process.env.DATABASE_URL!);
 
 const DEV_USER_ID = process.env.DEV_USER_ID ?? "dev-user";
+const DEV_USER_EMAIL = process.env.DEV_USER_EMAIL ?? "dev@localhost";
 
 export async function ensureSeedUser() {
-  await prisma.user.upsert({
-    where: { id: DEV_USER_ID },
-    update: {},
-    create: {
-      id: DEV_USER_ID,
-      email: process.env.DEV_USER_EMAIL ?? "dev@localhost",
-    },
-  });
+  await sql`
+    INSERT INTO "User" (id, email, "createdAt", "updatedAt")
+    VALUES (${DEV_USER_ID}, ${DEV_USER_EMAIL}, ${Date.now()}, ${Date.now()})
+    ON CONFLICT (id) DO NOTHING
+  `;
 }
 
-export function isDbError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return (
-    msg.includes("DATABASE_URL") ||
-    msg.includes("Can't reach database") ||
-    msg.includes("Connection refused") ||
-    msg.includes("connect ECONNREFUSED") ||
-    msg.includes("denied access") ||
-    msg.includes("(not available)") ||
-    msg.includes("does not exist")
-  );
-}
+export { DEV_USER_ID };

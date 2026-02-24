@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateCompletion, LLMError } from "@/lib/server/llm-client";
-import { prisma } from "@/lib/server/db";
+import { sql } from "@/lib/server/db";
 import { retrieveChunks } from "@/lib/server/retrieval";
 import type { RetrievalItem } from "@/lib/server/retrieval";
 
@@ -38,16 +38,10 @@ export async function POST(request: NextRequest) {
   const question = (body?.question as string | undefined)?.trim();
 
   if (!notebookId) {
-    return NextResponse.json(
-      { error: "notebookId is required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "notebookId is required" }, { status: 400 });
   }
   if (!question) {
-    return NextResponse.json(
-      { error: "question is required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "question is required" }, { status: 400 });
   }
 
   const topK = Math.min(
@@ -59,7 +53,6 @@ export async function POST(request: NextRequest) {
 
   const items = await retrieveChunks(notebookId, question, topK);
   const citations: CitationShape[] = items.map(toCitation);
-  const evidence = citations;
 
   let mode: AskMode = requestedMode;
   let answer: string | null = null;
@@ -78,50 +71,40 @@ export async function POST(request: NextRequest) {
         { role: "user", content: userPrompt },
       ]);
 
-      const now = BigInt(Date.now());
+      const now = Date.now();
       const convId = `conv-${now}-${Math.random().toString(36).slice(2, 9)}`;
       const userMsgId = `msg-${now}-${Math.random().toString(36).slice(2, 9)}`;
-      const assistantMsgId = `msg-${now + 1n}-${Math.random().toString(36).slice(2, 9)}`;
+      const assistantMsgId = `msg-${now + 1}-${Math.random().toString(36).slice(2, 9)}`;
 
-      await prisma.conversation.create({
-        data: {
-          id: convId,
-          notebookId,
-          title: question.slice(0, 80),
-          createdAt: now,
-          updatedAt: now,
-        },
-      });
-      await prisma.message.createMany({
-        data: [
-          {
-            id: userMsgId,
-            conversationId: convId,
-            role: "user",
-            content: question,
-            createdAt: now,
-          },
-          {
-            id: assistantMsgId,
-            conversationId: convId,
-            role: "assistant",
-            content: answer,
-            createdAt: now,
-          },
-        ],
-      });
-      await prisma.messageCitation.createMany({
-        data: items.map((item, i) => ({
-          id: `mc-${assistantMsgId}-${i}`,
-          messageId: assistantMsgId,
-          citeKey: `C${i + 1}`,
-          chunkId: item.chunkId,
-          sourceId: item.sourceId,
-          pageOrIndex: item.pageOrIndex,
-          snippet: item.snippet,
-          createdAt: now,
-        })),
-      });
+      await sql`
+        INSERT INTO "Conversation" (id, notebook_id, title, created_at, updated_at)
+        VALUES (${convId}, ${notebookId}, ${question.slice(0, 80)}, ${now}, ${now})
+      `;
+      await sql`
+        INSERT INTO "Message" (id, conversation_id, role, content, created_at)
+        VALUES
+          (${userMsgId}, ${convId}, 'user', ${question}, ${now}),
+          (${assistantMsgId}, ${convId}, 'assistant', ${answer}, ${now})
+      `;
+      if (items.length > 0) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          await sql`
+            INSERT INTO "MessageCitation" (id, message_id, cite_key, chunk_id, source_id, page_or_index, snippet, created_at)
+            VALUES (
+              ${`mc-${assistantMsgId}-${i}`},
+              ${assistantMsgId},
+              ${`C${i + 1}`},
+              ${item.chunkId},
+              ${item.sourceId},
+              ${item.pageOrIndex},
+              ${item.snippet},
+              ${now}
+            )
+            ON CONFLICT (id) DO NOTHING
+          `;
+        }
+      }
     } catch (err) {
       const isLLM = err instanceof LLMError;
       console.warn(
@@ -133,5 +116,5 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ mode, answer, citations, evidence });
+  return NextResponse.json({ mode, answer, citations, evidence: citations });
 }
