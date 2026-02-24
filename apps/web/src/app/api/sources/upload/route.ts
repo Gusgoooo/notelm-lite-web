@@ -1,3 +1,5 @@
+export const runtime = "nodejs";
+
 import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { sql, DEV_USER_ID } from "@/lib/server/db";

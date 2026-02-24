@@ -1,3 +1,5 @@
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { sql, DEV_USER_ID, ensureSeedUser } from "@/lib/server/db";
 

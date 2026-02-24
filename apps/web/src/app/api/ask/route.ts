@@ -1,3 +1,5 @@
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { generateCompletion, LLMError } from "@/lib/server/llm-client";
 import { sql } from "@/lib/server/db";
