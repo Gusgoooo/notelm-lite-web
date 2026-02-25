@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsc && node --watch dist/index.js",
-    "build": "tsc",
+    "build": "pnpm --filter db build && pnpm --filter shared build && tsc",
     "start": "node dist/index.js"
   },
   "dependencies": {

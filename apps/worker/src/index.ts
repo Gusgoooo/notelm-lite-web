@@ -7,6 +7,7 @@ if (existsSync(rootEnv)) config({ path: rootEnv });
 else if (existsSync(cwdEnv)) config({ path: cwdEnv });
 else config();
 
+import type { ChunkResult } from 'shared';
 import {
   getStorage,
   ChunkingService,
@@ -97,7 +98,7 @@ async function processDocument(sourceId: string): Promise<void> {
     return;
   }
 
-  const texts = chunkResults.map((c) => c.content);
+  const texts = chunkResults.map((c: ChunkResult) => c.content);
   const allEmbeddings: number[][] = [];
   for (let i = 0; i < texts.length; i += embeddingBatchSize) {
     const batch = texts.slice(i, i + embeddingBatchSize);

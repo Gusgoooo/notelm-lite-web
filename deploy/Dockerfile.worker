@@ -1,0 +1,18 @@
+# Worker 镜像：在仓库根目录安装并构建，避免找不到 shared/db
+# Railway：Worker 服务里选 Dockerfile，路径填 deploy/Dockerfile.worker，Root 留空
+FROM node:20-bookworm-slim
+WORKDIR /app
+RUN corepack enable pnpm
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/db packages/db
+COPY packages/shared packages/shared
+COPY apps/worker apps/worker
+
+RUN pnpm install --frozen-lockfile && \
+  pnpm --filter db build && \
+  pnpm --filter shared build && \
+  pnpm --filter worker build
+
+WORKDIR /app/apps/worker
+CMD ["node", "dist/index.js"]
