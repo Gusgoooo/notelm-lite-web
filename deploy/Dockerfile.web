@@ -1,0 +1,20 @@
+# Web 镜像：在仓库根目录安装并构建，保证能解析 workspace 包（db/shared）
+# Railway：Web 服务里选 Dockerfile，路径填 deploy/Dockerfile.web，Root 留空
+FROM node:20-bookworm-slim
+WORKDIR /app
+RUN corepack enable pnpm
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/web apps/web
+COPY packages/db packages/db
+COPY packages/shared packages/shared
+
+RUN pnpm install --frozen-lockfile && \
+  pnpm --filter db build && \
+  pnpm --filter shared build && \
+  pnpm --filter web build
+
+WORKDIR /app/apps/web
+ENV PORT=3000
+EXPOSE 3000
+CMD ["pnpm", "start"]
