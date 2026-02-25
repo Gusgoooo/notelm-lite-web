@@ -1,0 +1,12 @@
+.vercel
+.env
+.env.*
+!.env.example
+!deploy/*.example
+
+node_modules
+dist
+.next
+*.log
+.DS_Store
+apps/web/uploads
