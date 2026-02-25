@@ -84,14 +84,25 @@ export function SourcesPanel({ notebookId }: { notebookId: string }) {
       const form = new FormData();
       form.set('notebookId', notebookId);
       form.set('file', file);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 60_000);
       const res = await fetch('/api/sources/upload', {
         method: 'POST',
         body: form,
+        signal: controller.signal,
       });
+      clearTimeout(timer);
       if (!res.ok) {
-        alert('上传失败');
+        const err = await res.json().catch(() => ({}));
+        alert(err?.error ?? '上传失败');
       }
       await fetchSources(false);
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        alert('上传超时（60秒），请检查对象存储配置后重试');
+      } else {
+        alert('上传请求失败，请稍后重试');
+      }
     } finally {
       setUploading(false);
       e.target.value = '';

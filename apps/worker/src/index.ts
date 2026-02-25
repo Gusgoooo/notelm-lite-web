@@ -40,6 +40,10 @@ const pollIntervalMs = Math.max(
   Number.parseInt(process.env.WORKER_POLL_INTERVAL_MS ?? '1200', 10) || 1200
 );
 
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL is required for worker runtime');
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
