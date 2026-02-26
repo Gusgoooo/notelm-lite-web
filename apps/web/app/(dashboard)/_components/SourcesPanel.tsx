@@ -16,7 +16,7 @@ type Source = {
   status: 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | string;
   errorMessage: string | null;
   chunkCount?: number;
-  sourceType?: 'pdf' | 'word' | '复制文本' | string;
+  sourceType?: 'pdf' | 'word' | '复制文本' | 'python脚本' | string;
   createdAt: string;
 };
 
@@ -24,7 +24,22 @@ const allowedMimes = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/msword',
+  'text/x-python',
+  'application/x-python-code',
+  'text/plain',
 ];
+
+function getExt(filename: string): string {
+  const idx = filename.lastIndexOf('.');
+  if (idx < 0) return '';
+  return filename.slice(idx + 1).toLowerCase();
+}
+
+function isPythonFile(file: File): boolean {
+  const mime = (file.type || '').toLowerCase().trim();
+  const ext = getExt(file.name || '');
+  return ext === 'py' || mime === 'text/x-python' || mime === 'application/x-python-code';
+}
 
 function getSourceStatusMeta(status: string) {
   if (status === 'READY') return { label: '已完成', colorClass: 'text-green-600', dotClass: 'bg-green-600' };
@@ -101,8 +116,25 @@ export function SourcesPanel({
     if (readOnly) return;
     const file = e.target.files?.[0];
     if (!file || uploading) return;
-    if (!allowedMimes.includes(file.type)) {
-      alert('请选择 PDF 或 Word 文件（.pdf / .docx / .doc）');
+    const ext = getExt(file.name || '');
+    const isKnownType =
+      allowedMimes.includes((file.type || '').toLowerCase().trim()) ||
+      ['pdf', 'docx', 'doc', 'py'].includes(ext);
+    if (!isKnownType) {
+      alert('请选择 PDF / Word / Python 脚本（.pdf / .docx / .doc / .py）');
+      return;
+    }
+    if (isPythonFile(file)) {
+      const ok = window.confirm(
+        '检测到 Python 脚本。启用后会自动影响当前 Notebook 的整体问答结果（沙箱执行）。是否继续上传？'
+      );
+      if (!ok) {
+        e.target.value = '';
+        return;
+      }
+    }
+    if (!file.size) {
+      alert('文件为空，请重新选择');
       return;
     }
     setUploading(true);
@@ -215,7 +247,7 @@ export function SourcesPanel({
         <input
           ref={fileInputRef}
           type="file"
-          accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/msword,.doc"
+          accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/msword,.doc,text/x-python,.py"
           className="hidden"
           onChange={uploadFile}
           disabled={uploading || readOnly}
@@ -227,8 +259,11 @@ export function SourcesPanel({
               disabled={uploading}
               onClick={() => fileInputRef.current?.click()}
             >
-              {uploading ? '上传中…' : '上传 PDF / Word'}
+              {uploading ? '上传中…' : '上传 PDF / Word / Python'}
             </Button>
+            <p className="text-[11px] text-amber-700 dark:text-amber-300">
+              上传 Python 脚本后将自动在沙箱执行，结果会影响当前 Notebook 的整体问答表现。
+            </p>
             <div className="space-y-1">
               <Textarea
                 value={pasteText}

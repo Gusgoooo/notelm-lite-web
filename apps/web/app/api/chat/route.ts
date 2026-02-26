@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, conversations, messages, sourceChunks, sources, eq, and, cosineDistance } from 'db';
+import { db, conversations, messages, sourceChunks, sources, scriptJobs, eq, and, desc, cosineDistance } from 'db';
 import { createEmbeddings, chat } from 'shared';
 import { randomUUID } from 'crypto';
 import { getNotebookAccess } from '@/lib/notebook-access';
@@ -196,9 +196,46 @@ export async function POST(request: Request) {
       (r, i) =>
         `[${i + 1}] (Source: ${r.filename}${r.pageStart != null ? `, p.${r.pageStart}${r.pageEnd != null && r.pageEnd !== r.pageStart ? `-${r.pageEnd}` : ''}` : ''})\n${r.content}`
     );
+    let scriptOutputs: Array<{
+      id: string;
+      output: unknown;
+      finishedAt: Date | null;
+    }> = [];
+    try {
+      scriptOutputs = await db
+        .select({
+          id: scriptJobs.id,
+          output: scriptJobs.output,
+          finishedAt: scriptJobs.finishedAt,
+        })
+        .from(scriptJobs)
+        .where(and(eq(scriptJobs.notebookId, notebookId), eq(scriptJobs.status, 'SUCCEEDED')))
+        .orderBy(desc(scriptJobs.finishedAt), desc(scriptJobs.createdAt))
+        .limit(3);
+    } catch (error) {
+      const code = (error as { cause?: { code?: string }; code?: string })?.cause?.code
+        ?? (error as { code?: string })?.code;
+      if (code !== '42P01') throw error;
+      console.warn('script_jobs table not found in chat route, skip script insights');
+    }
+
+    const scriptInsights = scriptOutputs.map((row, idx) => {
+      const output = row.output as Record<string, unknown> | null;
+      const result = output?.result ?? output ?? {};
+      let rendered: string;
+      try {
+        rendered = JSON.stringify(result, null, 2);
+      } catch {
+        rendered = String(result);
+      }
+      const truncated = rendered.length > 4000 ? `${rendered.slice(0, 4000)}\n...` : rendered;
+      return `[S${idx + 1}] script_job=${row.id}\n${truncated}`;
+    });
+
     const context = contextParts.join('\n\n');
-    const systemPrompt = `You are a helpful assistant. Answer based only on the following sources. Always cite the source number in brackets (e.g. [1]) when you use information from it. If the user question cannot be answered from the sources, say so.`;
-    const userPrompt = `Sources:\n${context}\n\nUser question: ${userMessage.trim()}`;
+    const scriptContext = scriptInsights.join('\n\n');
+    const systemPrompt = `You are a helpful assistant. Answer based only on the provided sources and script insights. Always cite source numbers like [1] when using source chunks. If script insights are used, explicitly mention "脚本分析" in your answer. If the question cannot be answered from provided context, say so.`;
+    const userPrompt = `Sources:\n${context}\n\nScript Insights:\n${scriptContext || '(none)'}\n\nUser question: ${userMessage.trim()}`;
     const chatMessages = [
       { role: 'system' as const, content: systemPrompt },
       ...history.slice(-10).map((m) => ({ role: m.role, content: m.content })),

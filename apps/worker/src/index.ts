@@ -15,7 +15,7 @@ import {
   createEmbeddings,
   getEmbeddingDimensions,
 } from 'shared';
-import { db, sources, sourceChunks, scriptJobs, eq, and, sql } from 'db';
+import { db, sources, sourceChunks, scriptJobs, notebooks, eq, and, sql } from 'db';
 import { randomUUID } from 'crypto';
 import { executePythonInSandbox } from './pythonSandbox.js';
 
@@ -84,6 +84,139 @@ function isNoSuchKeyError(error: unknown): boolean {
     message.includes('no such key') ||
     message.includes('nosuchkey')
   );
+}
+
+function isPythonSource(filename: string, mime: string | null): boolean {
+  const lowerName = filename.toLowerCase();
+  const lowerMime = (mime ?? '').toLowerCase();
+  return (
+    lowerName.endsWith('.py') ||
+    lowerMime.includes('text/x-python') ||
+    lowerMime.includes('application/x-python-code')
+  );
+}
+
+function toSingleChunk(content: string): ChunkResult[] {
+  const text = content.trim();
+  if (!text) return [];
+  return [
+    {
+      content: text,
+      index: 0,
+      startOffset: 0,
+      endOffset: text.length,
+      tokenCount: chunkingService.estimateTokens(text),
+    },
+  ];
+}
+
+async function enqueueAutoScriptJobs(notebookId: string, triggerSourceId: string): Promise<void> {
+  if (scriptJobsQueueDisabled) return;
+  try {
+    const [ownerNotebook] = await db
+      .select({ userId: notebooks.userId })
+      .from(notebooks)
+      .where(eq(notebooks.id, notebookId))
+      .limit(1);
+
+    if (!ownerNotebook?.userId) return;
+
+    const readySources = await db
+      .select({
+        id: sources.id,
+        filename: sources.filename,
+        mime: sources.mime,
+      })
+      .from(sources)
+      .where(and(eq(sources.notebookId, notebookId), eq(sources.status, 'READY')));
+
+    const scriptSources = readySources.filter((s) => isPythonSource(s.filename, s.mime));
+    if (scriptSources.length === 0) return;
+
+    const nonScriptIds = new Set(
+      readySources
+        .filter((s) => !isPythonSource(s.filename, s.mime))
+        .map((s) => s.id)
+    );
+
+    const contextRows = await db
+      .select({
+        sourceId: sourceChunks.sourceId,
+        sourceTitle: sources.filename,
+        pageStart: sourceChunks.pageStart,
+        pageEnd: sourceChunks.pageEnd,
+        content: sourceChunks.content,
+      })
+      .from(sourceChunks)
+      .innerJoin(sources, eq(sourceChunks.sourceId, sources.id))
+      .where(and(eq(sources.notebookId, notebookId), eq(sources.status, 'READY')))
+      .orderBy(sources.createdAt, sourceChunks.chunkIndex)
+      .limit(240);
+
+    const snippets = contextRows
+      .filter((row) => nonScriptIds.has(row.sourceId))
+      .map((row) => ({
+        sourceId: row.sourceId,
+        sourceTitle: row.sourceTitle,
+        pageStart: row.pageStart ?? undefined,
+        pageEnd: row.pageEnd ?? undefined,
+        content: row.content.slice(0, 1200),
+      }));
+
+    for (const scriptSource of scriptSources) {
+      const existing = await db.execute(sql`
+        select id
+        from script_jobs
+        where notebook_id = ${notebookId}
+          and status in ('PENDING', 'RUNNING')
+          and input -> '__meta' ->> 'mode' = 'auto-notebook-script'
+          and input -> '__meta' ->> 'scriptSourceId' = ${scriptSource.id}
+        limit 1
+      `);
+      const existingRows = (existing as { rows?: Array<{ id?: unknown }> }).rows ?? [];
+      if (existingRows.length > 0) continue;
+
+      const scriptChunkRows = await db
+        .select({ content: sourceChunks.content })
+        .from(sourceChunks)
+        .where(eq(sourceChunks.sourceId, scriptSource.id))
+        .orderBy(sourceChunks.chunkIndex);
+      const scriptCode = scriptChunkRows.map((row) => row.content).join('\n').trim();
+      if (!scriptCode) continue;
+
+      const now = new Date();
+      await db.insert(scriptJobs).values({
+        id: `job_${randomUUID()}`,
+        userId: ownerNotebook.userId,
+        notebookId,
+        code: scriptCode,
+        input: {
+          __meta: {
+            mode: 'auto-notebook-script',
+            scriptSourceId: scriptSource.id,
+            triggerSourceId,
+            createdAt: now.toISOString(),
+          },
+          notebookId,
+          sources: snippets,
+        },
+        status: 'PENDING',
+        timeoutMs: 12_000,
+        memoryLimitMb: 256,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  } catch (error) {
+    const code = (error as { cause?: { code?: string }; code?: string })?.cause?.code
+      ?? (error as { code?: string })?.code;
+    if (code === '42P01') {
+      scriptJobsQueueDisabled = true;
+      console.warn('script_jobs table not found while enqueueing auto script jobs; auto script execution disabled.');
+      return;
+    }
+    throw error;
+  }
 }
 
 async function copyChunksFromSiblingReadySource(
@@ -165,28 +298,42 @@ async function claimNextSourceId(): Promise<string | null> {
 }
 
 async function claimNextScriptJobId(): Promise<string | null> {
-  const result = await db.execute(sql`
-    with candidate as (
-      select id
-      from script_jobs
-      where status = 'PENDING'
-      order by created_at asc
-      limit 1
-      for update skip locked
-    )
-    update script_jobs as j
-    set status = 'RUNNING',
-        error_message = null,
-        started_at = now(),
-        updated_at = now()
-    from candidate
-    where j.id = candidate.id
-    returning j.id
-  `);
+  if (scriptJobsQueueDisabled) return null;
+  try {
+    const result = await db.execute(sql`
+      with candidate as (
+        select id
+        from script_jobs
+        where status = 'PENDING'
+        order by created_at asc
+        limit 1
+        for update skip locked
+      )
+      update script_jobs as j
+      set status = 'RUNNING',
+          error_message = null,
+          started_at = now(),
+          updated_at = now()
+      from candidate
+      where j.id = candidate.id
+      returning j.id
+    `);
 
-  const rows = (result as { rows?: Array<{ id?: unknown }> }).rows ?? [];
-  const jobId = rows[0]?.id;
-  return typeof jobId === 'string' ? jobId : null;
+    const rows = (result as { rows?: Array<{ id?: unknown }> }).rows ?? [];
+    const jobId = rows[0]?.id;
+    return typeof jobId === 'string' ? jobId : null;
+  } catch (error) {
+    const code = (error as { cause?: { code?: string }; code?: string })?.cause?.code
+      ?? (error as { code?: string })?.code;
+    if (code === '42P01') {
+      scriptJobsQueueDisabled = true;
+      console.warn(
+        'script_jobs table not found. Python script queue is disabled in this environment; source ingestion will continue.'
+      );
+      return null;
+    }
+    throw error;
+  }
 }
 
 async function processDocument(sourceId: string): Promise<void> {
@@ -208,6 +355,7 @@ async function processDocument(sourceId: string): Promise<void> {
       const copied = await copyChunksFromSiblingReadySource(sourceId, source.fileUrl);
       if (copied) {
         console.log(`Recovered source ${sourceId} by copying chunks from sibling source with same file_url`);
+        await enqueueAutoScriptJobs(source.notebookId, sourceId);
         return;
       }
     }
@@ -218,10 +366,12 @@ async function processDocument(sourceId: string): Promise<void> {
     preserveStructure: true,
   });
 
-  const chunkResults = chunkingService.chunk(parseResult.content, {
-    chunkSize,
-    chunkOverlap,
-  });
+  const chunkResults = isPythonSource(source.filename, source.mime ?? null)
+    ? toSingleChunk(parseResult.content)
+    : chunkingService.chunk(parseResult.content, {
+        chunkSize,
+        chunkOverlap,
+      });
   if (chunkResults.length === 0) {
     await db
       .update(sources)
@@ -304,6 +454,8 @@ async function processDocument(sourceId: string): Promise<void> {
     .update(sources)
     .set({ status: 'READY', errorMessage: null })
     .where(eq(sources.id, sourceId));
+
+  await enqueueAutoScriptJobs(source.notebookId, sourceId);
 }
 
 async function runSourceIngestionJob(sourceId: string): Promise<void> {
@@ -409,6 +561,7 @@ async function runClaimedJob(job: ClaimedJob): Promise<void> {
 }
 
 let stopping = false;
+let scriptJobsQueueDisabled = false;
 const inFlight = new Set<Promise<void>>();
 
 async function fillSlots() {

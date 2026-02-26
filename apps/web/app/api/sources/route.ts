@@ -3,9 +3,16 @@ import { db, sources, sourceChunks, eq, desc, inArray, sql } from 'db';
 import { randomUUID } from 'crypto';
 import { getNotebookAccess } from '@/lib/notebook-access';
 
-function getSourceType(mime: string | null, filename: string): 'pdf' | 'word' | '复制文本' {
+function getSourceType(mime: string | null, filename: string): 'pdf' | 'word' | '复制文本' | 'python脚本' {
   const normalizedMime = (mime ?? '').toLowerCase();
   const lowerName = filename.toLowerCase();
+  if (
+    normalizedMime.includes('text/x-python') ||
+    normalizedMime.includes('application/x-python-code') ||
+    lowerName.endsWith('.py')
+  ) {
+    return 'python脚本';
+  }
   if (normalizedMime.includes('text/plain')) return '复制文本';
   if (normalizedMime.includes('application/pdf') || lowerName.endsWith('.pdf')) return 'pdf';
   if (

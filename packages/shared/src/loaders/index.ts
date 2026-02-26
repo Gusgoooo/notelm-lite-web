@@ -13,6 +13,8 @@ const loadersByMime: Record<string, IDocumentLoader> = {
     wordLoader,
   'application/msword': wordLoader,
   'text/plain': textLoader,
+  'text/x-python': textLoader,
+  'application/x-python-code': textLoader,
 };
 
 export function getLoaderForMime(mime: string | null): IDocumentLoader {

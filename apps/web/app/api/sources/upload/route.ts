@@ -4,6 +4,17 @@ import { getStorage } from 'shared';
 import { randomUUID } from 'crypto';
 import { getNotebookAccess } from '@/lib/notebook-access';
 
+function resolveMimeType(file: File, ext: string): string {
+  const declared = (file.type || '').toLowerCase().trim();
+  if (declared) return declared;
+  if (ext === 'pdf') return 'application/pdf';
+  if (ext === 'docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (ext === 'doc') return 'application/msword';
+  if (ext === 'py') return 'text/x-python';
+  if (ext === 'txt' || ext === 'md') return 'text/plain';
+  return 'application/octet-stream';
+}
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();
@@ -32,6 +43,7 @@ export async function POST(request: Request) {
     const filename = file.name || 'document.pdf';
     const sourceId = `src_${randomUUID()}`;
     const ext = filename.split('.').pop()?.toLowerCase() || 'pdf';
+    const mime = resolveMimeType(file, ext);
     const key = `${notebookId}/${sourceId}.${ext}`;
     const storage = getStorage();
     await storage.upload(key, buffer);
@@ -40,7 +52,7 @@ export async function POST(request: Request) {
       notebookId,
       filename,
       fileUrl: key,
-      mime: file.type || 'application/pdf',
+      mime,
       status: 'PENDING',
     });
     const [row] = await db.select().from(sources).where(eq(sources.id, sourceId));
