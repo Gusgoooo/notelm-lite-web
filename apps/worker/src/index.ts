@@ -44,6 +44,19 @@ if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL is required for worker runtime');
 }
 
+const embeddingProvider = (process.env.EMBEDDING_PROVIDER ?? 'auto').trim().toLowerCase();
+const openrouterKeyLen = (process.env.OPENROUTER_API_KEY ?? '').trim().length;
+const openaiKeyLen = (process.env.OPENAI_API_KEY ?? '').trim().length;
+const storageType = (process.env.STORAGE_TYPE ?? 'filesystem').trim().toLowerCase();
+
+console.log(
+  `Worker env check: EMBEDDING_PROVIDER=${embeddingProvider || '<unset>'}, OPENROUTER_API_KEY_LEN=${openrouterKeyLen}, OPENAI_API_KEY_LEN=${openaiKeyLen}, STORAGE_TYPE=${storageType || '<unset>'}`
+);
+
+if (embeddingProvider === 'openrouter' && openrouterKeyLen === 0) {
+  throw new Error('EMBEDDING_PROVIDER=openrouter but OPENROUTER_API_KEY is empty');
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -1,3 +1,5 @@
+import { readEnv } from '../utils/env.js';
+
 type ProviderName = 'openai' | 'openrouter';
 
 type ChatProviderConfig = {
@@ -30,7 +32,7 @@ function uniqueNonEmpty(values: Array<string | undefined>): string[] {
 }
 
 function getChatProviderOrder(): ProviderName[] {
-  const mode = (process.env.CHAT_PROVIDER ?? 'auto').trim().toLowerCase();
+  const mode = readEnv('CHAT_PROVIDER', 'auto').toLowerCase();
   if (mode === 'openrouter') return ['openrouter', 'openai'];
   if (mode === 'openai') return ['openai', 'openrouter'];
   return ['openai', 'openrouter'];
@@ -41,23 +43,23 @@ function getChatConfigs(): ChatProviderConfig[] {
   const configs: ChatProviderConfig[] = [];
   for (const provider of order) {
     if (provider === 'openai') {
-      const apiKey = process.env.OPENAI_API_KEY?.trim() ?? '';
+      const apiKey = readEnv('OPENAI_API_KEY');
       if (!apiKey) continue;
-      const baseUrl = process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1';
+      const baseUrl = readEnv('OPENAI_BASE_URL', 'https://api.openai.com/v1');
       const models = uniqueNonEmpty([
-        process.env.OPENAI_CHAT_MODEL,
-        process.env.CHAT_MODEL,
+        readEnv('OPENAI_CHAT_MODEL') || undefined,
+        readEnv('CHAT_MODEL') || undefined,
         'gpt-4o-mini',
       ]);
       for (const model of models) configs.push({ name: 'openai', baseUrl, apiKey, model });
       continue;
     }
-    const apiKey = process.env.OPENROUTER_API_KEY?.trim() ?? '';
+    const apiKey = readEnv('OPENROUTER_API_KEY');
     if (!apiKey) continue;
-    const baseUrl = process.env.OPENROUTER_BASE_URL ?? 'https://openrouter.ai/api/v1';
+    const baseUrl = readEnv('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1');
     const models = uniqueNonEmpty([
-      process.env.OPENROUTER_CHAT_MODEL,
-      process.env.CHAT_MODEL,
+      readEnv('OPENROUTER_CHAT_MODEL') || undefined,
+      readEnv('CHAT_MODEL') || undefined,
       ...OPENROUTER_CHAT_FALLBACK_MODELS,
     ]);
     for (const model of models) configs.push({ name: 'openrouter', baseUrl, apiKey, model });

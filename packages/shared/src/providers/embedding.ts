@@ -1,3 +1,5 @@
+import { readEnv } from '../utils/env.js';
+
 type ProviderName = 'openai' | 'openrouter';
 
 type EmbedProviderConfig = {
@@ -22,7 +24,7 @@ function uniqueNonEmpty(values: Array<string | undefined>): string[] {
 }
 
 function getEmbeddingProviderOrder(): ProviderName[] {
-  const mode = (process.env.EMBEDDING_PROVIDER ?? 'auto').trim().toLowerCase();
+  const mode = readEnv('EMBEDDING_PROVIDER', 'auto').toLowerCase();
   if (mode === 'openrouter') return ['openrouter', 'openai'];
   if (mode === 'openai') return ['openai', 'openrouter'];
   return ['openai', 'openrouter'];
@@ -33,23 +35,23 @@ function getEmbeddingConfigs(): EmbedProviderConfig[] {
   const configs: EmbedProviderConfig[] = [];
   for (const provider of order) {
     if (provider === 'openai') {
-      const apiKey = process.env.OPENAI_API_KEY?.trim() ?? '';
+      const apiKey = readEnv('OPENAI_API_KEY');
       if (!apiKey) continue;
-      const baseUrl = process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1';
+      const baseUrl = readEnv('OPENAI_BASE_URL', 'https://api.openai.com/v1');
       const models = uniqueNonEmpty([
-        process.env.OPENAI_EMBEDDING_MODEL,
-        process.env.EMBEDDING_MODEL,
+        readEnv('OPENAI_EMBEDDING_MODEL') || undefined,
+        readEnv('EMBEDDING_MODEL') || undefined,
         'text-embedding-3-small',
       ]);
       for (const model of models) configs.push({ name: 'openai', baseUrl, apiKey, model });
       continue;
     }
-    const apiKey = process.env.OPENROUTER_API_KEY?.trim() ?? '';
+    const apiKey = readEnv('OPENROUTER_API_KEY');
     if (!apiKey) continue;
-    const baseUrl = process.env.OPENROUTER_BASE_URL ?? 'https://openrouter.ai/api/v1';
+    const baseUrl = readEnv('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1');
     const models = uniqueNonEmpty([
-      process.env.OPENROUTER_EMBEDDING_MODEL,
-      process.env.EMBEDDING_MODEL,
+      readEnv('OPENROUTER_EMBEDDING_MODEL') || undefined,
+      readEnv('EMBEDDING_MODEL') || undefined,
       ...OPENROUTER_EMBEDDING_FALLBACK_MODELS,
     ]);
     for (const model of models) configs.push({ name: 'openrouter', baseUrl, apiKey, model });
@@ -74,7 +76,7 @@ function extractErrorMessage(payload: unknown): string {
 }
 
 function getEmbeddingDimensionsFromEnv(): number {
-  const raw = process.env.EMBEDDING_DIMENSIONS;
+  const raw = readEnv('EMBEDDING_DIMENSIONS');
   if (!raw) return 1536;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1536;
