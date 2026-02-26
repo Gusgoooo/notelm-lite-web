@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -46,6 +46,7 @@ function RefreshIcon() {
 }
 
 export function SourcesPanel({ notebookId }: { notebookId: string }) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -171,18 +172,22 @@ export function SourcesPanel({ notebookId }: { notebookId: string }) {
       </div>
 
       <div className="space-y-2 p-3">
-        <label className="block cursor-pointer">
-          <input
-            type="file"
-            accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/msword,.doc"
-            className="hidden"
-            onChange={uploadFile}
-            disabled={uploading}
-          />
-          <Button variant="outline" className="w-full text-xs">
-            <span>{uploading ? '上传中…' : '上传 PDF / Word'}</span>
-          </Button>
-        </label>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/msword,.doc"
+          className="hidden"
+          onChange={uploadFile}
+          disabled={uploading}
+        />
+        <Button
+          variant="outline"
+          className="w-full text-xs"
+          disabled={uploading}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {uploading ? '上传中…' : '上传 PDF / Word'}
+        </Button>
         <div className="space-y-1">
           <Textarea
             value={pasteText}
