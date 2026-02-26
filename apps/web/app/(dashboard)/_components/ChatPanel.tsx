@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import ShinyText from '@/components/ShinyText';
 
 type Citation = {
   sourceId: string;
@@ -187,7 +188,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex h-14 items-center border-b px-4">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-            Q&A
+            知识库问答
           </h2>
         </div>
         <div className="flex flex-1 items-center justify-center p-4 text-sm text-gray-400 dark:text-gray-500">
@@ -201,13 +202,15 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-14 items-center border-b px-4">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-          Q&A
+          知识库问答
         </h2>
       </div>
       <ScrollArea className="flex-1 p-4">
-        <div className="flex flex-col gap-4">
+        <div className="mx-auto flex w-2/3 flex-col gap-4">
           {loadingHistory ? (
-            <p className="text-center text-xs text-gray-500 dark:text-gray-400">Loading chat history…</p>
+            <div className="text-center">
+              <ShinyText text="Loading chat history..." className="text-xs text-gray-500 dark:text-gray-400" />
+            </div>
           ) : (
             <>
               {hasMore && (
@@ -229,7 +232,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               {messages.map((m) => (
                 <div
                   key={m.id}
-                  className={`max-w-[85%] rounded-xl border p-3 shadow-sm ${
+                  className={`max-w-[92%] rounded-xl border p-3 shadow-sm ${
                     m.role === 'user'
                       ? 'ml-auto mr-0 border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800'
                       : 'ml-0 mr-auto border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900'
@@ -317,32 +320,41 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
             </>
           )}
           {loading && (
-            <div className="ml-0 mr-auto max-w-[85%] rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-500 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-              Thinking…
+            <div className="ml-0 mr-auto max-w-[92%] rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-500 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+              <ShinyText
+                text="Thinking..."
+                speed={2}
+                spread={100}
+                color="#9ca3af"
+                shineColor="#ffffff"
+                className="text-sm font-medium"
+              />
             </div>
           )}
           <div ref={bottomRef} />
         </div>
       </ScrollArea>
       <div className="border-t p-4">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void send();
-          }}
-          className="flex gap-2"
-        >
-          <Input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask about your sources"
-            disabled={loading}
-          />
-          <Button type="submit" disabled={loading || !input.trim()}>
-            Send
-          </Button>
-        </form>
+        <div className="mx-auto w-2/3">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void send();
+            }}
+            className="flex gap-2"
+          >
+            <Input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask about your sources"
+              disabled={loading}
+            />
+            <Button type="submit" disabled={loading || !input.trim()}>
+              Send
+            </Button>
+          </form>
+        </div>
       </div>
     </div>
   );

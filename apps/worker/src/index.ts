@@ -61,6 +61,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function formatWorkerError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const message = error.message || String(error);
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes('specified key does not exist') ||
+    normalized.includes('no such key') ||
+    normalized.includes('nosuchkey')
+  ) {
+    return `对象存储中未找到文件（Key 不存在）：${message}。请确认 Web 与 Worker 的 S3 配置完全一致（S3_BUCKET/S3_ENDPOINT/S3_REGION）。`;
+  }
+  return message;
+}
+
 async function claimNextSourceId(): Promise<string | null> {
   const result = await db.execute(sql`
     with candidate as (
@@ -197,7 +211,7 @@ async function runJob(sourceId: string): Promise<void> {
       .update(sources)
       .set({
         status: 'FAILED',
-        errorMessage: err instanceof Error ? err.message : String(err),
+        errorMessage: formatWorkerError(err),
       })
       .where(eq(sources.id, sourceId));
     console.error(`Job for source ${sourceId} failed:`, err);

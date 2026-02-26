@@ -23,7 +23,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 
 export async function GET() {
   try {
-    const session = await withTimeout(getServerSession(authOptions), 4000, 'getServerSession');
+    const session = await withTimeout(getServerSession(authOptions), 8000, 'getServerSession');
     const userId = session?.user?.id ?? null;
     const listQuery = userId
       ? db
@@ -36,7 +36,7 @@ export async function GET() {
           .from(notebooks)
           .where(isNull(notebooks.userId))
           .orderBy(desc(notebooks.createdAt));
-    const list = await withTimeout(listQuery, 4000, 'list notebooks query');
+    const list = await withTimeout(listQuery, 12000, 'list notebooks query');
     return NextResponse.json(list, {
       headers: { 'Cache-Control': 'no-store' },
     });

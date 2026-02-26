@@ -8,6 +8,7 @@ import { isAdminEmail } from '@/lib/admin';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import ShinyText from '@/components/ShinyText';
 
 type Notebook = {
   id: string;
@@ -26,6 +27,7 @@ type MarketNotebook = {
   publishedAt: string | null;
   ownerName: string | null;
   ownerEmail: string | null;
+  isMine?: boolean;
 };
 
 function RefreshIcon() {
@@ -33,6 +35,36 @@ function RefreshIcon() {
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M21 12a9 9 0 1 1-2.64-6.36" />
       <path d="M21 3v6h-6" />
+    </svg>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="5" cy="12" r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="19" cy="12" r="1.5" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M6 6l1 14h10l1-14" />
+      <path d="M10 10v7M14 10v7" />
     </svg>
   );
 }
@@ -63,8 +95,10 @@ export function ProjectPanel() {
 
   const fetchMine = async () => {
     setLoadingMine(true);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
     try {
-      const res = await fetch('/api/notebooks', { cache: 'no-store' });
+      const res = await fetch('/api/notebooks', { cache: 'no-store', signal: controller.signal });
       const data = await res.json().catch(() => []);
       if (!res.ok) {
         const message =
@@ -77,8 +111,13 @@ export function ProjectPanel() {
       setNotebooks(Array.isArray(data) ? data : []);
     } catch (e) {
       setNotebooks([]);
-      setError(e instanceof Error ? e.message : '加载 notebooks 失败');
+      if (e instanceof Error && e.name === 'AbortError') {
+        setError('加载 notebooks 超时（15s），请检查数据库连接');
+      } else {
+        setError(e instanceof Error ? e.message : '加载 notebooks 失败');
+      }
     } finally {
+      window.clearTimeout(timeoutId);
       setLoadingMine(false);
     }
   };
@@ -160,7 +199,16 @@ export function ProjectPanel() {
           </div>
           <div className="text-right">
             {session?.user?.email && (
-              <p className="mb-2 truncate text-xs text-gray-500 dark:text-gray-400">{session.user.email}</p>
+              <div className="group inline-flex flex-col items-end">
+                <p className="truncate text-xs text-gray-500 dark:text-gray-400">{session.user.email}</p>
+                <button
+                  type="button"
+                  onClick={() => signOut({ callbackUrl: '/login' })}
+                  className="mt-1 hidden text-xs text-gray-500 underline hover:text-gray-700 group-hover:block dark:text-gray-400 dark:hover:text-gray-200"
+                >
+                  退出登录
+                </button>
+              </div>
             )}
             {isAdminEmail(session?.user?.email) && (
               <Link
@@ -170,14 +218,6 @@ export function ProjectPanel() {
                 Agent 管理后台
               </Link>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-1.5 text-xs"
-              onClick={() => signOut({ callbackUrl: '/login' })}
-            >
-              退出登录
-            </Button>
           </div>
         </div>
 
@@ -186,7 +226,7 @@ export function ProjectPanel() {
             {creating ? '创建中…' : '新建 Notebook'}
           </Button>
           <Button
-            variant="secondary"
+            variant="ghost"
             size="icon"
             onClick={() => void Promise.all([fetchMine(), fetchMarket()])}
             aria-label="Refresh"
@@ -197,15 +237,14 @@ export function ProjectPanel() {
 
         {error && <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-        <div className="grid min-h-[calc(100vh-210px)] grid-rows-[2fr_1fr] gap-6">
-          <section className="rounded-xl border border-gray-200 bg-white/70 p-4 dark:border-gray-800 dark:bg-gray-900/40">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">我的 Notes</h2>
-              <p className="text-xs text-gray-500 dark:text-gray-400">管理自己的 notebooks</p>
+        <div className="space-y-6">
+          <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-4 dark:border-gray-800 dark:bg-gray-900/40">
+            <div className="mb-3">
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">我的Notebook</h2>
             </div>
 
             {loadingMine ? (
-              <p className="text-sm text-gray-500 dark:text-gray-400">Loading notebooks…</p>
+              <ShinyText text="Loading notebooks..." className="text-sm text-gray-500 dark:text-gray-400" />
             ) : notebooks.length === 0 ? (
               <Card className="border-dashed bg-white/60 dark:bg-gray-900/40">
                 <CardContent className="p-10 text-center text-sm text-gray-500 dark:text-gray-400">
@@ -216,52 +255,80 @@ export function ProjectPanel() {
               <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {notebooks.map((nb) => (
                   <li key={nb.id}>
-                    <Card className="h-full">
+                    <Card
+                      className="group h-full cursor-pointer transition duration-200 hover:-translate-y-0.5 hover:shadow-md"
+                      onClick={() => router.push(`/?notebookId=${encodeURIComponent(nb.id)}`)}
+                    >
                       <CardHeader className="pb-2">
-                        <div className="flex items-center justify-between gap-2">
-                          {editingId === nb.id ? (
-                            <Input
-                              value={editTitle}
-                              onChange={(e) => setEditTitle(e.target.value)}
-                              onBlur={() => void renameNotebook(nb.id, editTitle)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') void renameNotebook(nb.id, editTitle);
-                                if (e.key === 'Escape') setEditingId(null);
-                              }}
-                              autoFocus
-                            />
-                          ) : (
-                            <CardTitle className="truncate">{nb.title}</CardTitle>
-                          )}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            {editingId === nb.id ? (
+                              <Input
+                                value={editTitle}
+                                onChange={(e) => setEditTitle(e.target.value)}
+                                onBlur={() => void renameNotebook(nb.id, editTitle)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') void renameNotebook(nb.id, editTitle);
+                                  if (e.key === 'Escape') setEditingId(null);
+                                }}
+                                autoFocus
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            ) : (
+                              <CardTitle className="truncate">{nb.title}</CardTitle>
+                            )}
+                          </div>
+
+                          <details
+                            className="relative z-20"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <summary className="inline-flex h-7 w-7 cursor-pointer list-none items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200">
+                              <MoreIcon />
+                            </summary>
+                            <div className="absolute right-0 top-8 w-28 rounded-md border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingId(nb.id);
+                                  setEditTitle(nb.title);
+                                }}
+                                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
+                              >
+                                <EditIcon />
+                                重命名
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void deleteNotebook(nb.id)}
+                                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
+                              >
+                                <TrashIcon />
+                                删除
+                              </button>
+                            </div>
+                          </details>
+                        </div>
+
+                        <div className="mt-1 flex items-center gap-2">
+                          <CardDescription>创建于 {formatTime(nb.createdAt)}</CardDescription>
                           {nb.isPublished ? (
                             <span className="rounded-full bg-green-600/10 px-2 py-0.5 text-[10px] font-medium text-green-700 dark:text-green-300">
                               已发布
                             </span>
                           ) : null}
                         </div>
-                        <CardDescription>创建于 {formatTime(nb.createdAt)}</CardDescription>
                         {nb.description ? (
                           <p className="line-clamp-2 text-xs text-gray-500 dark:text-gray-400">{nb.description}</p>
-                        ) : null}
+                        ) : (
+                          <p className="line-clamp-2 text-xs text-gray-400 dark:text-gray-500">暂无简介</p>
+                        )}
                       </CardHeader>
-                      <CardContent />
-                      <CardFooter className="mt-auto gap-2">
-                        <Button size="sm" onClick={() => router.push(`/?notebookId=${encodeURIComponent(nb.id)}`)}>
-                          打开
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => {
-                            setEditingId(nb.id);
-                            setEditTitle(nb.title);
-                          }}
-                        >
-                          重命名
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => void deleteNotebook(nb.id)}>
-                          删除
-                        </Button>
+                      <CardContent className="p-0" />
+                      <CardFooter className="mt-auto justify-end pt-2">
+                        <span className="text-xs text-gray-400 opacity-0 transition group-hover:opacity-100 dark:text-gray-500">
+                          点击进入
+                        </span>
                       </CardFooter>
                     </Card>
                   </li>
@@ -270,14 +337,13 @@ export function ProjectPanel() {
             )}
           </section>
 
-          <section className="rounded-xl border border-gray-200 bg-white/70 p-4 dark:border-gray-800 dark:bg-gray-900/40">
-            <div className="mb-3 flex items-center justify-between">
+          <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-4 dark:border-gray-800 dark:bg-gray-900/40">
+            <div className="mb-3">
               <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">知识库市场</h2>
-              <p className="text-xs text-gray-500 dark:text-gray-400">浏览别人分享的 notebooks</p>
             </div>
 
             {loadingMarket ? (
-              <p className="text-sm text-gray-500 dark:text-gray-400">Loading market…</p>
+              <ShinyText text="Loading market..." className="text-sm text-gray-500 dark:text-gray-400" />
             ) : market.length === 0 ? (
               <p className="text-sm text-gray-500 dark:text-gray-400">市场里还没有可浏览的公开 notebook。</p>
             ) : (
@@ -286,7 +352,14 @@ export function ProjectPanel() {
                   <li key={nb.id}>
                     <Card className="h-full">
                       <CardHeader className="pb-2">
-                        <CardTitle className="truncate">{nb.title}</CardTitle>
+                        <div className="flex items-center gap-2">
+                          <CardTitle className="truncate">{nb.title}</CardTitle>
+                          {nb.isMine ? (
+                            <span className="shrink-0 rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-medium text-gray-700 dark:bg-white/10 dark:text-gray-200">
+                              我发布的
+                            </span>
+                          ) : null}
+                        </div>
                         <CardDescription>
                           发布者 {nb.ownerName?.trim() || nb.ownerEmail?.trim() || '匿名用户'} · {formatTime(nb.publishedAt)}
                         </CardDescription>

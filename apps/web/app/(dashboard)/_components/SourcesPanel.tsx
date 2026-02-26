@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
+import ShinyText from '@/components/ShinyText';
 
 type Source = {
   id: string;
@@ -24,6 +25,14 @@ const allowedMimes = [
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/msword',
 ];
+
+function getSourceStatusMeta(status: string) {
+  if (status === 'READY') return { label: '已完成', colorClass: 'text-green-600', dotClass: 'bg-green-600' };
+  if (status === 'FAILED') return { label: '失败', colorClass: 'text-red-600', dotClass: 'bg-red-600' };
+  if (status === 'PROCESSING') return { label: '处理中', colorClass: 'text-blue-600', dotClass: 'bg-blue-600' };
+  if (status === 'PENDING') return { label: '待处理', colorClass: 'text-gray-500', dotClass: 'bg-gray-400' };
+  return { label: status, colorClass: 'text-gray-500', dotClass: 'bg-gray-400' };
+}
 
 function TrashIcon() {
   return (
@@ -178,9 +187,9 @@ export function SourcesPanel({
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center justify-between border-b px-4">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-          Sources
+          知识库
         </h2>
-        <Button variant="secondary" size="icon" onClick={() => void fetchSources(false)} aria-label="Refresh">
+        <Button variant="ghost" size="icon" onClick={() => void fetchSources(false)} aria-label="Refresh">
           <RefreshIcon />
         </Button>
       </div>
@@ -214,8 +223,7 @@ export function SourcesPanel({
         {!readOnly && (
           <>
             <Button
-              variant="outline"
-              className="w-full text-xs"
+              className="w-full bg-black text-xs text-white hover:bg-black/90"
               disabled={uploading}
               onClick={() => fileInputRef.current?.click()}
             >
@@ -251,7 +259,9 @@ export function SourcesPanel({
 
       <ScrollArea className="flex-1 p-2">
         {loading ? (
-          <p className="p-2 text-xs text-gray-500 dark:text-gray-400">Loading…</p>
+          <div className="p-2">
+            <ShinyText text="Loading..." className="text-xs text-gray-500 dark:text-gray-400" />
+          </div>
         ) : sources.length === 0 ? (
           <p className="p-2 text-xs text-gray-500 dark:text-gray-400">
             {readOnly ? '该共享 notebook 暂无可用来源。' : '还没有来源文件，先上传一个。'}
@@ -261,43 +271,43 @@ export function SourcesPanel({
             {sources.map((s) => (
               <li key={s.id}>
                 <Card className="group border-gray-200/80 bg-white/70 p-2 dark:border-gray-800 dark:bg-gray-900/60">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="truncate text-xs font-medium" title={s.filename}>
-                      {s.filename}
-                    </p>
-                    {!readOnly && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 opacity-0 transition group-hover:opacity-100"
-                        onClick={() => void deleteSource(s.id)}
-                        disabled={deletingId === s.id}
-                        aria-label="删除来源"
-                      >
-                        <TrashIcon />
-                      </Button>
-                    )}
-                  </div>
-                  <div className="mt-1 flex items-center gap-1.5">
-                    <Badge variant="secondary" className="uppercase">
-                      {s.sourceType ?? 'unknown'}
-                    </Badge>
-                    <Badge variant="outline">{s.chunkCount ?? 0} chunks</Badge>
-                  </div>
-                  <p
-                    className={`mt-1 text-[11px] ${
-                      s.status === 'READY'
-                        ? 'text-green-600'
-                        : s.status === 'FAILED'
-                          ? 'text-red-600'
-                          : s.status === 'PROCESSING'
-                            ? 'text-blue-600'
-                            : 'text-gray-500'
-                    }`}
-                  >
-                    {s.status}
-                    {s.errorMessage ? ` — ${s.errorMessage}` : ''}
-                  </p>
+                  {(() => {
+                    const statusMeta = getSourceStatusMeta(s.status);
+                    return (
+                      <>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span className={`h-2 w-2 shrink-0 rounded-full ${statusMeta.dotClass}`} />
+                            <p className="truncate text-xs font-medium" title={s.filename}>
+                              {s.filename}
+                            </p>
+                          </div>
+                          {!readOnly && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 opacity-0 transition group-hover:opacity-100"
+                              onClick={() => void deleteSource(s.id)}
+                              disabled={deletingId === s.id}
+                              aria-label="删除来源"
+                            >
+                              <TrashIcon />
+                            </Button>
+                          )}
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5">
+                          <Badge variant="secondary" className="uppercase">
+                            {s.sourceType ?? 'unknown'}
+                          </Badge>
+                          <Badge variant="outline">{s.chunkCount ?? 0} chunks</Badge>
+                        </div>
+                        <p className={`mt-1 text-[11px] ${statusMeta.colorClass}`}>
+                          {statusMeta.label}
+                          {s.errorMessage ? ` — ${s.errorMessage}` : ''}
+                        </p>
+                      </>
+                    );
+                  })()}
                   {!readOnly && (s.status === 'FAILED' || s.status === 'PENDING') && (
                     <Button
                       variant="ghost"
@@ -305,7 +315,7 @@ export function SourcesPanel({
                       className="mt-1 h-6 px-0 text-[11px] text-blue-600 hover:text-blue-700 dark:text-blue-400"
                       onClick={() => void requeue(s.id)}
                     >
-                      Re-queue
+                      重新处理
                     </Button>
                   )}
                 </Card>

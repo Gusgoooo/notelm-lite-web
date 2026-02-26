@@ -10,16 +10,22 @@
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "db": "workspace:*",
     "dotenv": "^16.4.5",
+    "lucide-react": "^0.575.0",
     "mermaid": "^11.12.3",
+    "motion": "^12.23.12",
     "next": "14.2.35",
     "next-auth": "^4.24.10",
     "react": "^18",
     "react-dom": "^18",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "shared": "workspace:*"
+    "shared": "workspace:*",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

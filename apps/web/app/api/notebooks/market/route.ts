@@ -26,8 +26,11 @@ export async function GET() {
       .where(eq(notebooks.isPublished, true))
       .orderBy(desc(notebooks.publishedAt), desc(notebooks.createdAt));
 
-    const filtered = list.filter((row) => row.userId !== userId);
-    return NextResponse.json(filtered, { headers: { 'Cache-Control': 'no-store' } });
+    const decorated = list.map((row) => ({
+      ...row,
+      isMine: userId ? row.userId === userId : false,
+    }));
+    return NextResponse.json(decorated, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e) {
     console.error(e);
     return NextResponse.json({ error: 'Failed to load market notebooks' }, { status: 500 });

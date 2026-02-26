@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import ShinyText from '@/components/ShinyText';
 
 type Note = {
   id: string;
@@ -429,7 +430,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
       <div className="flex-1 flex flex-col min-h-0">
         <div className="h-14 px-3 border-b border-gray-200 dark:border-gray-800 flex items-center">
           <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-            Notes
+            我的笔记
           </h2>
         </div>
         <div className="flex-1 overflow-auto p-4 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
@@ -443,12 +444,12 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     <div className="flex-1 flex flex-col min-h-0 relative">
       <div className="h-14 px-3 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-          Notes
+          我的笔记
         </h2>
         <button
           type="button"
           onClick={() => void fetchNotes()}
-          className="h-7 w-7 inline-flex items-center justify-center rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200"
+          className="h-7 w-7 inline-flex items-center justify-center rounded text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-100"
           aria-label="Refresh"
           title="Refresh"
         >
@@ -477,7 +478,9 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
 
       <div className="flex-1 min-h-0 overflow-auto p-2 pb-44">
         {loading ? (
-          <p className="text-xs text-gray-500 dark:text-gray-400 p-2">Loading notes…</p>
+          <div className="p-2">
+            <ShinyText text="Loading notes..." className="text-xs text-gray-500 dark:text-gray-400" />
+          </div>
         ) : notes.length === 0 ? (
           <p className="text-xs text-gray-500 dark:text-gray-400 p-2">
             还没有笔记，可在聊天区点击“保存到笔记”。
