@@ -6,9 +6,32 @@ import { randomUUID } from 'crypto';
 const TOP_K = 8;
 const PER_SOURCE_CAP = 4;
 const CANDIDATE_LIMIT = 240;
+let envLogged = false;
+
+function cleanEnv(v: string | undefined): string {
+  if (!v) return '';
+  const t = v.trim();
+  if (
+    (t.startsWith('"') && t.endsWith('"')) ||
+    (t.startsWith("'") && t.endsWith("'"))
+  ) {
+    return t.slice(1, -1).trim();
+  }
+  return t;
+}
 
 export async function POST(request: Request) {
   try {
+    if (!envLogged) {
+      envLogged = true;
+      const provider = cleanEnv(process.env.EMBEDDING_PROVIDER);
+      const openrouterKeyLen = cleanEnv(process.env.OPENROUTER_API_KEY).length;
+      const openaiKeyLen = cleanEnv(process.env.OPENAI_API_KEY).length;
+      console.log(
+        `Web chat env check: EMBEDDING_PROVIDER=${provider || '<unset>'}, OPENROUTER_API_KEY_LEN=${openrouterKeyLen}, OPENAI_API_KEY_LEN=${openaiKeyLen}`
+      );
+    }
+
     const body = await request.json();
     const { notebookId, conversationId: bodyConvId, userMessage } = body ?? {};
     if (!notebookId || typeof userMessage !== 'string' || !userMessage.trim()) {

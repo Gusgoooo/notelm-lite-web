@@ -1,4 +1,4 @@
-import { readEnv } from '../utils/env.js';
+import { readEnv, readSecretEnv } from '../utils/env.js';
 
 type ProviderName = 'openai' | 'openrouter';
 
@@ -43,7 +43,7 @@ function getChatConfigs(): ChatProviderConfig[] {
   const configs: ChatProviderConfig[] = [];
   for (const provider of order) {
     if (provider === 'openai') {
-      const apiKey = readEnv('OPENAI_API_KEY');
+      const apiKey = readSecretEnv('OPENAI_API_KEY');
       if (!apiKey) continue;
       const baseUrl = readEnv('OPENAI_BASE_URL', 'https://api.openai.com/v1');
       const models = uniqueNonEmpty([
@@ -54,7 +54,7 @@ function getChatConfigs(): ChatProviderConfig[] {
       for (const model of models) configs.push({ name: 'openai', baseUrl, apiKey, model });
       continue;
     }
-    const apiKey = readEnv('OPENROUTER_API_KEY');
+    const apiKey = readSecretEnv('OPENROUTER_API_KEY');
     if (!apiKey) continue;
     const baseUrl = readEnv('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1');
     const models = uniqueNonEmpty([

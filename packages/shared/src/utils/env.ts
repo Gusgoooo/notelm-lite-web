@@ -15,3 +15,15 @@ export function readEnv(name: string, fallback = ''): string {
   const cleaned = stripSurroundingQuotes(raw);
   return cleaned.length > 0 ? cleaned : fallback;
 }
+
+const PLACEHOLDER_SECRETS = new Set([
+  'sk-your-key-here',
+  'sk-or-v1-your-key',
+  'replace-with-32-byte-random-string',
+]);
+
+export function readSecretEnv(name: string): string {
+  const value = readEnv(name);
+  if (!value) return '';
+  return PLACEHOLDER_SECRETS.has(value) ? '' : value;
+}
