@@ -3,9 +3,19 @@ import { db, sources, sourceChunks, eq, desc, inArray, sql } from 'db';
 import { randomUUID } from 'crypto';
 import { getNotebookAccess } from '@/lib/notebook-access';
 
-function getSourceType(mime: string | null, filename: string): 'pdf' | 'word' | '复制文本' | 'python脚本' {
+function getSourceType(
+  mime: string | null,
+  filename: string
+): 'pdf' | 'word' | '复制文本' | 'python脚本' | 'skills技能包' {
   const normalizedMime = (mime ?? '').toLowerCase();
   const lowerName = filename.toLowerCase();
+  if (
+    normalizedMime.includes('application/zip') ||
+    normalizedMime.includes('application/x-zip-compressed') ||
+    lowerName.endsWith('.zip')
+  ) {
+    return 'skills技能包';
+  }
   if (
     normalizedMime.includes('text/x-python') ||
     normalizedMime.includes('application/x-python-code') ||

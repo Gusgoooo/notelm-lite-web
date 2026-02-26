@@ -2,10 +2,12 @@ import type { IDocumentLoader } from './types.js';
 import { PdfLoader } from './PdfLoader.js';
 import { WordLoader } from './WordLoader.js';
 import { TextLoader } from './TextLoader.js';
+import { ZipSkillLoader } from './ZipSkillLoader.js';
 
 const pdfLoader = new PdfLoader();
 const wordLoader = new WordLoader();
 const textLoader = new TextLoader();
+const zipSkillLoader = new ZipSkillLoader();
 
 const loadersByMime: Record<string, IDocumentLoader> = {
   'application/pdf': pdfLoader,
@@ -17,6 +19,8 @@ const loadersByMime: Record<string, IDocumentLoader> = {
   'text/x-python-script': textLoader,
   'text/python': textLoader,
   'application/x-python-code': textLoader,
+  'application/zip': zipSkillLoader,
+  'application/x-zip-compressed': zipSkillLoader,
 };
 
 export function getLoaderForMime(mime: string | null): IDocumentLoader {
@@ -29,3 +33,4 @@ export function getLoaderForMime(mime: string | null): IDocumentLoader {
 export { PdfLoader } from './PdfLoader.js';
 export { WordLoader } from './WordLoader.js';
 export { TextLoader } from './TextLoader.js';
+export { ZipSkillLoader } from './ZipSkillLoader.js';

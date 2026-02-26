@@ -9,6 +9,7 @@ export {
   PdfLoader,
   WordLoader,
   TextLoader,
+  ZipSkillLoader,
   getLoaderForMime,
 } from './loaders/index.js';
 export { createEmbeddings, getEmbeddingDimensions } from './providers/embedding.js';

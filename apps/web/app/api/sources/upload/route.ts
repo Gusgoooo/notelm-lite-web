@@ -25,6 +25,7 @@ function resolveMimeType(file: File, ext: string): string {
   if (ext === 'doc') return 'application/msword';
   if (ext === 'py') return 'text/x-python';
   if (ext === 'txt' || ext === 'md') return 'text/plain';
+  if (ext === 'zip') return 'application/zip';
   return 'application/octet-stream';
 }
 

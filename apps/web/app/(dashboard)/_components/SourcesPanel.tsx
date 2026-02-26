@@ -16,7 +16,7 @@ type Source = {
   status: 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | string;
   errorMessage: string | null;
   chunkCount?: number;
-  sourceType?: 'pdf' | 'word' | '复制文本' | 'python脚本' | string;
+  sourceType?: 'pdf' | 'word' | '复制文本' | 'python脚本' | 'skills技能包' | string;
   createdAt: string;
 };
 
@@ -28,6 +28,8 @@ const allowedMimes = [
   'text/x-python-script',
   'application/x-python-code',
   'text/plain',
+  'application/zip',
+  'application/x-zip-compressed',
 ];
 
 function getExt(filename: string): string {
@@ -125,9 +127,9 @@ export function SourcesPanel({
     const ext = getExt(file.name || '');
     const isKnownType =
       allowedMimes.includes((file.type || '').toLowerCase().trim()) ||
-      ['pdf', 'docx', 'doc', 'py'].includes(ext);
+      ['pdf', 'docx', 'doc', 'py', 'zip'].includes(ext);
     if (!isKnownType) {
-      alert('请选择 PDF / Word / Python 脚本（.pdf / .docx / .doc / .py）');
+      alert('请选择 PDF / Word / Python 脚本 / Skills ZIP（.pdf / .docx / .doc / .py / .zip）');
       return;
     }
     if (isPythonFile(file)) {
@@ -253,7 +255,7 @@ export function SourcesPanel({
         <input
           ref={fileInputRef}
           type="file"
-          accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/msword,.doc,text/x-python,.py"
+          accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/msword,.doc,text/x-python,.py,application/zip,.zip"
           className="hidden"
           onChange={uploadFile}
           disabled={uploading || readOnly}
@@ -265,7 +267,7 @@ export function SourcesPanel({
               disabled={uploading}
               onClick={() => fileInputRef.current?.click()}
             >
-              {uploading ? '上传中…' : '上传 PDF / Word / Python'}
+              {uploading ? '上传中…' : '上传 PDF / Word / Python / Skills ZIP'}
             </Button>
             <div className="space-y-1">
               <Textarea
