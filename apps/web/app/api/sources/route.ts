@@ -6,9 +6,15 @@ import { getNotebookAccess } from '@/lib/notebook-access';
 function getSourceType(
   mime: string | null,
   filename: string
-): 'pdf' | 'word' | '复制文本' | 'python脚本' | 'skills技能包' {
+): 'pdf' | 'word' | '复制文本' | 'python脚本' | 'skills技能包' | '联网检索' {
   const normalizedMime = (mime ?? '').toLowerCase();
   const lowerName = filename.toLowerCase();
+  if (
+    normalizedMime.includes('application/x-web-source') ||
+    normalizedMime.includes('application/x-websearch-source')
+  ) {
+    return '联网检索';
+  }
   if (
     normalizedMime.includes('application/zip') ||
     normalizedMime.includes('application/x-zip-compressed') ||

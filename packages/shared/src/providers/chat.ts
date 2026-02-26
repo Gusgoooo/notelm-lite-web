@@ -10,6 +10,8 @@ type ChatProviderConfig = {
 };
 
 const OPENROUTER_CHAT_FALLBACK_MODELS = [
+  'perplexity/sonar-pro',
+  'perplexity/sonar',
   'deepseek/deepseek-chat-v3-0324',
   'deepseek/deepseek-r1',
   'deepseek/deepseek-chat',
@@ -58,6 +60,7 @@ function getChatConfigs(): ChatProviderConfig[] {
     if (!apiKey) continue;
     const baseUrl = readEnv('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1');
     const models = uniqueNonEmpty([
+      readEnv('OPENROUTER_SEARCH_MODEL', 'perplexity/sonar-pro') || undefined,
       readEnv('OPENROUTER_CHAT_MODEL') || undefined,
       readEnv('CHAT_MODEL') || undefined,
       ...OPENROUTER_CHAT_FALLBACK_MODELS,

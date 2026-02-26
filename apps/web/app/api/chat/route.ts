@@ -86,6 +86,22 @@ function sanitizeSkillAnswer(answer: string, allowScriptExecution: boolean): str
   return text.replace(/\n{3,}/g, '\n\n').trim();
 }
 
+function extractCitationNumbers(answer: string, max: number): number[] {
+  const seen = new Set<number>();
+  const out: number[] = [];
+  const re = /\[(\d{1,3})]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(answer)) !== null) {
+    const n = Number.parseInt(m[1], 10);
+    if (!Number.isFinite(n)) continue;
+    if (n < 1 || n > max) continue;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
+
 export async function POST(request: Request) {
   try {
     if (!envLogged) {
@@ -193,6 +209,7 @@ export async function POST(request: Request) {
         pageStart?: number;
         pageEnd?: number;
         snippet: string;
+        refNumber?: number;
         score?: number;
         distance?: number;
       }> = [],
@@ -515,7 +532,14 @@ export async function POST(request: Request) {
     const answer = useSkillPlanningTemplate
       ? sanitizeSkillAnswer(rawAnswer, readyPythonSources.length > 0)
       : rawAnswer;
-    const citationsForClient = selected.map((r) => {
+    const citedNumbers = extractCitationNumbers(answer, selected.length);
+    const rowsForCitations =
+      citedNumbers.length > 0
+        ? citedNumbers
+            .map((n) => ({ row: selected[n - 1], refNumber: n }))
+            .filter((item) => Boolean(item.row))
+        : selected.map((row, idx) => ({ row, refNumber: idx + 1 }));
+    const citationsForClient = rowsForCitations.map(({ row: r, refNumber }) => {
       const dist =
         typeof r.distance === 'number'
           ? r.distance
@@ -530,17 +554,19 @@ export async function POST(request: Request) {
         pageEnd: r.pageEnd ?? undefined,
         snippet: r.content.slice(0, 200) + (r.content.length > 200 ? '…' : ''),
         fullContent: r.content,
+        refNumber,
         score,
         distance: dist,
       };
     });
     const citationsForDb = citationsForClient.map(
-      ({ sourceId, sourceTitle, pageStart, pageEnd, snippet, score, distance }) => ({
+      ({ sourceId, sourceTitle, pageStart, pageEnd, snippet, refNumber, score, distance }) => ({
         sourceId,
         sourceTitle,
         pageStart,
         pageEnd,
         snippet,
+        refNumber,
         score,
         distance,
       })

@@ -16,10 +16,11 @@ type Source = {
   status: 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | string;
   errorMessage: string | null;
   chunkCount?: number;
-  sourceType?: 'pdf' | 'word' | '复制文本' | 'python脚本' | 'skills技能包' | string;
+  sourceType?: 'pdf' | 'word' | '复制文本' | 'python脚本' | 'skills技能包' | '联网检索' | string;
   createdAt: string;
 };
 
+const MAX_WEB_SOURCES = 20;
 const allowedMimes = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -95,6 +96,9 @@ export function SourcesPanel({
   const [pasteText, setPasteText] = useState('');
   const [pasting, setPasting] = useState(false);
   const [pasteStatus, setPasteStatus] = useState('');
+  const [webTopic, setWebTopic] = useState('');
+  const [webSearching, setWebSearching] = useState(false);
+  const [webSearchStatus, setWebSearchStatus] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchSources = useCallback(async (showLoading = false) => {
@@ -223,6 +227,38 @@ export function SourcesPanel({
     }
   };
 
+  const addWebSources = async () => {
+    if (readOnly) return;
+    const topic = webTopic.trim();
+    if (!topic || webSearching) return;
+    setWebSearching(true);
+    setWebSearchStatus('联网检索中，正在抓取来源…');
+    try {
+      const res = await fetch('/api/sources/web-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notebookId,
+          topic,
+          limit: MAX_WEB_SOURCES,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setWebSearchStatus(data?.error ?? '联网检索失败');
+        return;
+      }
+      const added = Number(data?.added ?? 0);
+      const skipped = Number(data?.skipped ?? 0);
+      setWebSearchStatus(
+        `联网检索完成，新增 ${added} 条来源${skipped > 0 ? `，跳过 ${skipped} 条重复来源` : ''}`
+      );
+      await fetchSources(false);
+    } finally {
+      setWebSearching(false);
+    }
+  };
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center justify-between border-b px-4">
@@ -269,6 +305,47 @@ export function SourcesPanel({
             >
               {uploading ? '上传中…' : '上传 PDF / Word / Python / Skills ZIP'}
             </Button>
+            <div className="space-y-1">
+              <p className="text-[11px] text-gray-500 dark:text-gray-400">联网检索（最多 20 条来源）</p>
+              <div className="flex items-center gap-2">
+                <input
+                  value={webTopic}
+                  onChange={(e) => setWebTopic(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void addWebSources();
+                    }
+                  }}
+                  placeholder="输入主题，例如：vibecoding 最新趋势"
+                  className="h-8 w-full rounded-md border border-gray-200 bg-white px-2 text-xs outline-none transition focus:border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:focus:border-gray-600"
+                  disabled={webSearching}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  className="h-8 shrink-0 px-2 text-[11px]"
+                  onClick={() => void addWebSources()}
+                  disabled={webSearching || !webTopic.trim()}
+                >
+                  {webSearching ? '检索中…' : '检索'}
+                </Button>
+              </div>
+              {webSearchStatus ? (
+                <p
+                  className={`text-[11px] ${
+                    webSearching
+                      ? 'text-blue-600'
+                      : webSearchStatus.includes('失败')
+                        ? 'text-red-600'
+                        : 'text-gray-500'
+                  }`}
+                >
+                  {webSearchStatus}
+                </p>
+              ) : null}
+            </div>
             <div className="space-y-1">
               <Textarea
                 value={pasteText}

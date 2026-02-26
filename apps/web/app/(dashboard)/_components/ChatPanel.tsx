@@ -5,7 +5,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ShinyText from '@/components/ShinyText';
 
@@ -16,6 +15,7 @@ type Citation = {
   pageEnd?: number;
   snippet: string;
   fullContent?: string;
+  refNumber?: number;
   score?: number;
   distance?: number;
 };
@@ -92,6 +92,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [tailVersion, setTailVersion] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const fetchHistoryPage = useCallback(
     async (page: number, reset: boolean) => {
@@ -205,8 +206,8 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           知识库问答
         </h2>
       </div>
-      <ScrollArea className="flex-1 p-4">
-        <div className="mx-auto flex w-2/3 flex-col gap-4">
+      <ScrollArea className="flex-1 p-4 pb-36">
+        <div className="mx-auto flex w-full max-w-[680px] flex-col gap-4">
           {loadingHistory ? (
             <div className="text-center">
               <ShinyText text="Loading chat history..." className="text-xs text-gray-500 dark:text-gray-400" />
@@ -232,7 +233,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               {messages.map((m) => (
                 <div
                   key={m.id}
-                  className={`max-w-[92%] rounded-xl border p-3 shadow-sm ${
+                  className={`w-full max-w-[680px] rounded-xl border p-3 shadow-sm ${
                     m.role === 'user'
                       ? 'ml-auto mr-0 border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800'
                       : 'ml-0 mr-auto border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900'
@@ -293,7 +294,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                 <details className="group">
                                   <summary className="flex cursor-pointer list-none items-center gap-1.5 text-gray-600 hover:underline dark:text-gray-300">
                                     <Badge variant="secondary" className="h-5 w-5 justify-center rounded-full px-0">
-                                      {i + 1}
+                                      {c.refNumber ?? i + 1}
                                     </Badge>
                                     <span>{c.sourceTitle}</span>
                                     {c.pageStart != null && (
@@ -320,7 +321,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
             </>
           )}
           {loading && (
-            <div className="ml-0 mr-auto max-w-[92%] rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-500 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+            <div className="ml-0 mr-auto w-full max-w-[680px] rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-500 shadow-sm dark:border-gray-800 dark:bg-gray-900">
               <ShinyText
                 text="Thinking..."
                 speed={2}
@@ -334,25 +335,41 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           <div ref={bottomRef} />
         </div>
       </ScrollArea>
-      <div className="border-t p-4">
-        <div className="mx-auto w-2/3">
+      <div className="px-4 pb-4">
+        <div className="mx-auto w-full max-w-[680px]">
           <form
             onSubmit={(e) => {
               e.preventDefault();
               void send();
             }}
-            className="flex gap-2"
+            className="relative"
           >
-            <Input
-              type="text"
+            <textarea
+              ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about your sources"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              placeholder="请输入你的问题..."
               disabled={loading}
+              className="h-[108px] w-full resize-none rounded-[20px] border border-gray-200 bg-gray-50 px-4 pb-12 pt-4 text-sm text-gray-900 shadow-sm outline-none transition focus:border-gray-300 focus:bg-white dark:border-gray-700 dark:bg-gray-900/80 dark:text-gray-100 dark:focus:border-gray-600 dark:focus:bg-gray-900"
             />
-            <Button type="submit" disabled={loading || !input.trim()}>
-              Send
-            </Button>
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              className="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-white/90"
+              aria-label="发送"
+              title="发送"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.4">
+                <path d="M12 19V6" />
+                <path d="m6 12 6-6 6 6" />
+              </svg>
+            </button>
           </form>
         </div>
       </div>

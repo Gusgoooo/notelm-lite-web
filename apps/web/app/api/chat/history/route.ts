@@ -10,6 +10,7 @@ type Citation = {
   pageStart?: number;
   pageEnd?: number;
   snippet: string;
+  refNumber?: number;
   score?: number;
   distance?: number;
 };
@@ -29,6 +30,7 @@ function normalizeCitations(value: unknown): Citation[] {
       snippet: row.snippet,
       pageStart: typeof row.pageStart === 'number' ? row.pageStart : undefined,
       pageEnd: typeof row.pageEnd === 'number' ? row.pageEnd : undefined,
+      refNumber: typeof row.refNumber === 'number' ? row.refNumber : undefined,
       score: typeof row.score === 'number' ? row.score : undefined,
       distance: typeof row.distance === 'number' ? row.distance : undefined,
     });

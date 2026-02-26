@@ -110,6 +110,9 @@ export const messages = pgTable(
       pageStart?: number;
       pageEnd?: number;
       snippet: string;
+      refNumber?: number;
+      score?: number;
+      distance?: number;
     }>>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
