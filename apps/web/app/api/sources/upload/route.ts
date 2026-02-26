@@ -77,18 +77,47 @@ export async function POST(request: Request) {
     const ext = filename.split('.').pop()?.toLowerCase() || 'pdf';
     const mime = resolveMimeType(file, ext);
     const key = `${notebookId}/${sourceId}.${ext}`;
-    const storage = getStorage();
-    await storage.upload(key, buffer);
+
+    // Insert first so failed uploads are traceable in DB.
     await db.insert(sources).values({
       id: sourceId,
       notebookId,
       filename,
       fileUrl: key,
       mime,
-      status: 'PENDING',
+      status: 'PROCESSING',
+      errorMessage: null,
     });
-    const [row] = await db.select().from(sources).where(eq(sources.id, sourceId));
-    return NextResponse.json(row);
+
+    const storage = getStorage();
+    try {
+      await storage.upload(key, buffer);
+      await db
+        .update(sources)
+        .set({
+          status: 'PENDING',
+          errorMessage: null,
+        })
+        .where(eq(sources.id, sourceId));
+      const [row] = await db.select().from(sources).where(eq(sources.id, sourceId));
+      return NextResponse.json(row);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await db
+        .update(sources)
+        .set({
+          status: 'FAILED',
+          errorMessage: `上传失败：${message}`,
+        })
+        .where(eq(sources.id, sourceId));
+      return NextResponse.json(
+        {
+          error: `上传失败：${message}`,
+          sourceId,
+        },
+        { status: 500 }
+      );
+    }
   } catch (e) {
     console.error(e);
     return NextResponse.json(

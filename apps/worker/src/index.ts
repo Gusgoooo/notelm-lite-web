@@ -73,6 +73,12 @@ function formatWorkerError(error: unknown): string {
   ) {
     return `对象存储中未找到文件（Key 不存在）：${message}。请确认 Web 与 Worker 的 S3 配置完全一致（S3_BUCKET/S3_ENDPOINT/S3_REGION）。`;
   }
+  if (normalized.includes('invalid pdf structure')) {
+    return 'PDF 结构无效，解析失败。请将文件重新导出为标准 PDF（建议 PDF/A），或先打印为新 PDF 后重试。';
+  }
+  if (normalized.includes('password') || normalized.includes('encrypted')) {
+    return 'PDF 似乎已加密或有密码保护，当前无法解析。请先去除密码后再上传。';
+  }
   return message;
 }
 

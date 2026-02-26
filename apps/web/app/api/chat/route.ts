@@ -521,7 +521,7 @@ export async function POST(request: Request) {
     const viralSkillRule = useDirectViralScript
       ? `\nViral-video-copywriting skill is active. Produce a complete, production-ready Chinese short-video script in one response. Do NOT ask users to choose options.\nOutput sections exactly:\n1) 标题\n2) 时长与受众定位\n3) 完整脚本（按秒段：开场/发展/高潮/结尾，每段含画面、字幕/旁白、音效）\n4) 视觉风格建议（配色/镜头/字幕）\n5) 音乐与音效建议\n6) 互动设计（评论区引导）\n7) 可直接拍摄的执行清单\nConstraints:\n- Content must be original, not copied from source text.\n- Include strong contrast, humor, and clear CTA.\n- No shell commands, no pseudo tool-execution steps.`
       : '';
-    const systemPrompt = `You are a helpful assistant. Answer based only on the provided sources and script insights. Always cite source numbers like [1] when using source chunks. If script insights are used, explicitly mention "脚本分析" in your answer. If the question cannot be answered from provided context, say so.${skillTemplateRule}${viralSkillRule}`;
+    const systemPrompt = `You are a helpful assistant. Unless the user explicitly requests another language, always answer in Simplified Chinese. Answer based only on the provided sources and script insights. Always cite source numbers like [1] when using source chunks. If script insights are used, explicitly mention "脚本分析" in your answer. If the question cannot be answered from provided context, say so.${skillTemplateRule}${viralSkillRule}`;
     const userPrompt = `Sources:\n${context}\n\nScript Insights:\n${scriptContext || '(none)'}\n\nUser question: ${userMessage.trim()}`;
     const chatMessages = [
       { role: 'system' as const, content: systemPrompt },

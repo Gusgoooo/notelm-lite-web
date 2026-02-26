@@ -111,7 +111,7 @@ async function searchWebViaOpenRouter(input: {
         {
           role: 'system',
           content:
-            'You are a web research assistant. Search the public web and return ONLY JSON with this shape: {"sources":[{"title":"...","url":"https://...","snippet":"..."}]}. No markdown.',
+            'You are a web research assistant. Search the public web and return ONLY JSON with this shape: {"sources":[{"title":"...","url":"https://...","snippet":"..."}]}. No markdown. Prefer Chinese and English sources. Do not return Japanese sources unless the user explicitly asks for Japanese.',
         },
         {
           role: 'user',
@@ -120,9 +120,10 @@ async function searchWebViaOpenRouter(input: {
             `Find up to ${input.limit} reliable, diverse web sources.\n` +
             `Requirements:\n` +
             `1) URL must be direct page URL.\n` +
-            `2) snippet should summarize key relevance in Chinese.\n` +
+            `2) snippet must be Simplified Chinese.\n` +
             `3) avoid duplicates and spam.\n` +
-            `4) return JSON only.`,
+            `4) prioritize Chinese/English websites, avoid Japanese websites unless topic requires Japanese.\n` +
+            `5) return JSON only.`,
         },
       ],
     }),
