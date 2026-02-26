@@ -14,11 +14,6 @@ type Note = {
 
 type GenerateMode = 'infographic' | 'summary' | 'mindmap' | 'webpage';
 
-type UndoInfographicState = {
-  generatedNoteId: string;
-  deletedNotes: Note[];
-};
-
 function TrashIcon() {
   return (
     <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
@@ -187,11 +182,8 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [expandedDraft, setExpandedDraft] = useState('');
-  const [savingExpanded, setSavingExpanded] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generatingMode, setGeneratingMode] = useState<GenerateMode | null>(null);
-  const [undoingInfographic, setUndoingInfographic] = useState(false);
-  const [undoInfographicState, setUndoInfographicState] = useState<UndoInfographicState | null>(null);
   const [error, setError] = useState('');
   const [mermaidSvg, setMermaidSvg] = useState('');
   const [mermaidLoading, setMermaidLoading] = useState(false);
@@ -231,7 +223,6 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     setError('');
     setMermaidSvg('');
     setMermaidError('');
-    setUndoInfographicState(null);
   }, [notebookId]);
 
   const expandedNote = useMemo(
@@ -338,83 +329,10 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
       } else {
         setSelectedIds([]);
       }
-      if (mode === 'infographic' && data?.replaced && Array.isArray(data?.deletedNotes)) {
-        setUndoInfographicState({
-          generatedNoteId: data.note.id,
-          deletedNotes: data.deletedNotes,
-        });
-      } else {
-        setUndoInfographicState(null);
-      }
       window.dispatchEvent(new CustomEvent('notes-updated'));
     } finally {
       setGenerating(false);
       setGeneratingMode(null);
-    }
-  };
-
-  const undoInfographic = async () => {
-    if (!notebookId || !undoInfographicState || undoingInfographic) return;
-    setUndoingInfographic(true);
-    setError('');
-    try {
-      const res = await fetch('/api/notes/undo-infographic', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          notebookId,
-          generatedNoteId: undoInfographicState.generatedNoteId,
-          deletedNotes: undoInfographicState.deletedNotes,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.error ?? '撤销失败');
-        return;
-      }
-      setUndoInfographicState(null);
-      setSelectedIds([]);
-      setExpandedId(null);
-      setExpandedDraft('');
-      await fetchNotes();
-      window.dispatchEvent(new CustomEvent('notes-updated'));
-    } finally {
-      setUndoingInfographic(false);
-    }
-  };
-
-  const saveExpanded = async () => {
-    if (!expandedNote || savingExpanded) return;
-    setSavingExpanded(true);
-    setError('');
-    try {
-      const res = await fetch(`/api/notes/${expandedNote.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: expandedDraft }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data?.error ?? '保存失败');
-        return;
-      }
-      const data = await res.json().catch(() => null);
-      if (data && typeof data === 'object') {
-        setNotes((prev) =>
-          prev.map((note) =>
-            note.id === expandedNote.id
-              ? {
-                  ...note,
-                  content: expandedDraft,
-                  updatedAt: (data as Note).updatedAt ?? note.updatedAt,
-                }
-              : note
-          )
-        );
-      }
-      window.dispatchEvent(new CustomEvent('notes-updated'));
-    } finally {
-      setSavingExpanded(false);
     }
   };
 
@@ -457,21 +375,8 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
         </button>
       </div>
 
-      {(undoInfographicState || error) && (
+      {error && (
         <div className="px-3 pt-2 space-y-2">
-          {undoInfographicState && (
-            <div className="rounded border border-blue-200 dark:border-blue-800 p-2 bg-blue-50/60 dark:bg-blue-900/20 flex items-center justify-between gap-2">
-              <p className="text-xs text-blue-700 dark:text-blue-300">信息图转换已生效，可撤销本次替换。</p>
-              <button
-                type="button"
-                onClick={() => void undoInfographic()}
-                disabled={undoingInfographic}
-                className="text-xs text-blue-700 dark:text-blue-300 hover:underline disabled:opacity-60"
-              >
-                {undoingInfographic ? '撤销中…' : '撤销'}
-              </button>
-            </div>
-          )}
           {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
         </div>
       )}
@@ -742,42 +647,10 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
                   )}
                 </>
               ) : (
-                <textarea
-                  value={expandedDraft}
-                  onChange={(e) => setExpandedDraft(e.target.value)}
-                  className="w-full min-h-[55vh] text-sm font-mono rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 p-3 resize-y"
-                  spellCheck={false}
-                />
+                <pre className="w-full min-h-[55vh] text-sm font-mono whitespace-pre-wrap rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+                  {expandedDraft}
+                </pre>
               )}
-            </div>
-
-            <div className="p-3 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!undoInfographicState || undoInfographicState.generatedNoteId !== expandedNote.id) {
-                    setError('当前笔记没有可撤销的转换记录');
-                    return;
-                  }
-                  void undoInfographic();
-                }}
-                disabled={
-                  undoingInfographic ||
-                  !undoInfographicState ||
-                  undoInfographicState.generatedNoteId !== expandedNote.id
-                }
-                className="text-xs px-3 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:text-blue-600 disabled:opacity-50"
-              >
-                {undoingInfographic ? '撤销中…' : '撤销转换'}
-              </button>
-              <button
-                type="button"
-                onClick={() => void saveExpanded()}
-                disabled={savingExpanded || expandedDraft === expandedNote.content}
-                className="text-xs px-3 py-1.5 rounded bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900 disabled:opacity-50"
-              >
-                {savingExpanded ? '保存中…' : '保存'}
-              </button>
             </div>
           </div>
         </div>

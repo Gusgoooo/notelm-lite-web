@@ -421,36 +421,11 @@ export async function POST(request: Request) {
       createdAt: now,
       updatedAt: now,
     };
-
-    const shouldReplaceOriginals = mode === 'infographic';
-    const deletedNotesForUndo = shouldReplaceOriginals
-      ? ordered.map((n) => ({
-          id: n.id,
-          notebookId: n.notebookId,
-          title: n.title,
-          content: n.content,
-          createdAt: n.createdAt,
-          updatedAt: n.updatedAt,
-        }))
-      : [];
-
-    if (shouldReplaceOriginals) {
-      await db.transaction(async (tx) => {
-        await tx.insert(notes).values(newNote);
-        await tx
-          .delete(notes)
-          .where(and(eq(notes.notebookId, notebookId), inArray(notes.id, noteIds)));
-      });
-    } else {
-      await db.insert(notes).values(newNote);
-    }
+    await db.insert(notes).values(newNote);
 
     const [created] = await db.select().from(notes).where(eq(notes.id, newId));
     return NextResponse.json({
       note: created ?? newNote,
-      deletedNoteIds: shouldReplaceOriginals ? noteIds : [],
-      replaced: shouldReplaceOriginals,
-      deletedNotes: deletedNotesForUndo,
       mode,
     });
   } catch (e) {
