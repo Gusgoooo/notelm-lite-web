@@ -261,9 +261,6 @@ export function SourcesPanel({
             >
               {uploading ? '上传中…' : '上传 PDF / Word / Python'}
             </Button>
-            <p className="text-[11px] text-amber-700 dark:text-amber-300">
-              上传 Python 脚本后将自动在沙箱执行，结果会影响当前 Notebook 的整体问答表现。
-            </p>
             <div className="space-y-1">
               <Textarea
                 value={pasteText}

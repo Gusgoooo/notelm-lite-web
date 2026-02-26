@@ -4,6 +4,16 @@ import { db, sources, eq } from 'db';
 import { getStorage } from 'shared';
 import { getNotebookAccess } from '@/lib/notebook-access';
 
+function envStorageType(): string {
+  const raw = (process.env.STORAGE_TYPE ?? 'filesystem').trim();
+  const cleaned =
+    (raw.startsWith('"') && raw.endsWith('"')) ||
+    (raw.startsWith("'") && raw.endsWith("'"))
+      ? raw.slice(1, -1).trim()
+      : raw;
+  return cleaned.toLowerCase();
+}
+
 function buildTitleFromText(text: string): string {
   const firstLine = text.split('\n')[0]?.trim() ?? '';
   if (!firstLine) return 'Pasted text';
@@ -12,6 +22,14 @@ function buildTitleFromText(text: string): string {
 
 export async function POST(request: Request) {
   try {
+    const storageType = envStorageType();
+    if (process.env.NODE_ENV === 'production' && storageType !== 's3') {
+      return NextResponse.json(
+        { error: '生产环境必须使用 S3 存储（请设置 STORAGE_TYPE=s3）。' },
+        { status: 500 }
+      );
+    }
+
     const body = await request.json();
     const notebookId = typeof body?.notebookId === 'string' ? body.notebookId : '';
     const rawText = typeof body?.text === 'string' ? body.text : '';

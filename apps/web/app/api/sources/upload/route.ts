@@ -4,6 +4,16 @@ import { getStorage } from 'shared';
 import { randomUUID } from 'crypto';
 import { getNotebookAccess } from '@/lib/notebook-access';
 
+function envStorageType(): string {
+  const raw = (process.env.STORAGE_TYPE ?? 'filesystem').trim();
+  const cleaned =
+    (raw.startsWith('"') && raw.endsWith('"')) ||
+    (raw.startsWith("'") && raw.endsWith("'"))
+      ? raw.slice(1, -1).trim()
+      : raw;
+  return cleaned.toLowerCase();
+}
+
 function resolveMimeType(file: File, ext: string): string {
   const declared = (file.type || '').toLowerCase().trim();
   if (declared) return declared;
@@ -17,6 +27,14 @@ function resolveMimeType(file: File, ext: string): string {
 
 export async function POST(request: Request) {
   try {
+    const storageType = envStorageType();
+    if (process.env.NODE_ENV === 'production' && storageType !== 's3') {
+      return NextResponse.json(
+        { error: '生产环境必须使用 S3 存储（请设置 STORAGE_TYPE=s3），否则 worker 无法读取上传文件。' },
+        { status: 500 }
+      );
+    }
+
     const formData = await request.formData();
     const notebookId = formData.get('notebookId');
     const file = formData.get('file') as File | null;
