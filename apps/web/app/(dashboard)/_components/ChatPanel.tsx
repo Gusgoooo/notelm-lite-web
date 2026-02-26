@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 type Citation = {
   sourceId: string;
@@ -44,29 +48,27 @@ function MarkdownContent({ content }: { content: string }) {
       remarkPlugins={[remarkGfm]}
       components={{
         p: ({ children }) => <p className="my-1 leading-6">{children}</p>,
-        ul: ({ children }) => <ul className="my-1 list-disc pl-5 space-y-1">{children}</ul>,
-        ol: ({ children }) => <ol className="my-1 list-decimal pl-5 space-y-1">{children}</ol>,
+        ul: ({ children }) => <ul className="my-1 list-disc space-y-1 pl-5">{children}</ul>,
+        ol: ({ children }) => <ol className="my-1 list-decimal space-y-1 pl-5">{children}</ol>,
         li: ({ children }) => <li>{children}</li>,
-        h1: ({ children }) => <h1 className="text-base font-semibold mt-2 mb-1">{children}</h1>,
-        h2: ({ children }) => <h2 className="text-sm font-semibold mt-2 mb-1">{children}</h2>,
-        h3: ({ children }) => <h3 className="text-sm font-semibold mt-2 mb-1">{children}</h3>,
+        h1: ({ children }) => <h1 className="mb-1 mt-2 text-base font-semibold">{children}</h1>,
+        h2: ({ children }) => <h2 className="mb-1 mt-2 text-sm font-semibold">{children}</h2>,
+        h3: ({ children }) => <h3 className="mb-1 mt-2 text-sm font-semibold">{children}</h3>,
         a: ({ children, href }) => (
           <a
             href={href}
             target="_blank"
             rel="noreferrer"
-            className="text-blue-600 dark:text-blue-400 underline"
+            className="text-blue-600 underline dark:text-blue-400"
           >
             {children}
           </a>
         ),
         code: ({ children }) => (
-          <code className="px-1 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-[12px]">
-            {children}
-          </code>
+          <code className="rounded bg-gray-200 px-1 py-0.5 text-[12px] dark:bg-gray-700">{children}</code>
         ),
         pre: ({ children }) => (
-          <pre className="my-2 p-2 rounded bg-gray-200/70 dark:bg-gray-700/70 overflow-auto text-xs">
+          <pre className="my-2 overflow-auto rounded bg-gray-200/70 p-2 text-xs dark:bg-gray-700/70">
             {children}
           </pre>
         ),
@@ -134,9 +136,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     setHasMore(false);
     setHistoryPage(0);
     setHistoryError('');
-    if (notebookId) {
-      void fetchHistoryPage(0, true);
-    }
+    if (notebookId) void fetchHistoryPage(0, true);
   }, [notebookId, fetchHistoryPage]);
 
   useEffect(() => {
@@ -154,21 +154,13 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          notebookId,
-          conversationId,
-          userMessage: text,
-        }),
+        body: JSON.stringify({ notebookId, conversationId, userMessage: text }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         setMessages((prev) => [
           ...prev,
-          {
-            id: `a-${Date.now()}`,
-            role: 'assistant',
-            content: `Error: ${err.error ?? res.statusText}`,
-          },
+          { id: `a-${Date.now()}`, role: 'assistant', content: `Error: ${err.error ?? res.statusText}` },
         ]);
         setTailVersion((v) => v + 1);
         return;
@@ -192,13 +184,13 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
 
   if (!notebookId) {
     return (
-      <div className="flex-1 flex flex-col min-h-0">
-        <div className="h-14 px-4 border-b border-gray-200 dark:border-gray-800 flex items-center">
-          <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-            Chat
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex h-14 items-center border-b px-4">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            Q&A
           </h2>
         </div>
-        <div className="flex-1 overflow-auto p-4 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
+        <div className="flex flex-1 items-center justify-center p-4 text-sm text-gray-400 dark:text-gray-500">
           Select a notebook to start chatting.
         </div>
       </div>
@@ -206,140 +198,133 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
-      <div className="h-14 px-4 border-b border-gray-200 dark:border-gray-800 flex items-center">
-        <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex h-14 items-center border-b px-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
           Q&A
         </h2>
       </div>
-      <div className="flex-1 overflow-auto p-4 flex flex-col gap-4">
-        {loadingHistory ? (
-          <p className="text-xs text-gray-500 dark:text-gray-400 text-center">Loading chat history…</p>
-        ) : (
-          <>
-            {hasMore && (
-              <div className="flex justify-center">
-                <button
-                  type="button"
-                  onClick={() => void fetchHistoryPage(historyPage + 1, false)}
-                  disabled={loadingMore}
-                  className="text-xs px-3 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50"
-                >
-                  {loadingMore ? '加载中…' : '加载更早记录'}
-                </button>
-              </div>
-            )}
-            {historyError && (
-              <p className="text-xs text-red-600 dark:text-red-400 text-center">{historyError}</p>
-            )}
-
-            {messages.map((m) => (
-              <div
-                key={m.id}
-                className={`rounded-lg p-3 max-w-[85%] ${
-                  m.role === 'user'
-                    ? 'bg-gray-200 dark:bg-gray-700 mr-0 ml-auto'
-                    : 'bg-gray-100 dark:bg-gray-800 ml-0 mr-auto'
-                }`}
-              >
-                <div className="text-sm">
-                  <MarkdownContent content={m.content} />
+      <ScrollArea className="flex-1 p-4">
+        <div className="flex flex-col gap-4">
+          {loadingHistory ? (
+            <p className="text-center text-xs text-gray-500 dark:text-gray-400">Loading chat history…</p>
+          ) : (
+            <>
+              {hasMore && (
+                <div className="flex justify-center">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void fetchHistoryPage(historyPage + 1, false)}
+                    disabled={loadingMore}
+                  >
+                    {loadingMore ? '加载中…' : '加载更早记录'}
+                  </Button>
                 </div>
-                {m.role === 'assistant' && (
-                  <>
-                    <div className="mt-2">
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          if (!notebookId) return;
-                          const title = buildNoteTitleFromAnswer(m.content);
-                          const content =
-                            m.content +
-                            (m.citations && m.citations.length > 0
-                              ? '\n\n## Sources\n\n' +
-                                m.citations
-                                  .map(
-                                    (c) =>
-                                      `- **${c.sourceTitle}**${
-                                        c.pageStart != null
-                                          ? ` (p.${c.pageStart}${
-                                              c.pageEnd != null && c.pageEnd !== c.pageStart
-                                                ? `-${c.pageEnd}`
-                                                : ''
-                                            })`
-                                          : ''
-                                      }\n  ${c.snippet}`
-                                  )
-                                  .join('\n')
-                              : '');
-                          const res = await fetch(
-                            `/api/notebooks/${encodeURIComponent(notebookId)}/notes`,
-                            {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ title, content }),
-                            }
-                          );
-                          if (res.ok) window.dispatchEvent(new CustomEvent('notes-updated'));
-                        }}
-                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                      >
-                        保存到笔记
-                      </button>
-                    </div>
-                    {m.citations && m.citations.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-                        <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
-                          引用来源
-                        </span>
-                        <ul className="mt-1 space-y-1">
-                          {m.citations.map((c, i) => (
-                            <li key={i} className="text-xs">
-                              <details className="group">
-                                <summary className="cursor-pointer list-none flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:underline flex-wrap">
-                                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-gray-200 dark:bg-gray-700 text-[11px] text-gray-700 dark:text-gray-300 shrink-0">
-                                    {i + 1}
-                                  </span>
-                                  <span>{c.sourceTitle}</span>
-                                  {c.pageStart != null && (
-                                    <span className="text-gray-500 shrink-0">
-                                      {c.pageEnd != null && c.pageEnd !== c.pageStart
-                                        ? ` p.${c.pageStart}-${c.pageEnd}`
-                                        : ` p.${c.pageStart}`}
-                                    </span>
-                                  )}
-                                  {c.score != null && (
-                                    <span
-                                      className="text-gray-400 shrink-0"
-                                      title="语义相关度（用于检索排序，不代表答案准确率）"
-                                    >
-                                      {(c.score * 100).toFixed(0)}%
-                                    </span>
-                                  )}
-                                </summary>
-                                <p className="mt-1 pl-4 text-gray-500 dark:text-gray-400 border-l-2 border-gray-200 dark:border-gray-600 whitespace-pre-wrap">
-                                  {c.fullContent ?? c.snippet}
-                                </p>
-                              </details>
-                            </li>
-                          ))}
-                        </ul>
+              )}
+              {historyError && (
+                <p className="text-center text-xs text-red-600 dark:text-red-400">{historyError}</p>
+              )}
+
+              {messages.map((m) => (
+                <div
+                  key={m.id}
+                  className={`max-w-[85%] rounded-xl border p-3 shadow-sm ${
+                    m.role === 'user'
+                      ? 'ml-auto mr-0 border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800'
+                      : 'ml-0 mr-auto border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900'
+                  }`}
+                >
+                  <div className="text-sm">
+                    <MarkdownContent content={m.content} />
+                  </div>
+                  {m.role === 'assistant' && (
+                    <>
+                      <div className="mt-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-0 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                          onClick={async () => {
+                            if (!notebookId) return;
+                            const title = buildNoteTitleFromAnswer(m.content);
+                            const content =
+                              m.content +
+                              (m.citations && m.citations.length > 0
+                                ? '\n\n## Sources\n\n' +
+                                  m.citations
+                                    .map(
+                                      (c) =>
+                                        `- **${c.sourceTitle}**${
+                                          c.pageStart != null
+                                            ? ` (p.${c.pageStart}${
+                                                c.pageEnd != null && c.pageEnd !== c.pageStart
+                                                  ? `-${c.pageEnd}`
+                                                  : ''
+                                              })`
+                                            : ''
+                                        }\n  ${c.snippet}`
+                                    )
+                                    .join('\n')
+                                : '');
+                            const res = await fetch(
+                              `/api/notebooks/${encodeURIComponent(notebookId)}/notes`,
+                              {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ title, content }),
+                              }
+                            );
+                            if (res.ok) window.dispatchEvent(new CustomEvent('notes-updated'));
+                          }}
+                        >
+                          保存到笔记
+                        </Button>
                       </div>
-                    )}
-                  </>
-                )}
-              </div>
-            ))}
-          </>
-        )}
-        {loading && (
-          <div className="rounded-lg p-3 max-w-[85%] ml-0 mr-auto bg-gray-100 dark:bg-gray-800 text-sm text-gray-500">
-            Thinking…
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </div>
-      <div className="p-4 border-t border-gray-200 dark:border-gray-800">
+                      {m.citations && m.citations.length > 0 && (
+                        <div className="mt-3 border-t pt-3">
+                          <span className="text-xs font-medium text-gray-500 dark:text-gray-400">引用来源</span>
+                          <ul className="mt-2 space-y-1">
+                            {m.citations.map((c, i) => (
+                              <li key={i} className="text-xs">
+                                <details className="group">
+                                  <summary className="flex cursor-pointer list-none items-center gap-1.5 text-gray-600 hover:underline dark:text-gray-300">
+                                    <Badge variant="secondary" className="h-5 w-5 justify-center rounded-full px-0">
+                                      {i + 1}
+                                    </Badge>
+                                    <span>{c.sourceTitle}</span>
+                                    {c.pageStart != null && (
+                                      <span className="text-gray-500">
+                                        {c.pageEnd != null && c.pageEnd !== c.pageStart
+                                          ? ` p.${c.pageStart}-${c.pageEnd}`
+                                          : ` p.${c.pageStart}`}
+                                      </span>
+                                    )}
+                                  </summary>
+                                  <p className="mt-1 whitespace-pre-wrap border-l-2 border-gray-200 pl-4 text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                                    {c.fullContent ?? c.snippet}
+                                  </p>
+                                </details>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+            </>
+          )}
+          {loading && (
+            <div className="ml-0 mr-auto max-w-[85%] rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-500 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+              Thinking…
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+      </ScrollArea>
+      <div className="border-t p-4">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -347,21 +332,16 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           }}
           className="flex gap-2"
         >
-          <input
+          <Input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask about your sources"
-            className="flex-1 min-w-0 px-3 py-2 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
             disabled={loading}
           />
-          <button
-            type="submit"
-            disabled={loading || !input.trim()}
-            className="px-4 py-2 rounded-md bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900 text-sm font-medium disabled:opacity-50"
-          >
+          <Button type="submit" disabled={loading || !input.trim()}>
             Send
-          </button>
+          </Button>
         </form>
       </div>
     </div>

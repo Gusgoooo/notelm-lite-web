@@ -1,6 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Textarea } from '@/components/ui/textarea';
 
 type Source = {
   id: string;
@@ -22,7 +27,7 @@ const allowedMimes = [
 
 function TrashIcon() {
   return (
-    <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M3 6h18" />
       <path d="M8 6V4h8v2" />
       <path d="M6 6l1 14h10l1-14" />
@@ -33,7 +38,7 @@ function TrashIcon() {
 
 function RefreshIcon() {
   return (
-    <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M21 12a9 9 0 1 1-2.64-6.36" />
       <path d="M21 3v6h-6" />
     </svg>
@@ -139,10 +144,7 @@ export function SourcesPanel({ notebookId }: { notebookId: string }) {
       const res = await fetch('/api/sources/paste', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          notebookId,
-          text: content,
-        }),
+        body: JSON.stringify({ notebookId, text: content }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -158,26 +160,18 @@ export function SourcesPanel({ notebookId }: { notebookId: string }) {
   };
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="h-14 px-3 border-b border-gray-200 dark:border-gray-800 flex items-center">
-        <div className="w-full flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-            Sources
-          </h2>
-          <button
-            type="button"
-            onClick={() => fetchSources(false)}
-            className="h-7 w-7 inline-flex items-center justify-center rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200"
-            aria-label="Refresh"
-            title="Refresh"
-          >
-            <RefreshIcon />
-          </button>
-        </div>
+    <div className="flex h-full flex-col">
+      <div className="flex h-14 items-center justify-between border-b px-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          Sources
+        </h2>
+        <Button variant="secondary" size="icon" onClick={() => void fetchSources(false)} aria-label="Refresh">
+          <RefreshIcon />
+        </Button>
       </div>
 
-      <div className="p-3 space-y-2">
-        <label className="block text-center text-xs px-2 py-1.5 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 cursor-pointer">
+      <div className="space-y-2 p-3">
+        <label className="block cursor-pointer">
           <input
             type="file"
             accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/msword,.doc"
@@ -185,10 +179,12 @@ export function SourcesPanel({ notebookId }: { notebookId: string }) {
             onChange={uploadFile}
             disabled={uploading}
           />
-          {uploading ? '上传中…' : '上传 PDF / Word'}
+          <Button variant="outline" className="w-full text-xs">
+            <span>{uploading ? '上传中…' : '上传 PDF / Word'}</span>
+          </Button>
         </label>
         <div className="space-y-1">
-          <textarea
+          <Textarea
             value={pasteText}
             onChange={(e) => setPasteText(e.target.value)}
             onPaste={(e) => {
@@ -198,7 +194,7 @@ export function SourcesPanel({ notebookId }: { notebookId: string }) {
               void createFromPaste(pasted);
             }}
             placeholder="粘贴文本后将自动生成来源卡片"
-            className="w-full min-h-20 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs p-2 resize-y"
+            className="min-h-20 text-xs"
             disabled={pasting}
           />
           {pasteStatus ? (
@@ -213,71 +209,67 @@ export function SourcesPanel({ notebookId }: { notebookId: string }) {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-auto p-2">
+      <ScrollArea className="flex-1 p-2">
         {loading ? (
-          <p className="text-xs text-gray-500 dark:text-gray-400 p-2">Loading…</p>
+          <p className="p-2 text-xs text-gray-500 dark:text-gray-400">Loading…</p>
         ) : sources.length === 0 ? (
-          <p className="text-xs text-gray-500 dark:text-gray-400 p-2">
-            还没有来源文件，先上传一个。
-          </p>
+          <p className="p-2 text-xs text-gray-500 dark:text-gray-400">还没有来源文件，先上传一个。</p>
         ) : (
-          <ul className="space-y-1.5">
+          <ul className="space-y-2">
             {sources.map((s) => (
-              <li
-                key={s.id}
-                className="group rounded border border-gray-200 dark:border-gray-800 p-2 bg-white/60 dark:bg-gray-900/40"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-xs font-medium truncate" title={s.filename}>
-                    {s.filename}
+              <li key={s.id}>
+                <Card className="group border-gray-200/80 bg-white/70 p-2 dark:border-gray-800 dark:bg-gray-900/60">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="truncate text-xs font-medium" title={s.filename}>
+                      {s.filename}
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 opacity-0 transition group-hover:opacity-100"
+                      onClick={() => void deleteSource(s.id)}
+                      disabled={deletingId === s.id}
+                      aria-label="删除来源"
+                    >
+                      <TrashIcon />
+                    </Button>
+                  </div>
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <Badge variant="secondary" className="uppercase">
+                      {s.sourceType ?? 'unknown'}
+                    </Badge>
+                    <Badge variant="outline">{s.chunkCount ?? 0} chunks</Badge>
+                  </div>
+                  <p
+                    className={`mt-1 text-[11px] ${
+                      s.status === 'READY'
+                        ? 'text-green-600'
+                        : s.status === 'FAILED'
+                          ? 'text-red-600'
+                          : s.status === 'PROCESSING'
+                            ? 'text-blue-600'
+                            : 'text-gray-500'
+                    }`}
+                  >
+                    {s.status}
+                    {s.errorMessage ? ` — ${s.errorMessage}` : ''}
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => void deleteSource(s.id)}
-                    disabled={deletingId === s.id}
-                    className="opacity-0 group-hover:opacity-100 transition text-gray-500 hover:text-red-600 disabled:opacity-60"
-                    aria-label="删除来源"
-                    title="删除来源"
-                  >
-                    <TrashIcon />
-                  </button>
-                </div>
-                <div className="mt-1 flex items-center gap-1.5 text-[10px]">
-                  <span className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700 uppercase">
-                    {s.sourceType ?? 'unknown'}
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700">
-                    {s.chunkCount ?? 0} chunks
-                  </span>
-                </div>
-                <p
-                  className={`text-[11px] mt-1 ${
-                    s.status === 'READY'
-                      ? 'text-green-600'
-                      : s.status === 'FAILED'
-                        ? 'text-red-600'
-                        : s.status === 'PROCESSING'
-                          ? 'text-blue-600'
-                          : 'text-gray-500'
-                  }`}
-                >
-                  {s.status}
-                  {s.errorMessage ? ` — ${s.errorMessage}` : ''}
-                </p>
-                {(s.status === 'FAILED' || s.status === 'PENDING') && (
-                  <button
-                    type="button"
-                    onClick={() => requeue(s.id)}
-                    className="mt-1 text-[11px] text-blue-600 dark:text-blue-400 hover:underline"
-                  >
-                    Re-queue
-                  </button>
-                )}
+                  {(s.status === 'FAILED' || s.status === 'PENDING') && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="mt-1 h-6 px-0 text-[11px] text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                      onClick={() => void requeue(s.id)}
+                    >
+                      Re-queue
+                    </Button>
+                  )}
+                </Card>
               </li>
             ))}
           </ul>
         )}
-      </div>
+      </ScrollArea>
     </div>
   );
 }

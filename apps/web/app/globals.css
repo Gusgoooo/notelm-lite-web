@@ -3,21 +3,32 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+  --border: 214 32% 91%;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: 222 47% 4%;
+    --foreground: 210 40% 98%;
+    --muted: 223 47% 11%;
+    --muted-foreground: 215 20% 65%;
+    --border: 217 33% 17%;
   }
 }
 
+* {
+  border-color: hsl(var(--border));
+}
+
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  color: hsl(var(--foreground));
+  background: radial-gradient(circle at top right, rgba(148, 163, 184, 0.12), transparent 40%),
+    hsl(var(--background));
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer utilities {
