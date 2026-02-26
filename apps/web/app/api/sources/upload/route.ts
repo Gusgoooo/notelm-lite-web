@@ -16,16 +16,26 @@ function envStorageType(): string {
 
 function resolveMimeType(file: File, ext: string): string {
   const declared = (file.type || '').toLowerCase().trim();
+  const genericDeclared =
+    declared === 'application/octet-stream' ||
+    declared === 'binary/octet-stream' ||
+    declared === 'application/unknown';
   if (declared) {
     if (declared.includes('python')) return 'text/x-python';
-    return declared;
+    if (
+      declared.includes('application/zip') ||
+      declared.includes('x-zip-compressed')
+    ) {
+      return 'application/zip';
+    }
+    if (!genericDeclared) return declared;
   }
   if (ext === 'pdf') return 'application/pdf';
   if (ext === 'docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (ext === 'doc') return 'application/msword';
   if (ext === 'py') return 'text/x-python';
-  if (ext === 'txt' || ext === 'md') return 'text/plain';
   if (ext === 'zip') return 'application/zip';
+  if (ext === 'txt' || ext === 'md') return 'text/plain';
   return 'application/octet-stream';
 }
 

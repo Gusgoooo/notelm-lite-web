@@ -361,7 +361,7 @@ async function processDocument(sourceId: string): Promise<void> {
     }
     throw error;
   }
-  const loader = getLoaderForMime(source.mime ?? null);
+  const loader = getLoaderForMime(source.mime ?? null, source.filename);
   const parseResult = await loader.loadFromBuffer(buffer, {
     preserveStructure: true,
   });

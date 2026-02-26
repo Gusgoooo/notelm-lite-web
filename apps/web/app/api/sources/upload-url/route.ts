@@ -13,6 +13,31 @@ function envStorageType(): string {
   return cleaned.toLowerCase();
 }
 
+function normalizeMimeByFilename(filename: string, mimeType: string | null | undefined): string {
+  const declared = (mimeType ?? '').toLowerCase().trim();
+  const genericDeclared =
+    !declared ||
+    declared === 'application/octet-stream' ||
+    declared === 'binary/octet-stream' ||
+    declared === 'application/unknown';
+  const lowerName = filename.toLowerCase();
+  if (!genericDeclared) {
+    if (declared.includes('python')) return 'text/x-python';
+    if (declared.includes('application/zip') || declared.includes('x-zip-compressed')) {
+      return 'application/zip';
+    }
+    return declared;
+  }
+  if (lowerName.endsWith('.pdf')) return 'application/pdf';
+  if (lowerName.endsWith('.docx'))
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (lowerName.endsWith('.doc')) return 'application/msword';
+  if (lowerName.endsWith('.py')) return 'text/x-python';
+  if (lowerName.endsWith('.zip')) return 'application/zip';
+  if (lowerName.endsWith('.txt') || lowerName.endsWith('.md')) return 'text/plain';
+  return 'application/octet-stream';
+}
+
 export async function POST(request: Request) {
   try {
     const storageType = envStorageType();
@@ -26,7 +51,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const notebookId = body?.notebookId;
     const filename = body?.filename ?? 'document.pdf';
-    const mimeType = body?.mimeType ?? 'application/pdf';
+    const mimeType = normalizeMimeByFilename(String(filename), body?.mimeType);
     if (!notebookId || typeof notebookId !== 'string') {
       return NextResponse.json(
         { error: 'notebookId is required' },

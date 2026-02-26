@@ -38,6 +38,31 @@ function getSourceType(
   return '复制文本';
 }
 
+function normalizeMimeByFilename(filename: string, mime: string | null): string {
+  const declared = (mime ?? '').toLowerCase().trim();
+  const genericDeclared =
+    !declared ||
+    declared === 'application/octet-stream' ||
+    declared === 'binary/octet-stream' ||
+    declared === 'application/unknown';
+  const lowerName = filename.toLowerCase();
+  if (!genericDeclared) {
+    if (declared.includes('python')) return 'text/x-python';
+    if (declared.includes('application/zip') || declared.includes('x-zip-compressed')) {
+      return 'application/zip';
+    }
+    return declared;
+  }
+  if (lowerName.endsWith('.pdf')) return 'application/pdf';
+  if (lowerName.endsWith('.docx'))
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (lowerName.endsWith('.doc')) return 'application/msword';
+  if (lowerName.endsWith('.py')) return 'text/x-python';
+  if (lowerName.endsWith('.zip')) return 'application/zip';
+  if (lowerName.endsWith('.txt') || lowerName.endsWith('.md')) return 'text/plain';
+  return 'application/octet-stream';
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const notebookId = searchParams.get('notebookId');
@@ -115,7 +140,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '该 notebook 来源为只读，请先保存为我的 notebook' }, { status: 403 });
     }
     const sourceId = bodySourceId ?? `src_${randomUUID()}`;
-    const mimeValue = mime ? String(mime) : 'application/pdf';
+    const mimeValue = normalizeMimeByFilename(String(filename), mime ? String(mime) : null);
     await db.insert(sources).values({
       id: sourceId,
       notebookId,

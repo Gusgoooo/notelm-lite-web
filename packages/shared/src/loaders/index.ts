@@ -23,10 +23,42 @@ const loadersByMime: Record<string, IDocumentLoader> = {
   'application/x-zip-compressed': zipSkillLoader,
 };
 
-export function getLoaderForMime(mime: string | null): IDocumentLoader {
+const loadersByExtension: Record<string, IDocumentLoader> = {
+  pdf: pdfLoader,
+  doc: wordLoader,
+  docx: wordLoader,
+  txt: textLoader,
+  md: textLoader,
+  py: textLoader,
+  zip: zipSkillLoader,
+};
+
+function getExtension(filename: string | null | undefined): string {
+  if (!filename) return '';
+  const idx = filename.lastIndexOf('.');
+  if (idx < 0) return '';
+  return filename.slice(idx + 1).toLowerCase().trim();
+}
+
+function isGenericMime(mime: string): boolean {
+  return (
+    mime === 'application/octet-stream' ||
+    mime === 'binary/octet-stream' ||
+    mime === 'application/unknown'
+  );
+}
+
+export function getLoaderForMime(mime: string | null, filename?: string | null): IDocumentLoader {
   const normalized = (mime || '').toLowerCase().trim();
-  const loader = loadersByMime[normalized];
-  if (loader) return loader;
+  if (normalized && !isGenericMime(normalized)) {
+    const loader = loadersByMime[normalized];
+    if (loader) return loader;
+  }
+  const ext = getExtension(filename);
+  if (ext) {
+    const extLoader = loadersByExtension[ext];
+    if (extLoader) return extLoader;
+  }
   return pdfLoader;
 }
 
