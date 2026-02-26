@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
-import { and, db, eq, inArray, notebooks, sourceChunks, sources } from 'db';
+import { db, eq, notebooks, sources } from 'db';
 import { getNotebookAccess } from '@/lib/notebook-access';
 
 function cloneTitle(title: string): string {
@@ -51,62 +51,21 @@ export async function POST(
 
       if (originalSources.length === 0) return;
 
-      const sourceIdMap = new Map<string, string>();
       const clonedSources = originalSources.map((row) => {
-        const clonedId = `src_${randomUUID()}`;
-        sourceIdMap.set(row.id, clonedId);
         return {
-          id: clonedId,
+          id: `src_${randomUUID()}`,
           notebookId: forkNotebookId,
           filename: row.filename,
           fileUrl: row.fileUrl,
           mime: row.mime,
-          status: row.status === 'PROCESSING' ? 'PENDING' : row.status,
-          errorMessage: row.status === 'PROCESSING' ? null : row.errorMessage,
+          // Keep fork operation fast: don't duplicate all chunk rows in transaction.
+          // Let worker rebuild chunks for the forked notebook from original files.
+          status: 'PENDING' as const,
+          errorMessage: null,
           createdAt: now,
         };
       });
       await tx.insert(sources).values(clonedSources);
-
-      const originalSourceIds = originalSources.map((row) => row.id);
-      if (originalSourceIds.length === 0) return;
-
-      const originalChunks = await tx
-        .select()
-        .from(sourceChunks)
-        .where(inArray(sourceChunks.sourceId, originalSourceIds));
-
-      if (originalChunks.length === 0) return;
-
-      await tx.insert(sourceChunks).values(
-        originalChunks
-          .map((row) => {
-            const mappedSourceId = sourceIdMap.get(row.sourceId);
-            if (!mappedSourceId) return null;
-            return {
-              id: `chk_${randomUUID()}`,
-              sourceId: mappedSourceId,
-              chunkIndex: row.chunkIndex,
-              content: row.content,
-              pageStart: row.pageStart,
-              pageEnd: row.pageEnd,
-              embedding: row.embedding,
-              createdAt: now,
-            };
-          })
-          .filter((row): row is NonNullable<typeof row> => Boolean(row))
-      );
-
-      // Defensive clean up for unexpected status carry-over.
-      await tx
-        .update(sources)
-        .set({ status: 'PENDING', errorMessage: null })
-        .where(
-          and(
-            eq(sources.notebookId, forkNotebookId),
-            eq(sources.status, 'PROCESSING')
-          )
-        );
     });
 
     const [created] = await db.select().from(notebooks).where(eq(notebooks.id, forkNotebookId));

@@ -15,8 +15,9 @@ import {
   createEmbeddings,
   getEmbeddingDimensions,
 } from 'shared';
-import { db, sources, sourceChunks, eq, sql } from 'db';
+import { db, sources, sourceChunks, scriptJobs, eq, and, sql } from 'db';
 import { randomUUID } from 'crypto';
+import { executePythonInSandbox } from './pythonSandbox.js';
 
 const chunkingService = new ChunkingService();
 const chunkSize = Math.max(
@@ -75,6 +76,72 @@ function formatWorkerError(error: unknown): string {
   return message;
 }
 
+function isNoSuchKeyError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return (
+    message.includes('specified key does not exist') ||
+    message.includes('no such key') ||
+    message.includes('nosuchkey')
+  );
+}
+
+async function copyChunksFromSiblingReadySource(
+  targetSourceId: string,
+  fileUrl: string
+): Promise<boolean> {
+  const [sibling] = await db
+    .select({ id: sources.id })
+    .from(sources)
+    .where(
+      and(
+        eq(sources.fileUrl, fileUrl),
+        eq(sources.status, 'READY')
+      )
+    )
+    .limit(1);
+
+  if (!sibling || sibling.id === targetSourceId) return false;
+
+  const existing = await db
+    .select({
+      chunkIndex: sourceChunks.chunkIndex,
+      content: sourceChunks.content,
+      pageStart: sourceChunks.pageStart,
+      pageEnd: sourceChunks.pageEnd,
+      embedding: sourceChunks.embedding,
+    })
+    .from(sourceChunks)
+    .where(eq(sourceChunks.sourceId, sibling.id));
+
+  if (existing.length === 0) return false;
+
+  await db.delete(sourceChunks).where(eq(sourceChunks.sourceId, targetSourceId));
+
+  const now = new Date();
+  const batchSize = 100;
+  for (let i = 0; i < existing.length; i += batchSize) {
+    const batch = existing.slice(i, i + batchSize).map((row) => ({
+      id: `chk_${randomUUID()}`,
+      sourceId: targetSourceId,
+      chunkIndex: row.chunkIndex,
+      content: row.content,
+      pageStart: row.pageStart,
+      pageEnd: row.pageEnd,
+      embedding: row.embedding as unknown as number[],
+      createdAt: now,
+    }));
+    await db.insert(sourceChunks).values(batch);
+  }
+
+  await db
+    .update(sources)
+    .set({ status: 'READY', errorMessage: null })
+    .where(eq(sources.id, targetSourceId));
+
+  return true;
+}
+
 async function claimNextSourceId(): Promise<string | null> {
   const result = await db.execute(sql`
     with candidate as (
@@ -97,6 +164,31 @@ async function claimNextSourceId(): Promise<string | null> {
   return typeof sourceId === 'string' ? sourceId : null;
 }
 
+async function claimNextScriptJobId(): Promise<string | null> {
+  const result = await db.execute(sql`
+    with candidate as (
+      select id
+      from script_jobs
+      where status = 'PENDING'
+      order by created_at asc
+      limit 1
+      for update skip locked
+    )
+    update script_jobs as j
+    set status = 'RUNNING',
+        error_message = null,
+        started_at = now(),
+        updated_at = now()
+    from candidate
+    where j.id = candidate.id
+    returning j.id
+  `);
+
+  const rows = (result as { rows?: Array<{ id?: unknown }> }).rows ?? [];
+  const jobId = rows[0]?.id;
+  return typeof jobId === 'string' ? jobId : null;
+}
+
 async function processDocument(sourceId: string): Promise<void> {
   const [source] = await db.select().from(sources).where(eq(sources.id, sourceId));
   if (!source) throw new Error(`Source ${sourceId} not found`);
@@ -108,7 +200,19 @@ async function processDocument(sourceId: string): Promise<void> {
     .where(eq(sources.id, sourceId));
 
   const storage = getStorage();
-  const buffer = await storage.download(source.fileUrl);
+  let buffer: Buffer;
+  try {
+    buffer = await storage.download(source.fileUrl);
+  } catch (error) {
+    if (isNoSuchKeyError(error)) {
+      const copied = await copyChunksFromSiblingReadySource(sourceId, source.fileUrl);
+      if (copied) {
+        console.log(`Recovered source ${sourceId} by copying chunks from sibling source with same file_url`);
+        return;
+      }
+    }
+    throw error;
+  }
   const loader = getLoaderForMime(source.mime ?? null);
   const parseResult = await loader.loadFromBuffer(buffer, {
     preserveStructure: true,
@@ -202,7 +306,7 @@ async function processDocument(sourceId: string): Promise<void> {
     .where(eq(sources.id, sourceId));
 }
 
-async function runJob(sourceId: string): Promise<void> {
+async function runSourceIngestionJob(sourceId: string): Promise<void> {
   try {
     await processDocument(sourceId);
     console.log(`Job for source ${sourceId} completed`);
@@ -218,14 +322,100 @@ async function runJob(sourceId: string): Promise<void> {
   }
 }
 
+async function processScriptJob(jobId: string): Promise<void> {
+  const [job] = await db.select().from(scriptJobs).where(eq(scriptJobs.id, jobId));
+  if (!job) throw new Error(`Script job ${jobId} not found`);
+  if (job.status !== 'PENDING' && job.status !== 'RUNNING') return;
+
+  const result = await executePythonInSandbox({
+    code: job.code,
+    input: (job.input ?? {}) as Record<string, unknown>,
+    timeoutMs: Number(job.timeoutMs ?? 10_000),
+    memoryLimitMb: Number(job.memoryLimitMb ?? 256),
+  });
+
+  if (result.ok) {
+    await db
+      .update(scriptJobs)
+      .set({
+        status: 'SUCCEEDED',
+        output: {
+          result: result.result,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          durationMs: result.durationMs,
+        },
+        errorMessage: null,
+        finishedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(scriptJobs.id, jobId));
+    return;
+  }
+
+  await db
+    .update(scriptJobs)
+    .set({
+      status: 'FAILED',
+      output: {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        traceback: result.traceback ?? null,
+        durationMs: result.durationMs,
+      },
+      errorMessage: result.error,
+      finishedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(scriptJobs.id, jobId));
+}
+
+async function runScriptExecutionJob(jobId: string): Promise<void> {
+  try {
+    await processScriptJob(jobId);
+    console.log(`Script job ${jobId} completed`);
+  } catch (err) {
+    await db
+      .update(scriptJobs)
+      .set({
+        status: 'FAILED',
+        errorMessage: formatWorkerError(err),
+        finishedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(scriptJobs.id, jobId));
+    console.error(`Script job ${jobId} failed:`, err);
+  }
+}
+
+type ClaimedJob =
+  | { type: 'source'; id: string }
+  | { type: 'script'; id: string };
+
+async function claimNextJob(): Promise<ClaimedJob | null> {
+  const sourceId = await claimNextSourceId();
+  if (sourceId) return { type: 'source', id: sourceId };
+  const scriptJobId = await claimNextScriptJobId();
+  if (scriptJobId) return { type: 'script', id: scriptJobId };
+  return null;
+}
+
+async function runClaimedJob(job: ClaimedJob): Promise<void> {
+  if (job.type === 'source') {
+    await runSourceIngestionJob(job.id);
+    return;
+  }
+  await runScriptExecutionJob(job.id);
+}
+
 let stopping = false;
 const inFlight = new Set<Promise<void>>();
 
 async function fillSlots() {
   while (!stopping && inFlight.size < workerConcurrency) {
-    const sourceId = await claimNextSourceId();
-    if (!sourceId) break;
-    const jobPromise = runJob(sourceId).finally(() => {
+    const job = await claimNextJob();
+    if (!job) break;
+    const jobPromise = runClaimedJob(job).finally(() => {
       inFlight.delete(jobPromise);
     });
     inFlight.add(jobPromise);

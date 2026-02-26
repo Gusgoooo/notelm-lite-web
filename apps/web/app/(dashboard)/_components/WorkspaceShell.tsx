@@ -65,6 +65,19 @@ export function WorkspaceShell({
     };
   }, [resizing]);
 
+  useEffect(() => {
+    // Keep local UI state in sync when switching notebooks (e.g. fork/save-as-mine).
+    setHeaderTitle(initialTitle);
+    setHeaderTitleDraft(initialTitle);
+    setTitleInput(initialTitle);
+    setDescriptionInput(initialDescription);
+    setPublishedFlag(isPublished);
+    setEditingHeaderTitle(false);
+    setPublishOpen(false);
+    setPublishError('');
+    setPublishSuccess('');
+  }, [notebookId, initialTitle, initialDescription, isPublished]);
+
   const readOnlySources = useMemo(() => !isOwner, [isOwner]);
 
   const handleSaveAsMine = async () => {
@@ -73,11 +86,15 @@ export function WorkspaceShell({
     setPublishError('');
     setPublishSuccess('');
     try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20_000);
       const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/fork`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: `${headerTitle}（副本）` }),
+        signal: controller.signal,
       });
+      clearTimeout(timer);
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.notebook?.id) {
         setPublishError(data?.error ?? '保存失败');
@@ -85,6 +102,12 @@ export function WorkspaceShell({
       }
       router.push(`/?notebookId=${encodeURIComponent(data.notebook.id)}`);
       router.refresh();
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        setPublishError('保存超时，请稍后重试');
+      } else {
+        setPublishError('保存失败，请稍后重试');
+      }
     } finally {
       setSavingFork(false);
     }

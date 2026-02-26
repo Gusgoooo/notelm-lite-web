@@ -157,6 +157,39 @@ export const appSettings = pgTable('app_settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const scriptJobs = pgTable(
+  'script_jobs',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    notebookId: text('notebook_id')
+      .notNull()
+      .references(() => notebooks.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    input: jsonb('input').$type<Record<string, unknown>>().notNull().default({}),
+    status: text('status', {
+      enum: ['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED'],
+    })
+      .notNull()
+      .default('PENDING'),
+    timeoutMs: integer('timeout_ms').notNull().default(10000),
+    memoryLimitMb: integer('memory_limit_mb').notNull().default(256),
+    output: jsonb('output').$type<Record<string, unknown> | null>(),
+    errorMessage: text('error_message'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('script_jobs_user_idx').on(table.userId),
+    index('script_jobs_notebook_idx').on(table.notebookId),
+    index('script_jobs_status_idx').on(table.status, table.createdAt),
+  ]
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Notebook = typeof notebooks.$inferSelect;
@@ -173,3 +206,5 @@ export type Note = typeof notes.$inferSelect;
 export type NewNote = typeof notes.$inferInsert;
 export type AppSettings = typeof appSettings.$inferSelect;
 export type NewAppSettings = typeof appSettings.$inferInsert;
+export type ScriptJob = typeof scriptJobs.$inferSelect;
+export type NewScriptJob = typeof scriptJobs.$inferInsert;
