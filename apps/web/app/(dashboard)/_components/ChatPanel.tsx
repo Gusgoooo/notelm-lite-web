@@ -20,11 +20,26 @@ type Citation = {
   distance?: number;
 };
 
+type InteractionOption = {
+  label: string;
+  value: string;
+  description?: string;
+};
+
+type ChatInteraction = {
+  type: 'choices';
+  key: string;
+  title: string;
+  description?: string;
+  options: InteractionOption[];
+};
+
 type Message = {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   citations?: Citation[];
+  interaction?: ChatInteraction;
   createdAt?: string;
   conversationId?: string;
 };
@@ -90,6 +105,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [hasMore, setHasMore] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [resolvedInteractions, setResolvedInteractions] = useState<Record<string, boolean>>({});
   const [tailVersion, setTailVersion] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -117,6 +133,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           setConversationId(
             typeof data?.latestConversationId === 'string' ? data.latestConversationId : null
           );
+          setResolvedInteractions({});
           setTailVersion((v) => v + 1);
         } else {
           setMessages((prev) => [...chronological, ...prev]);
@@ -144,10 +161,13 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [tailVersion]);
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (options?: {
+    text?: string;
+    interactionReply?: { key: string; value: string; label?: string };
+  }) => {
+    const text = (options?.text ?? input).trim();
     if (!text || !notebookId || loading) return;
-    setInput('');
+    if (!options?.text) setInput('');
     setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: 'user', content: text }]);
     setTailVersion((v) => v + 1);
     setLoading(true);
@@ -155,7 +175,12 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notebookId, conversationId, userMessage: text }),
+        body: JSON.stringify({
+          notebookId,
+          conversationId,
+          userMessage: text,
+          interactionReply: options?.interactionReply ?? null,
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -175,6 +200,12 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           role: 'assistant',
           content: data.answer,
           citations: Array.isArray(data.citations) ? data.citations : [],
+          interaction:
+            data?.interaction &&
+            data.interaction.type === 'choices' &&
+            Array.isArray(data.interaction.options)
+              ? (data.interaction as ChatInteraction)
+              : undefined,
         },
       ]);
       setTailVersion((v) => v + 1);
@@ -241,6 +272,43 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                   <div className="text-sm">
                     <MarkdownContent content={m.content} />
                   </div>
+                  {m.role === 'assistant' && m.interaction && !resolvedInteractions[m.id] && (
+                    <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50/60 p-2 dark:border-blue-900 dark:bg-blue-950/20">
+                      <p className="text-xs font-medium text-blue-700 dark:text-blue-300">
+                        {m.interaction.title}
+                      </p>
+                      {m.interaction.description && (
+                        <p className="mt-1 text-[11px] text-blue-600/90 dark:text-blue-300/80">
+                          {m.interaction.description}
+                        </p>
+                      )}
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {m.interaction.options.map((option) => (
+                          <Button
+                            key={`${m.id}-${option.value}`}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={loading}
+                            className="h-7 text-xs"
+                            onClick={() => {
+                              setResolvedInteractions((prev) => ({ ...prev, [m.id]: true }));
+                              void send({
+                                text: `我选择：${option.label}`,
+                                interactionReply: {
+                                  key: m.interaction!.key,
+                                  value: option.value,
+                                  label: option.label,
+                                },
+                              });
+                            }}
+                          >
+                            {option.label}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {m.role === 'assistant' && (
                     <>
                       <div className="mt-2">

@@ -16,7 +16,6 @@ type NoteRow = {
 
 const IMAGE_MODEL_FALLBACKS = [
   'google/gemini-3-pro-image-preview',
-  'google/demini-3-pro-image-preview',
 ] as const;
 
 function uniqueNonEmpty(values: Array<string | undefined>): string[] {
@@ -29,6 +28,16 @@ function uniqueNonEmpty(values: Array<string | undefined>): string[] {
     list.push(normalized);
   }
   return list;
+}
+
+function normalizeImageModelAlias(value: string | undefined): string | undefined {
+  if (!value) return value;
+  const normalized = value.trim();
+  if (!normalized) return '';
+  if (normalized.toLowerCase() === 'google/demini-3-pro-image-preview') {
+    return 'google/gemini-3-pro-image-preview';
+  }
+  return normalized;
 }
 
 function generateNoteId(): string {
@@ -254,7 +263,9 @@ async function generateInfographic(input: {
   preferredModel: string;
   rolePrompt: string;
 }): Promise<{ content: string; model: string }> {
-  const models = uniqueNonEmpty([input.preferredModel, ...IMAGE_MODEL_FALLBACKS]);
+  const models = uniqueNonEmpty(
+    [input.preferredModel, ...IMAGE_MODEL_FALLBACKS].map((m) => normalizeImageModelAlias(m))
+  );
   const errors: string[] = [];
 
   for (const model of models) {

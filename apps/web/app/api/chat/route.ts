@@ -31,7 +31,28 @@ const CHAT_SCRIPT_POLL_MS = Math.max(
   200,
   Math.min(1000, Number.parseInt(process.env.CHAT_SCRIPT_POLL_MS ?? '350', 10) || 350)
 );
+const SKILL_STATE_PREFIX = '__SKILL_STATE__:';
 let envLogged = false;
+
+type ChatInteraction = {
+  type: 'choices';
+  key: string;
+  title: string;
+  description?: string;
+  options: Array<{ label: string; value: string; description?: string }>;
+};
+
+type InteractionReply = {
+  key: string;
+  value: string;
+  label?: string;
+};
+
+type SkillRuntimeState = {
+  active: boolean;
+  skillName?: string;
+  selections: Record<string, string>;
+};
 
 function cleanEnv(v: string | undefined): string {
   if (!v) return '';
@@ -74,6 +95,67 @@ function shouldUseSkillPlanningTemplate(userMessage: string): boolean {
   return /技能包|skill|agent|短视频|视频|创作|生成|规划|计划|方案|workflow|流程|prompt|脚本|实现/.test(text);
 }
 
+function sanitizeSkillAnswer(answer: string, allowScriptExecution: boolean): string {
+  let text = answer;
+  if (!allowScriptExecution) {
+    text = text
+      .replace(/^\s*(python3?|bash|sh|node|pnpm|npm|yarn)\b.*$/gim, '')
+      .replace(/^.*脚本分析流程.*$/gim, '')
+      .replace(/^.*运行.*脚本.*$/gim, '')
+      .replace(/^.*执行.*命令.*$/gim, '');
+  }
+  return text.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function parseInteractionReply(value: unknown): InteractionReply | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.key !== 'string' || typeof row.value !== 'string') return null;
+  return {
+    key: row.key.trim(),
+    value: row.value.trim(),
+    label: typeof row.label === 'string' ? row.label.trim() : undefined,
+  };
+}
+
+function parseSkillState(content: string): SkillRuntimeState | null {
+  if (!content.startsWith(SKILL_STATE_PREFIX)) return null;
+  const raw = content.slice(SKILL_STATE_PREFIX.length).trim();
+  try {
+    const json = JSON.parse(raw) as Record<string, unknown>;
+    const selections =
+      json.selections && typeof json.selections === 'object' && !Array.isArray(json.selections)
+        ? (json.selections as Record<string, unknown>)
+        : {};
+    const cleanedSelections: Record<string, string> = {};
+    for (const [k, v] of Object.entries(selections)) {
+      if (typeof v === 'string') cleanedSelections[k] = v;
+    }
+    return {
+      active: Boolean(json.active),
+      skillName: typeof json.skillName === 'string' ? json.skillName : undefined,
+      selections: cleanedSelections,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildSkillStateContent(state: SkillRuntimeState): string {
+  return `${SKILL_STATE_PREFIX}${JSON.stringify(state)}`;
+}
+
+function extractDouyinUrl(text: string): string | null {
+  const m = text.match(/https?:\/\/(?:www\.)?(?:douyin\.com\/video\/[A-Za-z0-9_-]+|v\.douyin\.com\/[A-Za-z0-9/_-]+)/i);
+  return m?.[0] ?? null;
+}
+
+function hasManualVideoInput(text: string): boolean {
+  if (!text.trim()) return false;
+  if (text.length >= 180) return true;
+  return /(视频标题|视频描述|视频文案|口播|字幕|背景音乐|目标受众|核心内容|传递价值|点赞|评论)/.test(text);
+}
+
 export async function POST(request: Request) {
   try {
     if (!envLogged) {
@@ -88,6 +170,7 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const { notebookId, conversationId: bodyConvId, userMessage } = body ?? {};
+    const interactionReply = parseInteractionReply(body?.interactionReply);
     if (!notebookId || typeof userMessage !== 'string' || !userMessage.trim()) {
       return NextResponse.json(
         { error: 'notebookId and userMessage are required' },
@@ -172,6 +255,178 @@ export async function POST(request: Request) {
         notebookId,
       });
     }
+
+    const persistAndRespond = async (
+      answer: string,
+      citationsForDb: Array<{
+        sourceId: string;
+        sourceTitle: string;
+        pageStart?: number;
+        pageEnd?: number;
+        snippet: string;
+        score?: number;
+        distance?: number;
+      }> = [],
+      citationsForClient: Array<{
+        sourceId: string;
+        sourceTitle: string;
+        pageStart?: number;
+        pageEnd?: number;
+        snippet: string;
+        fullContent?: string;
+        score?: number;
+        distance?: number;
+      }> = [],
+      interaction?: ChatInteraction
+    ) => {
+      const userMsgId = `msg_${randomUUID()}`;
+      const assistantMsgId = `msg_${randomUUID()}`;
+      await db.insert(messages).values([
+        {
+          id: userMsgId,
+          conversationId: conversationId!,
+          role: 'user',
+          content: userMessage.trim(),
+        },
+        {
+          id: assistantMsgId,
+          conversationId: conversationId!,
+          role: 'assistant',
+          content: answer,
+          citations: citationsForDb,
+        },
+      ]);
+      return NextResponse.json({
+        answer,
+        citations: citationsForClient,
+        conversationId,
+        interaction: interaction ?? null,
+      });
+    };
+
+    let skillContext = '';
+    let detectedSkillName = '';
+    let hasSkillScripts = false;
+    const readySkillSourceIds = readySkillSources.map((s) => s.id);
+    if (readySkillSourceIds.length > 0) {
+      const skillRows = await db
+        .select({
+          content: sourceChunks.content,
+          filename: sources.filename,
+        })
+        .from(sourceChunks)
+        .innerJoin(sources, eq(sourceChunks.sourceId, sources.id))
+        .where(inArray(sourceChunks.sourceId, readySkillSourceIds))
+        .orderBy(sources.createdAt, sourceChunks.chunkIndex)
+        .limit(260);
+      skillContext = skillRows
+        .map((row) => row.content)
+        .join('\n')
+        .slice(0, 80_000);
+      const nameInFrontMatter = skillContext.match(/^name:\s*([a-zA-Z0-9_-]+)/m)?.[1] ?? '';
+      detectedSkillName = nameInFrontMatter || (skillContext.match(/^#\s+(.+)$/m)?.[1] ?? '');
+      hasSkillScripts = /(?:^|\n)### FILE:\s.*\/scripts\/.*\.py(?:\n|$)|scripts\/[a-zA-Z0-9_-]+\.py/i.test(
+        skillContext
+      );
+    }
+
+    const stateRows = await db
+      .select({ content: messages.content })
+      .from(messages)
+      .where(and(eq(messages.conversationId, conversationId!), eq(messages.role, 'system')))
+      .orderBy(desc(messages.createdAt), desc(messages.id))
+      .limit(30);
+    let skillState: SkillRuntimeState = { active: false, selections: {} };
+    for (const row of stateRows) {
+      const parsed = parseSkillState(row.content);
+      if (parsed) {
+        skillState = parsed;
+        break;
+      }
+    }
+    if (detectedSkillName) skillState.skillName = detectedSkillName;
+    if (interactionReply?.key) {
+      skillState.selections[interactionReply.key] = interactionReply.value;
+    }
+
+    const saveSkillState = async () => {
+      await db.insert(messages).values({
+        id: `msg_${randomUUID()}`,
+        conversationId: conversationId!,
+        role: 'system',
+        content: buildSkillStateContent(skillState),
+      });
+    };
+
+    const trimmedUserMessage = userMessage.trim();
+    const isViralSkill =
+      readySkillSources.length > 0 &&
+      /viral-video-copywriting|爆款短视频文案创作/i.test(`${detectedSkillName}\n${skillContext}`);
+    if (isViralSkill && (skillState.active || shouldUseSkillPlanningTemplate(trimmedUserMessage) || Boolean(interactionReply))) {
+      skillState.active = true;
+      if (!skillState.selections.input_mode) {
+        await saveSkillState();
+        return persistAndRespond(
+          `已识别到技能包 **${detectedSkillName || 'viral-video-copywriting'}**。\n\n先完成第 1 步：请选择视频信息获取方式。`,
+          [],
+          [],
+          {
+            type: 'choices',
+            key: 'input_mode',
+            title: '请选择视频信息获取方式',
+            description: '方式A偏自动化；方式B更稳定，建议先用方式B',
+            options: [
+              { label: '方式B：手动提供素材（推荐）', value: 'manual' },
+              { label: '方式A：抖音链接提取', value: 'auto' },
+            ],
+          }
+        );
+      }
+
+      if (skillState.selections.input_mode === 'auto') {
+        const douyinUrl = extractDouyinUrl(trimmedUserMessage);
+        if (douyinUrl) {
+          skillState.selections.douyin_url = douyinUrl;
+        }
+        if (!skillState.selections.douyin_url) {
+          await saveSkillState();
+          return persistAndRespond(
+            `你已选择 **方式A（抖音链接提取）**。\n\n请直接粘贴抖音视频链接（` +
+              `douyin.com/video/... 或 v.douyin.com/...` +
+              `）。\n\n如果链接提取失败，我会自动切回方式B让你手动补充素材。`,
+            [],
+            [],
+            {
+              type: 'choices',
+              key: 'input_mode',
+              title: '也可以直接改为手动方式',
+              options: [{ label: '切换到方式B（手动）', value: 'manual' }],
+            }
+          );
+        }
+
+        if (!readyPythonSources.length || !hasSkillScripts) {
+          skillState.selections.input_mode = 'manual';
+          await saveSkillState();
+          return persistAndRespond(
+            `已收到链接：${skillState.selections.douyin_url}\n\n当前环境无法直接执行抖音提取脚本（缺少可用脚本运行条件），自动切换到 **方式B（手动）**。\n\n请按下面模板粘贴素材：\n\n` +
+              `- 视频标题：\n- 视频描述：\n- 视频文案/字幕：\n- 背景音乐（可选）：\n- 数据表现（可选：点赞/评论/播放）：`,
+          );
+        }
+      }
+
+      if (skillState.selections.input_mode === 'manual' && !hasManualVideoInput(trimmedUserMessage)) {
+        await saveSkillState();
+        return persistAndRespond(
+          `你已选择 **方式B（手动）**。请先提供对标视频素材，我再按技能包完整五步法输出。\n\n请按模板回复：\n` +
+            `- 视频标题：\n- 视频描述：\n- 视频文案/字幕：\n- 背景音乐（可选）：\n- 数据表现（可选）：\n\n` +
+            `随后我会继续执行：爆款拆解 -> 需求澄清 -> 多版本原创文案。`
+        );
+      }
+
+      await saveSkillState();
+    }
+
     const [queryEmbedding] = await createEmbeddings([userMessage.trim()]);
     if (!queryEmbedding || queryEmbedding.length === 0) {
       return NextResponse.json(
@@ -403,20 +658,30 @@ export async function POST(request: Request) {
     const context = contextParts.length > 0 ? contextParts.join('\n\n') : '(none)';
     const scriptContext = scriptInsights.join('\n\n');
     const hasSkillContext = selected.some((row) => skillSourceIdSet.has(row.sourceId));
+    const useViralSkillRuntime = isViralSkill && skillState.active;
     const useSkillPlanningTemplate =
       readySkillSources.length > 0 &&
       (hasSkillContext || shouldUseSkillPlanningTemplate(userMessage.trim()));
+    const skillExecutionRule = readyPythonSources.length > 0
+      ? `You may reference "脚本分析" only as an optional capability. If mentioning scripts, describe expected outputs in plain Chinese, never output shell commands.`
+      : `No executable script capability is available in this notebook. Do not output script-running advice, terminal commands, or pseudo execution steps.`;
     const skillTemplateRule = useSkillPlanningTemplate
-      ? `\nWhen the user asks for creation/planning tasks, structure your answer with these exact sections:\n1) 需求分析\n2) 实现方式决策\n3) Skill 定位\n4) 更新计划\nIn "更新计划", provide concrete next actions and avoid fake shell output.`
+      ? `\nWhen the user asks for creation/planning tasks, structure your answer with these exact sections in Chinese markdown:\n## 需求分析\n## 实现方式决策\n## Skill 定位\n## 更新计划\nRequirements:\n- Keep each section concise and actionable (2-5 bullets).\n- "更新计划" must be product actions, not shell commands.\n- If assumptions are needed, list them as "待确认".\n- Avoid filler, percentages without evidence, and avoid repeating source text verbatim.\n${skillExecutionRule}`
       : '';
-    const systemPrompt = `You are a helpful assistant. Answer based only on the provided sources and script insights. Always cite source numbers like [1] when using source chunks. If script insights are used, explicitly mention "脚本分析" in your answer. If the question cannot be answered from provided context, say so.${skillTemplateRule}`;
-    const userPrompt = `Sources:\n${context}\n\nScript Insights:\n${scriptContext || '(none)'}\n\nUser question: ${userMessage.trim()}`;
+    const viralSkillRule = useViralSkillRuntime
+      ? `\nViral-video-copywriting runtime is active.\nStrictly follow the five-step workflow in SKILL.md.\nNever output runnable shell commands.\nIf any required input is missing, ask concise follow-up questions first and stop.\nWhen enough input is present, output:\n1) 对标拆解要点\n2) 需求澄清结论\n3) 2-3版原创文案（含字数/时长对标）\n4) 原创性声明`
+      : '';
+    const systemPrompt = `You are a helpful assistant. Answer based only on the provided sources and script insights. Always cite source numbers like [1] when using source chunks. If script insights are used, explicitly mention "脚本分析" in your answer. If the question cannot be answered from provided context, say so.${skillTemplateRule}${viralSkillRule}`;
+    const userPrompt = `Sources:\n${context}\n\nScript Insights:\n${scriptContext || '(none)'}\n\nSkill Runtime State:\n${JSON.stringify(skillState.selections)}\n\nUser question: ${userMessage.trim()}`;
     const chatMessages = [
       { role: 'system' as const, content: systemPrompt },
       ...history.slice(-10).map((m) => ({ role: m.role, content: m.content })),
       { role: 'user' as const, content: userPrompt },
     ];
-    const { content: answer } = await chat(chatMessages);
+    const { content: rawAnswer } = await chat(chatMessages);
+    const answer = useSkillPlanningTemplate
+      ? sanitizeSkillAnswer(rawAnswer, readyPythonSources.length > 0)
+      : rawAnswer;
     const citationsForClient = selected.map((r) => {
       const dist =
         typeof r.distance === 'number'
@@ -447,28 +712,7 @@ export async function POST(request: Request) {
         distance,
       })
     );
-    const userMsgId = `msg_${randomUUID()}`;
-    const assistantMsgId = `msg_${randomUUID()}`;
-    await db.insert(messages).values([
-      {
-        id: userMsgId,
-        conversationId: conversationId!,
-        role: 'user',
-        content: userMessage.trim(),
-      },
-      {
-        id: assistantMsgId,
-        conversationId: conversationId!,
-        role: 'assistant',
-        content: answer,
-        citations: citationsForDb,
-      },
-    ]);
-    return NextResponse.json({
-      answer,
-      citations: citationsForClient,
-      conversationId,
-    });
+    return persistAndRespond(answer, citationsForDb, citationsForClient);
   } catch (e) {
     console.error(e);
     return NextResponse.json(

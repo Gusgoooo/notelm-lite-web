@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { conversations, db, desc, eq, messages } from 'db';
+import { and, conversations, db, desc, eq, inArray, messages } from 'db';
 import { getNotebookAccess } from '@/lib/notebook-access';
 
 export const dynamic = 'force-dynamic';
@@ -67,7 +67,12 @@ export async function GET(request: Request) {
       })
       .from(messages)
       .innerJoin(conversations, eq(messages.conversationId, conversations.id))
-      .where(eq(conversations.notebookId, notebookId))
+      .where(
+        and(
+          eq(conversations.notebookId, notebookId),
+          inArray(messages.role, ['user', 'assistant'])
+        )
+      )
       .orderBy(desc(messages.createdAt), desc(messages.id))
       .limit(pageSize + 1)
       .offset(page * pageSize);

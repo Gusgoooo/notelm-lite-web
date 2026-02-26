@@ -40,13 +40,23 @@ function toCleanString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function normalizeModelAlias(value: string): string {
+  const normalized = value.trim();
+  if (normalized.toLowerCase() === 'google/demini-3-pro-image-preview') {
+    return 'google/gemini-3-pro-image-preview';
+  }
+  return normalized;
+}
+
 function mergeModels(input: unknown): FeatureModels {
   const raw = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
   return {
-    summary: toCleanString(raw.summary) || DEFAULT_MODELS.summary,
-    mindmap: toCleanString(raw.mindmap) || DEFAULT_MODELS.mindmap,
-    infographic: toCleanString(raw.infographic) || DEFAULT_MODELS.infographic,
-    webpage: toCleanString(raw.webpage) || DEFAULT_MODELS.webpage,
+    summary: normalizeModelAlias(toCleanString(raw.summary) || DEFAULT_MODELS.summary),
+    mindmap: normalizeModelAlias(toCleanString(raw.mindmap) || DEFAULT_MODELS.mindmap),
+    infographic: normalizeModelAlias(
+      toCleanString(raw.infographic) || DEFAULT_MODELS.infographic
+    ),
+    webpage: normalizeModelAlias(toCleanString(raw.webpage) || DEFAULT_MODELS.webpage),
   };
 }
 
