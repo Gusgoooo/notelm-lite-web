@@ -16,7 +16,10 @@ function envStorageType(): string {
 
 function resolveMimeType(file: File, ext: string): string {
   const declared = (file.type || '').toLowerCase().trim();
-  if (declared) return declared;
+  if (declared) {
+    if (declared.includes('python')) return 'text/x-python';
+    return declared;
+  }
   if (ext === 'pdf') return 'application/pdf';
   if (ext === 'docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (ext === 'doc') return 'application/msword';

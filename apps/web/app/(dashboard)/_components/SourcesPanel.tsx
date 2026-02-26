@@ -25,6 +25,7 @@ const allowedMimes = [
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/msword',
   'text/x-python',
+  'text/x-python-script',
   'application/x-python-code',
   'text/plain',
 ];
@@ -38,7 +39,12 @@ function getExt(filename: string): string {
 function isPythonFile(file: File): boolean {
   const mime = (file.type || '').toLowerCase().trim();
   const ext = getExt(file.name || '');
-  return ext === 'py' || mime === 'text/x-python' || mime === 'application/x-python-code';
+  return (
+    ext === 'py' ||
+    mime === 'text/x-python' ||
+    mime === 'text/x-python-script' ||
+    mime === 'application/x-python-code'
+  );
 }
 
 function getSourceStatusMeta(status: string) {

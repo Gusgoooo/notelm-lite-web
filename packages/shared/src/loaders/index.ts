@@ -14,6 +14,8 @@ const loadersByMime: Record<string, IDocumentLoader> = {
   'application/msword': wordLoader,
   'text/plain': textLoader,
   'text/x-python': textLoader,
+  'text/x-python-script': textLoader,
+  'text/python': textLoader,
   'application/x-python-code': textLoader,
 };
 

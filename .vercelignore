@@ -1,0 +1,14 @@
+.git
+.vercel
+node_modules
+**/node_modules
+apps/web/.next
+apps/web/.next_*
+apps/web/.next_bak_*
+apps/web/.next_clean_*
+apps/web/.next_fix_*
+apps/web/.next_corrupt_*
+apps/web/.next_reset_*
+uploads
+**/uploads
+*.log
