@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { conversations, db, desc, eq, messages } from 'db';
+import { getNotebookAccess } from '@/lib/notebook-access';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,6 +47,13 @@ export async function GET(request: Request) {
 
     if (!notebookId) {
       return NextResponse.json({ error: 'notebookId is required' }, { status: 400 });
+    }
+    const access = await getNotebookAccess(notebookId);
+    if (!access.notebook) {
+      return NextResponse.json({ error: 'Notebook not found' }, { status: 404 });
+    }
+    if (!access.canView) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const rows = await db

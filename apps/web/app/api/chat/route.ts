@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db, conversations, messages, sourceChunks, sources, eq, and, cosineDistance } from 'db';
 import { createEmbeddings, chat } from 'shared';
 import { randomUUID } from 'crypto';
+import { getNotebookAccess } from '@/lib/notebook-access';
 
 const TOP_K = 8;
 const PER_SOURCE_CAP = 4;
@@ -40,6 +41,13 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+    const access = await getNotebookAccess(notebookId);
+    if (!access.notebook) {
+      return NextResponse.json({ error: 'Notebook not found' }, { status: 404 });
+    }
+    if (!access.canView) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
 
     const notebookSources = await db
       .select({
@@ -77,15 +85,24 @@ export async function POST(request: Request) {
     let conversationId = bodyConvId;
     const history: { role: 'user' | 'assistant' | 'system'; content: string }[] = [];
     if (conversationId) {
-      const existing = await db
+      const [conv] = await db
         .select()
-        .from(messages)
-        .where(eq(messages.conversationId, conversationId))
-        .orderBy(messages.createdAt);
-      for (const m of existing) {
-        if (m.role !== 'system') history.push({ role: m.role as 'user' | 'assistant', content: m.content });
+        .from(conversations)
+        .where(and(eq(conversations.id, conversationId), eq(conversations.notebookId, notebookId)));
+      if (!conv) {
+        conversationId = undefined;
+      } else {
+        const existing = await db
+          .select()
+          .from(messages)
+          .where(eq(messages.conversationId, conversationId))
+          .orderBy(messages.createdAt);
+        for (const m of existing) {
+          if (m.role !== 'system') history.push({ role: m.role as 'user' | 'assistant', content: m.content });
+        }
       }
-    } else {
+    }
+    if (!conversationId) {
       conversationId = `conv_${randomUUID()}`;
       await db.insert(conversations).values({
         id: conversationId,

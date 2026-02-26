@@ -22,6 +22,13 @@
       "when": 1772009367592,
       "tag": "0002_acoustic_tempest",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1772078387945,
+      "tag": "0003_tired_unicorn",
+      "breakpoints": true
     }
   ]
 }

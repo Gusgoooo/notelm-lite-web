@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db, sources, sourceChunks, eq, desc, inArray, sql } from 'db';
 import { randomUUID } from 'crypto';
+import { getNotebookAccess } from '@/lib/notebook-access';
 
 function getSourceType(mime: string | null, filename: string): 'pdf' | 'word' | '复制文本' {
   const normalizedMime = (mime ?? '').toLowerCase();
@@ -30,6 +31,13 @@ export async function GET(request: Request) {
     );
   }
   try {
+    const access = await getNotebookAccess(notebookId);
+    if (!access.notebook) {
+      return NextResponse.json({ error: 'Notebook not found' }, { status: 404 });
+    }
+    if (!access.canView) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     const list = await db
       .select()
       .from(sources)
@@ -81,6 +89,13 @@ export async function POST(request: Request) {
         { error: 'notebookId, filename, and fileUrl are required' },
         { status: 400 }
       );
+    }
+    const access = await getNotebookAccess(String(notebookId));
+    if (!access.notebook) {
+      return NextResponse.json({ error: 'Notebook not found' }, { status: 404 });
+    }
+    if (!access.canEditSources) {
+      return NextResponse.json({ error: '该 notebook 来源为只读，请先保存为我的 notebook' }, { status: 403 });
     }
     const sourceId = bodySourceId ?? `src_${randomUUID()}`;
     const mimeValue = mime ? String(mime) : 'application/pdf';

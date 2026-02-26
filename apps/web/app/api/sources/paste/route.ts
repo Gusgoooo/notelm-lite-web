@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { db, sources, eq } from 'db';
 import { getStorage } from 'shared';
+import { getNotebookAccess } from '@/lib/notebook-access';
 
 function buildTitleFromText(text: string): string {
   const firstLine = text.split('\n')[0]?.trim() ?? '';
@@ -24,6 +25,13 @@ export async function POST(request: Request) {
     }
     if (text.length < 10) {
       return NextResponse.json({ error: 'text is too short' }, { status: 400 });
+    }
+    const access = await getNotebookAccess(notebookId);
+    if (!access.notebook) {
+      return NextResponse.json({ error: 'Notebook not found' }, { status: 404 });
+    }
+    if (!access.canEditSources) {
+      return NextResponse.json({ error: '该 notebook 来源为只读，请先保存为我的 notebook' }, { status: 403 });
     }
 
     const sourceId = `src_${randomUUID()}`;

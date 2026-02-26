@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { and, db, eq, inArray, notebooks, notes } from 'db';
-import { authOptions } from '@/lib/auth';
+import { and, db, eq, inArray, notes } from 'db';
 import { getAgentSettings } from '@/lib/agent-settings';
+import { getNotebookAccess } from '@/lib/notebook-access';
 
 type GenerateMode = 'infographic' | 'summary' | 'mindmap' | 'webpage';
 
@@ -34,15 +33,6 @@ function uniqueNonEmpty(values: Array<string | undefined>): string[] {
 
 function generateNoteId(): string {
   return `note_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
-
-async function ensureNotebookOwner(notebookId: string) {
-  const session = await getServerSession(authOptions);
-  const [row] = await db.select().from(notebooks).where(eq(notebooks.id, notebookId));
-  if (!row) return { notebook: null, allowed: false };
-  const userId = session?.user?.id ?? null;
-  const allowed = row.userId === null ? userId === null : row.userId === userId;
-  return { notebook: row, allowed };
 }
 
 function normalizeNoteIds(value: unknown): string[] {
@@ -346,11 +336,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'noteIds is required' }, { status: 400 });
     }
 
-    const { notebook, allowed } = await ensureNotebookOwner(notebookId);
-    if (!notebook) {
+    const access = await getNotebookAccess(notebookId);
+    if (!access.notebook) {
       return NextResponse.json({ error: 'Notebook not found' }, { status: 404 });
     }
-    if (!allowed) {
+    if (!access.canView) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

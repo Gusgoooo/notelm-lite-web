@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, notes, eq, desc } from 'db';
+import { getNotebookAccess } from '@/lib/notebook-access';
 
 export async function GET(
   _request: Request,
@@ -7,6 +8,13 @@ export async function GET(
 ) {
   const { id: notebookId } = await params;
   try {
+    const access = await getNotebookAccess(notebookId);
+    if (!access.notebook) {
+      return NextResponse.json({ error: 'Notebook not found' }, { status: 404 });
+    }
+    if (!access.canView) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     const list = await db
       .select()
       .from(notes)
@@ -28,6 +36,13 @@ export async function POST(
 ) {
   const { id: notebookId } = await params;
   try {
+    const access = await getNotebookAccess(notebookId);
+    if (!access.notebook) {
+      return NextResponse.json({ error: 'Notebook not found' }, { status: 404 });
+    }
+    if (!access.canView) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     const body = await request.json();
     const title =
       typeof body?.title === 'string' && body.title.trim()

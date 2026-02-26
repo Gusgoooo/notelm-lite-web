@@ -64,11 +64,18 @@ export async function POST(request: Request) {
       typeof body?.title === 'string' && body.title.trim()
         ? body.title.trim()
         : 'Untitled';
+    const description =
+      typeof body?.description === 'string'
+        ? body.description.trim().slice(0, 300)
+        : '';
     const id = `nb_${randomUUID()}`;
     await db.insert(notebooks).values({
       id,
       userId,
       title,
+      description,
+      isPublished: false,
+      publishedAt: null,
     });
     const [row] = await db.select().from(notebooks).where(eq(notebooks.id, id));
     return NextResponse.json(row);

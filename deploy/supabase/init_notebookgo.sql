@@ -15,6 +15,10 @@ create table if not exists notebooks (
   id text primary key,
   user_id text,
   title text not null,
+  description text not null default '',
+  is_published boolean not null default false,
+  published_at timestamp with time zone,
+  forked_from_notebook_id text,
   created_at timestamp with time zone not null default now()
 );
 
@@ -87,6 +91,24 @@ begin
   end if;
 end $$;
 
+alter table notebooks add column if not exists description text not null default '';
+alter table notebooks add column if not exists is_published boolean not null default false;
+alter table notebooks add column if not exists published_at timestamp with time zone;
+alter table notebooks add column if not exists forked_from_notebook_id text;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'notebooks_forked_from_notebook_id_notebooks_id_fk'
+  ) then
+    alter table notebooks
+      add constraint notebooks_forked_from_notebook_id_notebooks_id_fk
+      foreign key (forked_from_notebook_id) references notebooks(id)
+      on delete set null;
+  end if;
+end $$;
+
 do $$
 begin
   if not exists (
@@ -153,6 +175,8 @@ begin
 end $$;
 
 create index if not exists notebooks_user_idx on notebooks (user_id);
+create index if not exists notebooks_published_idx on notebooks (is_published, published_at);
+create index if not exists notebooks_forked_from_idx on notebooks (forked_from_notebook_id);
 create index if not exists sources_notebook_idx on sources (notebook_id);
 create index if not exists source_chunks_source_idx on source_chunks (source_id);
 create index if not exists source_chunks_embedding_idx

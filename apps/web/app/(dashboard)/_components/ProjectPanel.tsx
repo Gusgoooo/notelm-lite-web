@@ -12,7 +12,20 @@ import { Input } from '@/components/ui/input';
 type Notebook = {
   id: string;
   title: string;
+  description: string;
+  isPublished: boolean;
+  publishedAt: string | null;
   createdAt: string;
+};
+
+type MarketNotebook = {
+  id: string;
+  title: string;
+  description: string;
+  createdAt: string;
+  publishedAt: string | null;
+  ownerName: string | null;
+  ownerEmail: string | null;
 };
 
 function RefreshIcon() {
@@ -24,51 +37,71 @@ function RefreshIcon() {
   );
 }
 
+function formatTime(value: string | null | undefined): string {
+  if (!value) return '未发布';
+  try {
+    return new Date(value).toLocaleString('zh-CN');
+  } catch {
+    return value;
+  }
+}
+
 export function ProjectPanel() {
   const router = useRouter();
   const { data: session } = useSession();
+
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [market, setMarket] = useState<MarketNotebook[]>([]);
+
+  const [loadingMine, setLoadingMine] = useState(true);
+  const [loadingMarket, setLoadingMarket] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
 
-  const fetchNotebooks = async () => {
-    setLoading(true);
-    setError(null);
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 8000);
+  const fetchMine = async () => {
+    setLoadingMine(true);
     try {
-      const res = await fetch('/api/notebooks', {
-        signal: controller.signal,
-        cache: 'no-store',
-      });
-      const data = await res.json().catch(() => ({}));
+      const res = await fetch('/api/notebooks', { cache: 'no-store' });
+      const data = await res.json().catch(() => []);
       if (!res.ok) {
-        setNotebooks([]);
-        setError(
+        const message =
           [data?.error, data?.detail].filter(Boolean).join(' — ') ||
-            `加载 notebooks 失败 (${res.status})`
-        );
+          `加载 notebooks 失败 (${res.status})`;
+        setError(message);
+        setNotebooks([]);
         return;
       }
       setNotebooks(Array.isArray(data) ? data : []);
     } catch (e) {
-      if (e instanceof Error && e.name === 'AbortError') {
-        setError('加载 notebooks 超时（8s），请检查 web 服务与数据库连接');
-      } else {
-        setError(e instanceof Error ? e.message : '加载 notebooks 失败');
-      }
       setNotebooks([]);
+      setError(e instanceof Error ? e.message : '加载 notebooks 失败');
     } finally {
-      window.clearTimeout(timeoutId);
-      setLoading(false);
+      setLoadingMine(false);
+    }
+  };
+
+  const fetchMarket = async () => {
+    setLoadingMarket(true);
+    try {
+      const res = await fetch('/api/notebooks/market', { cache: 'no-store' });
+      const data = await res.json().catch(() => []);
+      if (!res.ok) {
+        setMarket([]);
+        return;
+      }
+      setMarket(Array.isArray(data) ? data : []);
+    } catch {
+      setMarket([]);
+    } finally {
+      setLoadingMarket(false);
     }
   };
 
   useEffect(() => {
-    void fetchNotebooks();
+    void Promise.all([fetchMine(), fetchMarket()]);
   }, []);
 
   const createNotebook = async () => {
@@ -115,14 +148,14 @@ export function ProjectPanel() {
 
   return (
     <div className="flex-1 min-h-0 overflow-auto">
-      <div className="mx-auto max-w-6xl p-6 md:p-8">
+      <div className="mx-auto max-w-7xl p-6 md:p-8">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-100 md:text-3xl">
-              Project Panel
+              Panel
             </h1>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              新建或管理 notebooks，点击后进入问答工作台。
+              管理我的 notebook，并浏览知识库市场中的公开内容。
             </p>
           </div>
           <div className="text-right">
@@ -150,74 +183,129 @@ export function ProjectPanel() {
 
         <div className="mb-5 flex items-center gap-3">
           <Button onClick={createNotebook} disabled={creating}>
-            {creating ? '创建中…' : 'New Notebook'}
+            {creating ? '创建中…' : '新建 Notebook'}
           </Button>
-          <Button variant="secondary" size="icon" onClick={() => void fetchNotebooks()} aria-label="Refresh">
+          <Button
+            variant="secondary"
+            size="icon"
+            onClick={() => void Promise.all([fetchMine(), fetchMarket()])}
+            aria-label="Refresh"
+          >
             <RefreshIcon />
           </Button>
         </div>
 
         {error && <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-        {loading ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400">Loading notebooks…</p>
-        ) : notebooks.length === 0 ? (
-          <Card className="border-dashed bg-white/60 dark:bg-gray-900/40">
-            <CardContent className="p-10 text-center text-sm text-gray-500 dark:text-gray-400">
-              还没有 notebook，先创建一个开始使用。
-            </CardContent>
-          </Card>
-        ) : (
-          <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {notebooks.map((nb) => (
-              <li key={nb.id}>
-                <Card className="h-full">
-                  <CardHeader className="pb-2">
-                    {editingId === nb.id ? (
-                      <Input
-                        value={editTitle}
-                        onChange={(e) => setEditTitle(e.target.value)}
-                        onBlur={() => void renameNotebook(nb.id, editTitle)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') void renameNotebook(nb.id, editTitle);
-                          if (e.key === 'Escape') setEditingId(null);
-                        }}
-                        autoFocus
-                      />
-                    ) : (
-                      <CardTitle className="truncate">{nb.title}</CardTitle>
-                    )}
-                    <CardDescription>
-                      Created {new Date(nb.createdAt).toLocaleString()}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent />
-                  <CardFooter className="mt-auto gap-2">
-                    <Button
-                      size="sm"
-                      onClick={() => router.push(`/?notebookId=${encodeURIComponent(nb.id)}`)}
-                    >
-                      打开
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        setEditingId(nb.id);
-                        setEditTitle(nb.title);
-                      }}
-                    >
-                      重命名
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => void deleteNotebook(nb.id)}>
-                      删除
-                    </Button>
-                  </CardFooter>
-                </Card>
-              </li>
-            ))}
-          </ul>
-        )}
+        <div className="grid min-h-[calc(100vh-210px)] grid-rows-[2fr_1fr] gap-6">
+          <section className="rounded-xl border border-gray-200 bg-white/70 p-4 dark:border-gray-800 dark:bg-gray-900/40">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">我的 Notes</h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400">管理自己的 notebooks</p>
+            </div>
+
+            {loadingMine ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400">Loading notebooks…</p>
+            ) : notebooks.length === 0 ? (
+              <Card className="border-dashed bg-white/60 dark:bg-gray-900/40">
+                <CardContent className="p-10 text-center text-sm text-gray-500 dark:text-gray-400">
+                  还没有 notebook，先创建一个开始使用。
+                </CardContent>
+              </Card>
+            ) : (
+              <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {notebooks.map((nb) => (
+                  <li key={nb.id}>
+                    <Card className="h-full">
+                      <CardHeader className="pb-2">
+                        <div className="flex items-center justify-between gap-2">
+                          {editingId === nb.id ? (
+                            <Input
+                              value={editTitle}
+                              onChange={(e) => setEditTitle(e.target.value)}
+                              onBlur={() => void renameNotebook(nb.id, editTitle)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') void renameNotebook(nb.id, editTitle);
+                                if (e.key === 'Escape') setEditingId(null);
+                              }}
+                              autoFocus
+                            />
+                          ) : (
+                            <CardTitle className="truncate">{nb.title}</CardTitle>
+                          )}
+                          {nb.isPublished ? (
+                            <span className="rounded-full bg-green-600/10 px-2 py-0.5 text-[10px] font-medium text-green-700 dark:text-green-300">
+                              已发布
+                            </span>
+                          ) : null}
+                        </div>
+                        <CardDescription>创建于 {formatTime(nb.createdAt)}</CardDescription>
+                        {nb.description ? (
+                          <p className="line-clamp-2 text-xs text-gray-500 dark:text-gray-400">{nb.description}</p>
+                        ) : null}
+                      </CardHeader>
+                      <CardContent />
+                      <CardFooter className="mt-auto gap-2">
+                        <Button size="sm" onClick={() => router.push(`/?notebookId=${encodeURIComponent(nb.id)}`)}>
+                          打开
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setEditingId(nb.id);
+                            setEditTitle(nb.title);
+                          }}
+                        >
+                          重命名
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => void deleteNotebook(nb.id)}>
+                          删除
+                        </Button>
+                      </CardFooter>
+                    </Card>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="rounded-xl border border-gray-200 bg-white/70 p-4 dark:border-gray-800 dark:bg-gray-900/40">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">知识库市场</h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400">浏览别人分享的 notebooks</p>
+            </div>
+
+            {loadingMarket ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400">Loading market…</p>
+            ) : market.length === 0 ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400">市场里还没有可浏览的公开 notebook。</p>
+            ) : (
+              <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {market.map((nb) => (
+                  <li key={nb.id}>
+                    <Card className="h-full">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="truncate">{nb.title}</CardTitle>
+                        <CardDescription>
+                          发布者 {nb.ownerName?.trim() || nb.ownerEmail?.trim() || '匿名用户'} · {formatTime(nb.publishedAt)}
+                        </CardDescription>
+                        <p className="line-clamp-2 text-xs text-gray-500 dark:text-gray-400">
+                          {nb.description?.trim() || '暂无简介'}
+                        </p>
+                      </CardHeader>
+                      <CardFooter>
+                        <Button size="sm" onClick={() => router.push(`/?notebookId=${encodeURIComponent(nb.id)}`)}>
+                          打开并查看
+                        </Button>
+                      </CardFooter>
+                    </Card>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
       </div>
     </div>
   );

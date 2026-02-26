@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { and, db, eq, notebooks, notes } from 'db';
-import { authOptions } from '@/lib/auth';
+import { and, db, eq, notes } from 'db';
+import { getNotebookAccess } from '@/lib/notebook-access';
 
 type DeletedNoteInput = {
   id: string;
@@ -11,15 +10,6 @@ type DeletedNoteInput = {
   createdAt: string;
   updatedAt: string;
 };
-
-async function ensureNotebookOwner(notebookId: string) {
-  const session = await getServerSession(authOptions);
-  const [row] = await db.select().from(notebooks).where(eq(notebooks.id, notebookId));
-  if (!row) return { notebook: null, allowed: false };
-  const userId = session?.user?.id ?? null;
-  const allowed = row.userId === null ? userId === null : row.userId === userId;
-  return { notebook: row, allowed };
-}
 
 function normalizeDeletedNotes(value: unknown, notebookId: string): DeletedNoteInput[] {
   if (!Array.isArray(value)) return [];
@@ -62,11 +52,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'deletedNotes is required' }, { status: 400 });
     }
 
-    const { notebook, allowed } = await ensureNotebookOwner(notebookId);
-    if (!notebook) {
+    const access = await getNotebookAccess(notebookId);
+    if (!access.notebook) {
       return NextResponse.json({ error: 'Notebook not found' }, { status: 404 });
     }
-    if (!allowed) {
+    if (!access.canView) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -95,4 +85,3 @@ export async function POST(request: Request) {
     );
   }
 }
-

@@ -1,4 +1,6 @@
 import {
+  type AnyPgColumn,
+  boolean,
   index,
   pgTable,
   text,
@@ -22,9 +24,19 @@ export const notebooks = pgTable(
     id: text('id').primaryKey(),
     userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
     title: text('title').notNull(),
+    description: text('description').notNull().default(''),
+    isPublished: boolean('is_published').notNull().default(false),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    forkedFromNotebookId: text('forked_from_notebook_id').references((): AnyPgColumn => notebooks.id, {
+      onDelete: 'set null',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('notebooks_user_idx').on(table.userId)]
+  (table) => [
+    index('notebooks_user_idx').on(table.userId),
+    index('notebooks_published_idx').on(table.isPublished, table.publishedAt),
+    index('notebooks_forked_from_idx').on(table.forkedFromNotebookId),
+  ]
 );
 
 export const sources = pgTable(
