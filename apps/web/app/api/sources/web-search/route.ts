@@ -95,7 +95,7 @@ async function searchWebViaOpenRouter(input: {
   const settings = await getAgentSettings();
   const apiKey = settings.openrouterApiKey.trim();
   const baseUrl = settings.openrouterBaseUrl.trim() || 'https://openrouter.ai/api/v1';
-  const model = (process.env.OPENROUTER_SEARCH_MODEL ?? 'perplexity/sonar-pro').trim();
+  const model = (process.env.OPENROUTER_SEARCH_MODEL ?? 'openai/gpt-4o-search-preview').trim();
   if (!apiKey) throw new Error('OpenRouter API key is not configured');
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {

@@ -21,6 +21,7 @@ type Source = {
 };
 
 const MAX_WEB_SOURCES = 20;
+const SAFE_FUNCTION_UPLOAD_BYTES = 4 * 1024 * 1024;
 const allowedMimes = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -76,6 +77,10 @@ function RefreshIcon() {
       <path d="M21 3v6h-6" />
     </svg>
   );
+}
+
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
 }
 
 export function SourcesPanel({
@@ -151,20 +156,80 @@ export function SourcesPanel({
     }
     setUploading(true);
     try {
-      const form = new FormData();
-      form.set('notebookId', notebookId);
-      form.set('file', file);
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 60_000);
-      const res = await fetch('/api/sources/upload', {
+      // Prefer direct object-storage upload to bypass Vercel function body limits.
+      const preflightRes = await fetch('/api/sources/upload-url', {
         method: 'POST',
-        body: form,
-        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notebookId,
+          filename: file.name,
+          mimeType: file.type || undefined,
+        }),
       });
-      clearTimeout(timer);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert(err?.error ?? '上传失败');
+      const preflightData = await preflightRes.json().catch(() => ({}));
+      if (!preflightRes.ok) {
+        alert(preflightData?.error ?? '获取上传地址失败');
+        return;
+      }
+
+      const uploadUrl = typeof preflightData?.uploadUrl === 'string' ? preflightData.uploadUrl : '';
+      const sourceId = typeof preflightData?.sourceId === 'string' ? preflightData.sourceId : '';
+      const fileUrl = typeof preflightData?.fileUrl === 'string' ? preflightData.fileUrl : '';
+      const mimeType = typeof preflightData?.mimeType === 'string' ? preflightData.mimeType : undefined;
+      if (!sourceId || !fileUrl) {
+        alert('上传初始化失败：缺少 sourceId 或 fileUrl');
+        return;
+      }
+
+      if (isHttpUrl(uploadUrl)) {
+        const putRes = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: file.type ? { 'Content-Type': file.type } : undefined,
+          body: file,
+        });
+        if (!putRes.ok) {
+          alert(`对象存储直传失败（${putRes.status}）`);
+          return;
+        }
+
+        const createRes = await fetch('/api/sources', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sourceId,
+            notebookId,
+            filename: file.name,
+            fileUrl,
+            mime: mimeType,
+          }),
+        });
+        if (!createRes.ok) {
+          const err = await createRes.json().catch(() => ({}));
+          alert(err?.error ?? '上传完成但来源入库失败');
+          return;
+        }
+      } else {
+        // Local filesystem fallback (dev only). Large files may exceed function payload limits.
+        if (file.size > SAFE_FUNCTION_UPLOAD_BYTES) {
+          alert('文件过大，请在生产环境使用 S3 直传上传（当前环境不支持大文件直传）。');
+          return;
+        }
+        const form = new FormData();
+        form.set('notebookId', notebookId);
+        form.set('file', file);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 60_000);
+        const res = await fetch('/api/sources/upload', {
+          method: 'POST',
+          body: form,
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert(err?.error ?? '上传失败');
+          return;
+        }
       }
       await fetchSources(false);
     } catch (err) {
@@ -299,15 +364,14 @@ export function SourcesPanel({
         {!readOnly && (
           <>
             <Button
-              className="w-full bg-black text-xs text-white hover:bg-black/90"
+              className="h-9 w-full bg-black text-xs text-white hover:bg-black/90"
               disabled={uploading}
               onClick={() => fileInputRef.current?.click()}
             >
               {uploading ? '上传中…' : '上传 PDF / Word / Python / Skills ZIP'}
             </Button>
             <div className="space-y-1">
-              <p className="text-[11px] text-gray-500 dark:text-gray-400">联网检索（最多 20 条来源）</p>
-              <div className="flex items-center gap-2">
+              <div className="relative h-9 w-full">
                 <input
                   value={webTopic}
                   onChange={(e) => setWebTopic(e.target.value)}
@@ -317,20 +381,18 @@ export function SourcesPanel({
                       void addWebSources();
                     }
                   }}
-                  placeholder="输入主题，例如：vibecoding 最新趋势"
-                  className="h-8 w-full rounded-md border border-gray-200 bg-white px-2 text-xs outline-none transition focus:border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:focus:border-gray-600"
+                  placeholder="联网检索，请输入你想了解的内容"
+                  className="h-9 w-full rounded-md border border-black bg-white px-3 pr-16 text-xs outline-none transition focus:border-black dark:border-black dark:bg-gray-900"
                   disabled={webSearching}
                 />
-                <Button
+                <button
                   type="button"
-                  size="sm"
-                  variant="secondary"
-                  className="h-8 shrink-0 px-2 text-[11px]"
+                  className="absolute bottom-1 right-1 top-1 rounded bg-black px-3 text-[11px] text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => void addWebSources()}
                   disabled={webSearching || !webTopic.trim()}
                 >
                   {webSearching ? '检索中…' : '检索'}
-                </Button>
+                </button>
               </div>
               {webSearchStatus ? (
                 <p

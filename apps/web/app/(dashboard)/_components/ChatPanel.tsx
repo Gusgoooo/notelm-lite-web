@@ -31,6 +31,29 @@ type Message = {
 
 const HISTORY_PAGE_SIZE = 20;
 
+function toTimestamp(value: string | undefined): number | null {
+  if (!value) return null;
+  const ts = Date.parse(value);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+function normalizeHistoryOrder(batch: Message[]): Message[] {
+  return batch
+    .map((message, index) => ({ message, index }))
+    .sort((a, b) => {
+      const ta = toTimestamp(a.message.createdAt);
+      const tb = toTimestamp(b.message.createdAt);
+      if (ta != null && tb != null && ta !== tb) return ta - tb;
+      if (ta != null && tb == null) return -1;
+      if (ta == null && tb != null) return 1;
+      const roleA = a.message.role === 'user' ? 0 : 1;
+      const roleB = b.message.role === 'user' ? 0 : 1;
+      if (roleA !== roleB) return roleA - roleB;
+      return a.index - b.index;
+    })
+    .map((item) => item.message);
+}
+
 function buildNoteTitleFromAnswer(content: string): string {
   const line = content
     .split('\n')
@@ -112,7 +135,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         }
         setHistoryError('');
         const batch = Array.isArray(data?.messages) ? (data.messages as Message[]) : [];
-        const chronological = [...batch].reverse();
+        const chronological = normalizeHistoryOrder(batch);
         if (reset) {
           setMessages(chronological);
           setConversationId(
@@ -233,7 +256,9 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               {messages.map((m) => (
                 <div
                   key={m.id}
-                  className={`w-full max-w-[680px] rounded-xl border p-3 shadow-sm ${
+                  className={`w-full max-w-[680px] rounded-xl border shadow-sm ${
+                    m.role === 'user' ? 'px-3 py-2' : 'p-3'
+                  } ${
                     m.role === 'user'
                       ? 'ml-auto mr-0 border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800'
                       : 'ml-0 mr-auto border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900'
@@ -361,7 +386,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
             <button
               type="submit"
               disabled={loading || !input.trim()}
-              className="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-white/90"
+              className="absolute bottom-4 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-white/90"
               aria-label="发送"
               title="发送"
             >

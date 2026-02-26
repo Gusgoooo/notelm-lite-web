@@ -88,6 +88,11 @@ function extractTextFromContent(content: unknown): string {
   return lines.join('\n').trim();
 }
 
+function toDataUrl(base64: string, mimeType: string): string {
+  const cleanBase64 = base64.replace(/\s+/g, '');
+  return `data:${mimeType};base64,${cleanBase64}`;
+}
+
 function extractImageDataUrl(payload: unknown): { dataUrl: string; caption: string } | null {
   if (!payload || typeof payload !== 'object') return null;
   const choices = (payload as { choices?: unknown }).choices;
@@ -110,6 +115,61 @@ function extractImageDataUrl(payload: unknown): { dataUrl: string; caption: stri
       '';
     if (url.startsWith('data:image/')) {
       return { dataUrl: url, caption };
+    }
+  }
+
+  const content = Array.isArray(message.content) ? message.content : [];
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue;
+    const obj = part as {
+      type?: unknown;
+      image_url?: unknown;
+      imageUrl?: unknown;
+      b64_json?: unknown;
+      mime_type?: unknown;
+      media_type?: unknown;
+    };
+    const imageUrlValue =
+      (typeof obj.image_url === 'string' && obj.image_url) ||
+      (obj.image_url &&
+      typeof obj.image_url === 'object' &&
+      typeof (obj.image_url as { url?: unknown }).url === 'string'
+        ? ((obj.image_url as { url: string }).url ?? '')
+        : '') ||
+      (obj.imageUrl &&
+      typeof obj.imageUrl === 'object' &&
+      typeof (obj.imageUrl as { url?: unknown }).url === 'string'
+        ? ((obj.imageUrl as { url: string }).url ?? '')
+        : '');
+    if (imageUrlValue && imageUrlValue.startsWith('data:image/')) {
+      return { dataUrl: imageUrlValue, caption };
+    }
+    const b64 = typeof obj.b64_json === 'string' ? obj.b64_json : '';
+    if (b64) {
+      const mime =
+        (typeof obj.mime_type === 'string' && obj.mime_type) ||
+        (typeof obj.media_type === 'string' && obj.media_type) ||
+        'image/png';
+      return { dataUrl: toDataUrl(b64, mime), caption };
+    }
+  }
+
+  const data = (payload as { data?: unknown }).data;
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      if (!item || typeof item !== 'object') continue;
+      const row = item as {
+        url?: unknown;
+        b64_json?: unknown;
+        mime_type?: unknown;
+      };
+      if (typeof row.url === 'string' && row.url.startsWith('data:image/')) {
+        return { dataUrl: row.url, caption };
+      }
+      if (typeof row.b64_json === 'string' && row.b64_json) {
+        const mime = typeof row.mime_type === 'string' ? row.mime_type : 'image/png';
+        return { dataUrl: toDataUrl(row.b64_json, mime), caption };
+      }
     }
   }
   return null;
