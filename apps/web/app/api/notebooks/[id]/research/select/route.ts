@@ -31,6 +31,32 @@ function tryParseJson(content: string): unknown {
   }
 }
 
+function normalizeStarterQuestion(raw: string): string {
+  const firstLine =
+    raw
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/\r/g, '\n')
+      .split('\n')
+      .map((line) => line.trim())
+      .find(Boolean) ?? '';
+
+  const cleaned = firstLine
+    .replace(/^[\d一二三四五六七八九十]+[.)、\s-]*/, '')
+    .replace(/^[•·\-*]\s*/, '')
+    .replace(/^问题[:：]\s*/, '')
+    .replace(/^议题[:：]\s*/, '')
+    .replace(/^请(?:你)?/, '')
+    .trim();
+
+  if (!cleaned) return '';
+
+  const questionOnly = cleaned.match(/[^。！？!?]*[？?]/)?.[0]?.trim() ?? cleaned;
+  const normalized = questionOnly.replace(/[。;；]+$/g, '').trim();
+  if (!normalized) return '';
+  if (/[？?]$/.test(normalized)) return normalized.replace(/\?$/, '？');
+  return `${normalized}？`;
+}
+
 async function generateStarterQuestions(input: {
   topic: string;
   directionTitle: string;
@@ -38,11 +64,10 @@ async function generateStarterQuestions(input: {
   sourceTitles: string[];
   sourceEvidence: string;
 }): Promise<string[]> {
-  const sourceLabel = input.sourceTitles.slice(0, 3);
   const fallback = [
-    `请基于当前来源（如《${sourceLabel[0] || '当前来源1'}》）梳理“${input.directionTitle}”中被反复支持的核心变量，并指出还缺哪一类证据？`,
-    `请对比当前来源在“${input.directionQuestion}”上的一致结论与分歧结论，哪部分最值得继续验证？`,
-    `若要继续推进“${input.directionTitle}”，请根据现有来源说明下一步最该补哪类数据、样本或方法？`,
+    '当前来源最缺哪类证据？',
+    '哪些结论还值得继续验证？',
+    '下一步该优先补什么数据？',
   ];
   const settings = await getAgentSettings();
   const apiKey = settings.openrouterApiKey.trim();
@@ -64,11 +89,12 @@ async function generateStarterQuestions(input: {
       messages: [
         {
           role: 'system',
-          content: '你是研究顾问。你只能基于给定来源证据提出下一步研究议题，不允许脱离来源虚构。只输出 JSON：{"questions":["...","...","..."]}。',
+          content:
+            '你是研究顾问。你只能基于给定来源证据提出下一步研究问题，不允许脱离来源虚构。每个问题都必须是简单易懂的简短问句。只输出 JSON：{"questions":["...","...","..."]}。',
         },
         {
           role: 'user',
-            content:
+          content:
             `主题：${input.topic}\n` +
             `已选方向：${input.directionTitle}\n` +
             `核心问题：${input.directionQuestion}\n` +
@@ -77,9 +103,10 @@ async function generateStarterQuestions(input: {
             `请生成 3 个启发式研究问题，要求：\n` +
             `1) 必须直接基于当前来源中已有的结论、方法、变量或争议来追问；\n` +
             `2) 不重复；\n` +
-            `3) 面向下一步研究行动；\n` +
-            `4) 使用简体中文；\n` +
-            `5) 如果来源不足以支持某个问题，不要编造，宁可少给。\n` +
+            `3) 每条只写一个问题本身，不要写过程、建议、解释或背景；\n` +
+            `4) 使用简体中文，尽量简单易懂；\n` +
+            `5) 每条控制在 8 到 22 个字，且必须是问句；\n` +
+            `6) 如果来源不足以支持某个问题，不要编造，宁可少给。\n` +
             `输出 JSON。`,
         },
       ],
@@ -109,7 +136,7 @@ async function generateStarterQuestions(input: {
   const unique: string[] = [];
   const seen = new Set<string>();
   for (const item of merged) {
-    const key = item.trim();
+    const key = normalizeStarterQuestion(item);
     if (!key || seen.has(key)) continue;
     seen.add(key);
     unique.push(key);

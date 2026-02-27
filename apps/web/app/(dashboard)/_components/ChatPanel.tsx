@@ -739,7 +739,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                         Array.isArray(researchState.starterQuestions) &&
                         researchState.starterQuestions.length > 0 ? (
                           <div className="mt-3 border-t pt-3">
-                            <p className="text-xs text-gray-600 dark:text-gray-300">可继续探索的研究议题：</p>
+                            <p className="text-xs text-gray-600 dark:text-gray-300">可继续探索的问题：</p>
                             <div className="mt-2 flex flex-col items-start gap-1.5">
                               {researchState.starterQuestions.slice(0, 3).map((q, idx) => (
                                 <button
