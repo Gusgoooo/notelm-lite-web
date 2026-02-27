@@ -54,6 +54,12 @@ type ResearchState = {
   updatedAt: string;
 };
 
+type SelectionToastState = {
+  text: string;
+  x: number;
+  y: number;
+};
+
 const HISTORY_PAGE_SIZE = 20;
 const REPORT_ACTION_MARKER = '[[ACTION:REPORT]]';
 
@@ -190,8 +196,11 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [reportError, setReportError] = useState('');
   const [reportRunningMessageId, setReportRunningMessageId] = useState<string | null>(null);
   const [quickActionRunning, setQuickActionRunning] = useState<{ messageId: string; mode: 'report' | 'infographic' } | null>(null);
+  const [selectionToast, setSelectionToast] = useState<SelectionToastState | null>(null);
+  const [savingSelection, setSavingSelection] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const chatContentRef = useRef<HTMLDivElement>(null);
 
   const fetchHistoryPage = useCallback(
     async (page: number, reset: boolean) => {
@@ -280,6 +289,81 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     }, 200);
     return () => window.clearInterval(timer);
   }, [loading]);
+
+  const createNote = useCallback(
+    async (content: string, title?: string) => {
+      if (!notebookId) throw new Error('notebookId is required');
+      const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title?.trim() || buildNoteTitleFromAnswer(content),
+          content,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error ?? '保存到笔记失败');
+      }
+      window.dispatchEvent(new CustomEvent('notes-updated'));
+      return data;
+    },
+    [notebookId]
+  );
+
+  useEffect(() => {
+    const updateSelectionToast = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        setSelectionToast(null);
+        return;
+      }
+
+      const text = selection.toString().replace(/\s+/g, ' ').trim();
+      if (!text) {
+        setSelectionToast(null);
+        return;
+      }
+
+      const range = selection.getRangeAt(0);
+      const container = chatContentRef.current;
+      const anchorNode = range.commonAncestorContainer;
+      const anchorElement =
+        anchorNode.nodeType === Node.ELEMENT_NODE
+          ? (anchorNode as Element)
+          : anchorNode.parentElement;
+      if (!container || !anchorElement || !container.contains(anchorElement)) {
+        setSelectionToast(null);
+        return;
+      }
+
+      const assistantRoot = anchorElement.closest('[data-assistant-message="true"]');
+      if (!assistantRoot) {
+        setSelectionToast(null);
+        return;
+      }
+
+      const rect = range.getBoundingClientRect();
+      if (!rect.width && !rect.height) {
+        setSelectionToast(null);
+        return;
+      }
+
+      setSelectionToast({
+        text,
+        x: Math.min(window.innerWidth - 148, Math.max(12, rect.right + 8)),
+        y: Math.max(12, rect.top - 40),
+      });
+    };
+
+    const clearSelectionToast = () => setSelectionToast(null);
+    document.addEventListener('selectionchange', updateSelectionToast);
+    window.addEventListener('scroll', clearSelectionToast, true);
+    return () => {
+      document.removeEventListener('selectionchange', updateSelectionToast);
+      window.removeEventListener('scroll', clearSelectionToast, true);
+    };
+  }, []);
 
   const send = useCallback(
     async (overrideText?: string) => {
@@ -406,17 +490,12 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         setQuickActionRunning({ messageId: message.id, mode });
       }
       try {
-        const createRes = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/notes`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: isReport ? '论文对比洞察' : '回答延展信息图',
-            content: answerText,
-          }),
-        });
-        const createData = await createRes.json().catch(() => ({}));
-        if (!createRes.ok || !createData?.id) {
-          throw new Error(createData?.error ?? '保存洞察素材失败');
+        const createData = await createNote(
+          answerText,
+          isReport ? '论文对比洞察' : '回答延展信息图'
+        );
+        if (!createData?.id) {
+          throw new Error('保存洞察素材失败');
         }
 
         if (isReport) {
@@ -464,7 +543,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         }
       }
     },
-    [notebookId, quickActionRunning, reportRunningMessageId]
+    [createNote, notebookId, quickActionRunning, reportRunningMessageId]
   );
 
   const renderResearchSection = () => {
@@ -561,7 +640,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         </h2>
       </div>
       <ScrollArea className="flex-1 p-4 pb-36">
-        <div className="mx-auto flex w-full max-w-[680px] flex-col gap-4">
+        <div ref={chatContentRef} className="mx-auto flex w-full max-w-[680px] flex-col gap-4">
           {renderResearchSection()}
           {loadingHistory ? (
             <div className="text-center">
@@ -593,6 +672,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                 return (
                   <div
                     key={m.id}
+                    data-assistant-message={m.role === 'assistant' ? 'true' : undefined}
                     className={`w-full max-w-[680px] rounded-xl border shadow-sm ${
                       m.role === 'user' ? 'px-3 py-2' : 'p-3'
                     } ${
@@ -614,7 +694,6 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                               className="h-6 px-0 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
                               onClick={async () => {
                                 if (!notebookId) return;
-                                const title = buildNoteTitleFromAnswer(parsed.displayContent);
                                 const content =
                                   parsed.displayContent +
                                   (m.citations && m.citations.length > 0
@@ -634,15 +713,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                         )
                                         .join('\n')
                                     : '');
-                                const res = await fetch(
-                                  `/api/notebooks/${encodeURIComponent(notebookId)}/notes`,
-                                  {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ title, content }),
-                                  }
-                                );
-                                if (res.ok) window.dispatchEvent(new CustomEvent('notes-updated'));
+                                await createNote(content, buildNoteTitleFromAnswer(parsed.displayContent));
                               }}
                             >
                               保存到笔记
@@ -771,6 +842,32 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           <div ref={bottomRef} />
         </div>
       </ScrollArea>
+      {selectionToast ? (
+        <button
+          type="button"
+          className="fixed z-50 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-medium text-gray-700 shadow-lg transition hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+          style={{ left: selectionToast.x, top: selectionToast.y }}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={async () => {
+            if (savingSelection) return;
+            setSavingSelection(true);
+            try {
+              const content = selectionToast.text.trim();
+              if (!content) return;
+              await createNote(content, buildNoteTitleFromAnswer(content));
+              window.getSelection()?.removeAllRanges();
+              setSelectionToast(null);
+            } catch (error) {
+              alert(error instanceof Error ? error.message : '保存到笔记失败');
+            } finally {
+              setSavingSelection(false);
+            }
+          }}
+          disabled={savingSelection}
+        >
+          {savingSelection ? '添加中…' : '添加到笔记'}
+        </button>
+      ) : null}
       <div className="px-4 pb-4">
         <div className="mx-auto w-full max-w-[680px]">
           <form

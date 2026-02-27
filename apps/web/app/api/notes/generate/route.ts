@@ -316,17 +316,6 @@ function cleanSummaryText(raw: string): string {
     .trim();
 }
 
-function summaryLength(text: string): number {
-  return text.replace(/\s+/g, '').length;
-}
-
-function limitSummaryLength(text: string): string {
-  const compact = text.replace(/\s+/g, '').trim();
-  if (!compact) return text.trim();
-  if (compact.length <= 100) return compact;
-  return compact.slice(0, 100);
-}
-
 function extractHtmlBlock(content: string): string | null {
   const fenced = content.match(/```html\s*([\s\S]*?)```/i);
   if (fenced?.[1]) return fenced[1].trim();
@@ -345,14 +334,14 @@ function extractMarkdownBlock(content: string): string {
 
 async function generateSummary(source: string, config: OpenRouterConfig, model: string, rolePrompt: string) {
   const prompts = [
-    `请将以下内容简化成中文摘要，要求：\n1) 50-100字以内；\n2) 只输出摘要正文；\n3) 不要标题，不要分点。\n\n${source}`,
+    `请将以下内容简化成一段清晰、精炼的中文摘要。\n要求：\n1) 保留核心结论、关键依据与必要限定；\n2) 只输出摘要正文；\n3) 不要标题，不要分点；\n4) 不需要强行限制固定字数，以信息完整且明显更简洁为准。\n\n${source}`,
   ];
 
   let best = '';
   for (let i = 0; i < 2; i += 1) {
     const attemptPrompt =
       prompts[i] ??
-      `请将下面文本重写为 50-100 字的中文摘要，只输出正文：\n\n${best || source}`;
+      `请将下面这段内容继续精炼成更自然的摘要，只输出一段正文：\n\n${best || source}`;
     const generated = await requestOpenRouterText({
       config,
       model,
@@ -360,12 +349,11 @@ async function generateSummary(source: string, config: OpenRouterConfig, model: 
       userPrompt: attemptPrompt,
     });
     const clean = cleanSummaryText(generated);
-    const len = summaryLength(clean);
     best = clean;
-    if (len >= 50 && len <= 100) return clean;
-    prompts.push(`请将下面文本重写为 50-100 字的中文摘要，只输出正文：\n\n${clean}`);
+    if (clean) return clean;
+    prompts.push(`请将下面内容重写为一段更简洁、信息不丢失的摘要，只输出正文：\n\n${clean || source}`);
   }
-  return limitSummaryLength(best || source);
+  return cleanSummaryText(best || source);
 }
 
 async function generateMindmap(source: string, config: OpenRouterConfig, model: string, rolePrompt: string) {
