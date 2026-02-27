@@ -343,16 +343,9 @@ export function SourcesPanel({
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center justify-between border-b px-4">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-            知识库
-          </h2>
-          <p className="text-[11px] text-gray-500 dark:text-gray-400">
-            {researchState?.sourceStats
-              ? `来源数量：${sources.length}（初始 ${researchState.sourceStats.totalBefore} -> 清洗后 ${researchState.sourceStats.totalAfter}）`
-              : `来源数量：${sources.length}`}
-          </p>
-        </div>
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          知识库
+        </h2>
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -464,6 +457,11 @@ export function SourcesPanel({
                   {pasteStatus}
                 </p>
               ) : null}
+              <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                {researchState?.sourceStats
+                  ? `来源数量：${sources.length}（初始 ${researchState.sourceStats.totalBefore} -> 清洗后 ${researchState.sourceStats.totalAfter}）`
+                  : `来源数量：${sources.length}`}
+              </p>
             </div>
           </>
         )}

@@ -106,6 +106,10 @@ function parseMessageActions(content: string): {
   };
 }
 
+function isRefineCompletedMessage(content: string): boolean {
+  return /已完成资料重整，当前选题为：/i.test(content);
+}
+
 function MarkdownContent({ content }: { content: string }) {
   return (
     <ReactMarkdown
@@ -475,32 +479,6 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       );
     }
 
-    if (researchState.phase === 'ready' && Array.isArray(researchState.starterQuestions) && researchState.starterQuestions.length > 0) {
-      return (
-        <div className="space-y-2 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
-          <p className="text-xs text-gray-600 dark:text-gray-300">可继续探索的启发问题：</p>
-          <div className="flex flex-wrap gap-2">
-            {researchState.starterQuestions.slice(0, 3).map((q, idx) => (
-              <button
-                key={`${idx}-${q}`}
-                type="button"
-                onClick={() => void send(q)}
-                disabled={loading}
-                className="rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] text-gray-700 transition hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
-              >
-                {q}
-              </button>
-            ))}
-          </div>
-          {researchState.sourceStats ? (
-            <p className="text-[11px] text-gray-500 dark:text-gray-400">
-              已整理来源：{researchState.sourceStats.totalBefore} → {researchState.sourceStats.totalAfter}
-            </p>
-          ) : null}
-        </div>
-      );
-    }
-
     return null;
   };
 
@@ -553,6 +531,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
 
               {messages.map((m) => {
                 const parsed = parseMessageActions(m.content);
+                const refineDone = isRefineCompletedMessage(parsed.displayContent);
                 return (
                   <div
                     key={m.id}
@@ -570,45 +549,47 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                     {m.role === 'assistant' && (
                       <>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 px-0 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
-                            onClick={async () => {
-                              if (!notebookId) return;
-                              const title = buildNoteTitleFromAnswer(parsed.displayContent);
-                              const content =
-                                parsed.displayContent +
-                                (m.citations && m.citations.length > 0
-                                  ? '\n\n## Sources\n\n' +
-                                    m.citations
-                                      .map(
-                                        (c) =>
-                                          `- **${c.sourceTitle}**${
-                                            c.pageStart != null
-                                              ? ` (p.${c.pageStart}${
-                                                  c.pageEnd != null && c.pageEnd !== c.pageStart
-                                                    ? `-${c.pageEnd}`
-                                                    : ''
-                                                })`
-                                              : ''
-                                          }\n  ${c.snippet}`
-                                      )
-                                      .join('\n')
-                                  : '');
-                              const res = await fetch(
-                                `/api/notebooks/${encodeURIComponent(notebookId)}/notes`,
-                                {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ title, content }),
-                                }
-                              );
-                              if (res.ok) window.dispatchEvent(new CustomEvent('notes-updated'));
-                            }}
-                          >
-                            保存到笔记
-                          </Button>
+                          {!refineDone ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-0 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                              onClick={async () => {
+                                if (!notebookId) return;
+                                const title = buildNoteTitleFromAnswer(parsed.displayContent);
+                                const content =
+                                  parsed.displayContent +
+                                  (m.citations && m.citations.length > 0
+                                    ? '\n\n## Sources\n\n' +
+                                      m.citations
+                                        .map(
+                                          (c) =>
+                                            `- **${c.sourceTitle}**${
+                                              c.pageStart != null
+                                                ? ` (p.${c.pageStart}${
+                                                    c.pageEnd != null && c.pageEnd !== c.pageStart
+                                                      ? `-${c.pageEnd}`
+                                                      : ''
+                                                  })`
+                                                : ''
+                                            }\n  ${c.snippet}`
+                                        )
+                                        .join('\n')
+                                    : '');
+                                const res = await fetch(
+                                  `/api/notebooks/${encodeURIComponent(notebookId)}/notes`,
+                                  {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ title, content }),
+                                  }
+                                );
+                                if (res.ok) window.dispatchEvent(new CustomEvent('notes-updated'));
+                              }}
+                            >
+                              保存到笔记
+                            </Button>
+                          ) : null}
                           {parsed.canConvertReport ? (
                             <button
                               type="button"
@@ -620,6 +601,27 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                             </button>
                           ) : null}
                         </div>
+                        {refineDone &&
+                        researchState?.phase === 'ready' &&
+                        Array.isArray(researchState.starterQuestions) &&
+                        researchState.starterQuestions.length > 0 ? (
+                          <div className="mt-3 border-t pt-3">
+                            <p className="text-xs text-gray-600 dark:text-gray-300">可继续探索的启发问题：</p>
+                            <div className="mt-2 flex flex-col items-start gap-1.5">
+                              {researchState.starterQuestions.slice(0, 3).map((q, idx) => (
+                                <button
+                                  key={`${idx}-${q}`}
+                                  type="button"
+                                  onClick={() => void send(q)}
+                                  disabled={loading}
+                                  className="rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-left text-[11px] text-gray-700 transition hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                                >
+                                  {q}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
                         {m.citations && m.citations.length > 0 && (
                           <div className="mt-3 border-t pt-3">
                             <span className="text-xs font-medium text-gray-500 dark:text-gray-400">引用来源</span>
