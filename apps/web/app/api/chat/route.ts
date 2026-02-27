@@ -31,6 +31,65 @@ const CHAT_SCRIPT_POLL_MS = Math.max(
   200,
   Math.min(1000, Number.parseInt(process.env.CHAT_SCRIPT_POLL_MS ?? '350', 10) || 350)
 );
+
+const BUILTIN_PAPER_STATS_SCRIPT = `
+import re
+from collections import Counter
+
+def normalize_text(value):
+    if not isinstance(value, str):
+        return ""
+    return value.replace("\\n", " ").strip()
+
+def top_terms(texts, stopwords, limit=12):
+    counter = Counter()
+    for text in texts:
+        words = re.findall(r"[A-Za-z][A-Za-z\\-]{2,}|[\\u4e00-\\u9fff]{2,8}", text)
+        for w in words:
+            lw = w.lower()
+            if lw in stopwords:
+                continue
+            counter[lw] += 1
+    return [{"term": k, "count": v} for k, v in counter.most_common(limit)]
+
+def count_method_mentions(texts):
+    patterns = {
+        "定量研究": [r"定量", r"回归", r"模型", r"量化"],
+        "定性研究": [r"定性", r"访谈", r"案例研究"],
+        "实验研究": [r"实验", r"随机对照", r"干预"],
+        "机器学习": [r"机器学习", r"深度学习", r"神经网络", r"llm", r"大模型"],
+    }
+    out = {}
+    all_text = "\\n".join(texts)
+    for key, keys in patterns.items():
+        out[key] = sum(1 for p in keys if re.search(p, all_text, re.IGNORECASE))
+    return out
+
+def main(input_data):
+    sources = input_data.get("sources") if isinstance(input_data, dict) else []
+    texts = []
+    for item in sources if isinstance(sources, list) else []:
+        if isinstance(item, dict):
+            texts.append(normalize_text(item.get("content")))
+    texts = [t for t in texts if t]
+    if not texts:
+        return {"error": "no_texts"}
+
+    stopwords = {
+        "研究","分析","方法","结果","影响","基于","通过","进行","模型","数据","本文",
+        "一个","以及","相关","问题","under","with","from","that","this","using","into"
+    }
+    terms = top_terms(texts, stopwords, limit=12)
+    methods = count_method_mentions(texts)
+    summary = {
+        "source_count": len(texts),
+        "top_terms": terms,
+        "method_mentions": methods,
+    }
+    return summary
+
+TOOL_OUTPUT = main(TOOL_INPUT)
+`;
 let envLogged = false;
 
 function cleanEnv(v: string | undefined): string {
@@ -100,6 +159,10 @@ function extractCitationNumbers(answer: string, max: number): number[] {
     out.push(n);
   }
   return out;
+}
+
+function shouldRunBuiltinPaperStats(question: string): boolean {
+  return /知识库论文对比洞察|频繁研究|研究空白|方法争议|变量被反复验证/i.test(question);
 }
 
 export async function POST(request: Request) {
@@ -368,7 +431,8 @@ export async function POST(request: Request) {
       output: unknown;
       finishedAt: Date | null;
     }> = [];
-    if (readyPythonSources.length > 0) {
+    const needBuiltinPaperStats = shouldRunBuiltinPaperStats(userMessage.trim());
+    if (readyPythonSources.length > 0 || needBuiltinPaperStats) {
       try {
         const scriptUserId = access.userId ?? access.notebook?.userId ?? null;
         if (scriptUserId) {
@@ -380,6 +444,33 @@ export async function POST(request: Request) {
             content: row.content.slice(0, 1200),
           }));
           const createdJobIds: string[] = [];
+          if (needBuiltinPaperStats) {
+            const jobId = `job_${randomUUID()}`;
+            const now = new Date();
+            await db.insert(scriptJobs).values({
+              id: jobId,
+              userId: scriptUserId,
+              notebookId,
+              code: BUILTIN_PAPER_STATS_SCRIPT,
+              input: {
+                __meta: {
+                  mode: 'builtin-paper-stats',
+                  conversationId,
+                  askedAt: now.toISOString(),
+                },
+                notebookId,
+                conversationId,
+                question: userMessage.trim(),
+                sources: contextSnippets,
+              },
+              status: 'PENDING',
+              timeoutMs: 10_000,
+              memoryLimitMb: 256,
+              createdAt: now,
+              updatedAt: now,
+            });
+            createdJobIds.push(jobId);
+          }
           for (const scriptSource of readyPythonSources.slice(0, CHAT_SCRIPT_SOURCE_LIMIT)) {
             const scriptRows = await db
               .select({ content: sourceChunks.content })
@@ -512,7 +603,8 @@ export async function POST(request: Request) {
       readySkillSources.length > 0 &&
       !useDirectViralScript &&
       (hasSkillContext || shouldUseSkillPlanningTemplate(userMessage.trim()));
-    const skillExecutionRule = readyPythonSources.length > 0
+    const hasScriptCapability = readyPythonSources.length > 0 || needBuiltinPaperStats;
+    const skillExecutionRule = hasScriptCapability
       ? `You may reference "脚本分析" only as an optional capability. If mentioning scripts, describe expected outputs in plain Chinese, never output shell commands.`
       : `No executable script capability is available in this notebook. Do not output script-running advice, terminal commands, or pseudo execution steps.`;
     const skillTemplateRule = useSkillPlanningTemplate
@@ -530,7 +622,7 @@ export async function POST(request: Request) {
     ];
     const { content: rawAnswer } = await chat(chatMessages);
     const answer = useSkillPlanningTemplate
-      ? sanitizeSkillAnswer(rawAnswer, readyPythonSources.length > 0)
+      ? sanitizeSkillAnswer(rawAnswer, hasScriptCapability)
       : rawAnswer;
     const citedNumbers = extractCitationNumbers(answer, selected.length);
     const rowsForCitations =

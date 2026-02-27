@@ -78,6 +78,21 @@ export function WorkspaceShell({
     setPublishSuccess('');
   }, [notebookId, initialTitle, initialDescription, isPublished]);
 
+  useEffect(() => {
+    const onNotebookTitleUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ title?: string }>).detail;
+      const nextTitle = typeof detail?.title === 'string' ? detail.title.trim() : '';
+      if (!nextTitle) return;
+      setHeaderTitle(nextTitle);
+      setHeaderTitleDraft(nextTitle);
+      setTitleInput(nextTitle);
+    };
+
+    window.addEventListener('notebook-title-updated', onNotebookTitleUpdated as EventListener);
+    return () =>
+      window.removeEventListener('notebook-title-updated', onNotebookTitleUpdated as EventListener);
+  }, []);
+
   const readOnlySources = useMemo(() => !isOwner, [isOwner]);
 
   const handleSaveAsMine = async () => {

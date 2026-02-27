@@ -29,6 +29,31 @@ type Message = {
   conversationId?: string;
 };
 
+type ResearchDirection = {
+  id: string;
+  title: string;
+  researchQuestion: string;
+  coreVariables: string;
+  researchMethod: string;
+  dataSourceAccess: string;
+  difficultyStars: number;
+  trendHeat: string;
+};
+
+type ResearchState = {
+  topic: string;
+  phase: 'collecting' | 'analyzing' | 'select_direction' | 'refining' | 'ready';
+  directions: ResearchDirection[];
+  selectedDirectionId?: string;
+  starterQuestions?: string[];
+  sourceStats?: {
+    totalBefore: number;
+    totalAfter: number;
+  };
+  createdAt: string;
+  updatedAt: string;
+};
+
 const HISTORY_PAGE_SIZE = 20;
 
 function toTimestamp(value: string | undefined): number | null {
@@ -114,6 +139,14 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [historyError, setHistoryError] = useState('');
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [tailVersion, setTailVersion] = useState(0);
+  const [researchState, setResearchState] = useState<ResearchState | null>(null);
+  const [loadingResearchState, setLoadingResearchState] = useState(false);
+  const [researchStateError, setResearchStateError] = useState('');
+  const [selectingDirectionId, setSelectingDirectionId] = useState<string | null>(null);
+  const [refineOpen, setRefineOpen] = useState(false);
+  const [refineStep, setRefineStep] = useState<0 | 1 | 2>(0);
+  const [refineHint, setRefineHint] = useState('');
+  const [refineError, setRefineError] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -155,21 +188,46 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     [notebookId]
   );
 
+  const fetchResearchState = useCallback(async () => {
+    if (!notebookId) return;
+    setLoadingResearchState(true);
+    try {
+      const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/research/state`, {
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setResearchStateError(data?.error ?? '加载研究状态失败');
+        setResearchState(null);
+        return;
+      }
+      setResearchStateError('');
+      setResearchState((data?.state as ResearchState | null) ?? null);
+    } finally {
+      setLoadingResearchState(false);
+    }
+  }, [notebookId]);
+
   useEffect(() => {
     setMessages([]);
     setConversationId(null);
     setHasMore(false);
     setHistoryPage(0);
     setHistoryError('');
-    if (notebookId) void fetchHistoryPage(0, true);
-  }, [notebookId, fetchHistoryPage]);
+    setResearchState(null);
+    setResearchStateError('');
+    if (notebookId) {
+      void fetchHistoryPage(0, true);
+      void fetchResearchState();
+    }
+  }, [notebookId, fetchHistoryPage, fetchResearchState]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [tailVersion]);
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
     if (!text || !notebookId || loading) return;
     setInput('');
     setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: 'user', content: text }]);
@@ -207,6 +265,157 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     }
   };
 
+  const selectDirection = useCallback(
+    async (direction: ResearchDirection) => {
+      if (!notebookId || selectingDirectionId) return;
+      setSelectingDirectionId(direction.id);
+      setRefineOpen(true);
+      setRefineError('');
+      setRefineStep(1);
+      setRefineHint('开始重新整理资料，正在筛选相关度更高的来源…');
+      try {
+        const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/research/select`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ directionId: direction.id }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.error ?? '选题确认失败');
+        }
+        setRefineStep(2);
+        setRefineHint('资料重整完成，正在刷新研究空间…');
+        const nextState = researchState
+          ? {
+              ...researchState,
+              phase: 'ready' as const,
+              selectedDirectionId: direction.id,
+              starterQuestions: Array.isArray(data?.starterQuestions) ? data.starterQuestions : [],
+              sourceStats:
+                data?.sourceStats && typeof data.sourceStats === 'object'
+                  ? {
+                      totalBefore: Number(data.sourceStats.totalBefore ?? 0),
+                      totalAfter: Number(data.sourceStats.totalAfter ?? 0),
+                    }
+                  : researchState.sourceStats,
+              updatedAt: new Date().toISOString(),
+            }
+          : null;
+        if (nextState) setResearchState(nextState);
+        window.dispatchEvent(
+          new CustomEvent('notebook-title-updated', { detail: { title: `${direction.title} · 研究` } })
+        );
+        window.dispatchEvent(new CustomEvent('sources-updated'));
+        await fetchHistoryPage(0, true);
+        setRefineOpen(false);
+        setRefineStep(0);
+        setRefineHint('');
+      } catch (e) {
+        setRefineError(e instanceof Error ? e.message : '选题确认失败');
+      } finally {
+        setSelectingDirectionId(null);
+      }
+    },
+    [notebookId, selectingDirectionId, researchState, fetchHistoryPage]
+  );
+
+  const renderResearchSection = () => {
+    if (loadingResearchState) {
+      return (
+        <div className="rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-500 dark:border-gray-800 dark:bg-gray-900">
+          <ShinyText text="正在准备研究空间..." className="text-xs text-gray-500 dark:text-gray-400" />
+        </div>
+      );
+    }
+    if (researchStateError) {
+      return (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-600 dark:border-red-900 dark:bg-red-950/20 dark:text-red-400">
+          {researchStateError}
+        </div>
+      );
+    }
+    if (!researchState) return null;
+
+    if (researchState.phase === 'collecting' || researchState.phase === 'analyzing') {
+      return (
+        <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-300">
+          {researchState.phase === 'collecting'
+            ? '正在联网检索并整理论文来源…'
+            : '正在分析来源并延展研究方向…'}
+        </div>
+      );
+    }
+
+    if (researchState.phase === 'select_direction' && researchState.directions.length > 0) {
+      return (
+        <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">请选择一个研究方向开始深入探索</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              主题：{researchState.topic}。选中后会自动重整知识库来源并生成下一步研究建议。
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {researchState.directions.map((dir) => (
+              <button
+                key={dir.id}
+                type="button"
+                onClick={() => void selectDirection(dir)}
+                disabled={Boolean(selectingDirectionId)}
+                className={`rounded-lg border p-3 text-left transition ${
+                  selectingDirectionId === dir.id
+                    ? 'border-blue-500 bg-blue-50 dark:border-blue-500 dark:bg-blue-900/20'
+                    : 'border-gray-200 bg-gray-50 hover:border-gray-300 hover:bg-white dark:border-gray-700 dark:bg-gray-800/70 dark:hover:border-gray-600'
+                }`}
+              >
+                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{dir.title}</p>
+                <p className="mt-1 line-clamp-2 text-xs text-gray-600 dark:text-gray-300">{dir.researchQuestion}</p>
+                <div className="mt-2 space-y-1 text-[11px] text-gray-500 dark:text-gray-400">
+                  <p>核心变量：{dir.coreVariables}</p>
+                  <p>研究方法：{dir.researchMethod}</p>
+                  <p>数据可得性：{dir.dataSourceAccess}</p>
+                  <p>研究难度：{'⭐'.repeat(Math.max(1, Math.min(5, dir.difficultyStars || 3)))}</p>
+                  <p>趋势热度：{dir.trendHeat}</p>
+                </div>
+                <p className="mt-2 text-xs font-medium text-blue-600 dark:text-blue-400">
+                  {selectingDirectionId === dir.id ? '正在确认…' : '选择此方向'}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    if (researchState.phase === 'ready' && Array.isArray(researchState.starterQuestions) && researchState.starterQuestions.length > 0) {
+      return (
+        <div className="space-y-2 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
+          <p className="text-xs text-gray-600 dark:text-gray-300">可以直接点下面问题继续深入：</p>
+          <div className="flex flex-wrap gap-2">
+            {researchState.starterQuestions.slice(0, 3).map((q, idx) => (
+              <button
+                key={`${idx}-${q}`}
+                type="button"
+                onClick={() => void send(q)}
+                disabled={loading}
+                className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs text-gray-700 transition hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+          {researchState.sourceStats ? (
+            <p className="text-[11px] text-gray-500 dark:text-gray-400">
+              已整理来源：{researchState.sourceStats.totalBefore} → {researchState.sourceStats.totalAfter}
+            </p>
+          ) : null}
+        </div>
+      );
+    }
+
+    return null;
+  };
+
   if (!notebookId) {
     return (
       <div className="flex min-h-0 flex-1 flex-col">
@@ -231,6 +440,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       </div>
       <ScrollArea className="flex-1 p-4 pb-36">
         <div className="mx-auto flex w-full max-w-[680px] flex-col gap-4">
+          {renderResearchSection()}
           {loadingHistory ? (
             <div className="text-center">
               <ShinyText text="Loading chat history..." className="text-xs text-gray-500 dark:text-gray-400" />
@@ -398,6 +608,57 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           </form>
         </div>
       </div>
+      {refineOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">正在整理研究资料</h3>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{refineHint}</p>
+            <div className="mt-4 space-y-2">
+              {['开始重新整理资料', '完成'].map((label, idx) => {
+                const stepNumber = (idx + 1) as 1 | 2;
+                const done = refineStep > stepNumber;
+                const running = refineStep === stepNumber;
+                return (
+                  <div
+                    key={label}
+                    className={`flex items-center gap-2 rounded border px-2 py-2 text-xs ${
+                      done
+                        ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/20 dark:text-green-300'
+                        : running
+                          ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-300'
+                          : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-2 w-2 rounded-full ${
+                        done ? 'bg-green-600' : running ? 'bg-blue-600' : 'bg-gray-400'
+                      }`}
+                    />
+                    <span>{label}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {refineError ? <p className="mt-3 text-xs text-red-600 dark:text-red-400">{refineError}</p> : null}
+            <div className="mt-4 flex justify-end">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  if (!selectingDirectionId) {
+                    setRefineOpen(false);
+                    setRefineStep(0);
+                    setRefineHint('');
+                    setRefineError('');
+                  }
+                }}
+                disabled={Boolean(selectingDirectionId)}
+              >
+                关闭
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

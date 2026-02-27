@@ -93,64 +93,110 @@ function toDataUrl(base64: string, mimeType: string): string {
   return `data:${mimeType};base64,${cleanBase64}`;
 }
 
+function isImageUrl(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  return v.startsWith('data:image/') || v.startsWith('http://') || v.startsWith('https://');
+}
+
+function extractImageUrlFromText(text: string): string {
+  const markdown = text.match(/!\[[^\]]*]\((https?:\/\/[^)\s]+|data:image\/[^)]+)\)/i)?.[1];
+  if (markdown && isImageUrl(markdown)) return markdown;
+  const plain = text.match(/(https?:\/\/[^\s)]+)(?:\s|$)/i)?.[1];
+  if (plain && isImageUrl(plain)) return plain;
+  return '';
+}
+
+function extractImageDebugHint(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return '';
+  const choices = (payload as { choices?: unknown }).choices;
+  if (!Array.isArray(choices) || choices.length === 0) return '';
+  const first = choices[0] as { message?: unknown };
+  if (!first?.message || typeof first.message !== 'object') return '';
+  const message = first.message as { content?: unknown };
+  const text = extractTextFromContent(message.content);
+  if (!text) return '';
+  return text.replace(/\s+/g, ' ').slice(0, 220);
+}
+
 function extractImageDataUrl(payload: unknown): { dataUrl: string; caption: string } | null {
   if (!payload || typeof payload !== 'object') return null;
+  let caption = '';
   const choices = (payload as { choices?: unknown }).choices;
-  if (!Array.isArray(choices) || choices.length === 0) return null;
-  const first = choices[0] as { message?: unknown };
-  if (!first?.message || typeof first.message !== 'object') return null;
-  const message = first.message as {
-    content?: unknown;
-    images?: Array<{
-      image_url?: { url?: unknown };
-      imageUrl?: { url?: unknown };
-    }>;
-  };
-  const caption = extractTextFromContent(message.content);
-  const images = Array.isArray(message.images) ? message.images : [];
-  for (const image of images) {
-    const url =
-      (typeof image?.image_url?.url === 'string' && image.image_url.url) ||
-      (typeof image?.imageUrl?.url === 'string' && image.imageUrl.url) ||
-      '';
-    if (url.startsWith('data:image/')) {
-      return { dataUrl: url, caption };
-    }
-  }
+  if (Array.isArray(choices) && choices.length > 0) {
+    const first = choices[0] as { message?: unknown };
+    if (first?.message && typeof first.message === 'object') {
+      const message = first.message as {
+        content?: unknown;
+        images?: Array<{
+          image_url?: { url?: unknown } | unknown;
+          imageUrl?: { url?: unknown } | unknown;
+        }>;
+      };
+      caption = extractTextFromContent(message.content);
 
-  const content = Array.isArray(message.content) ? message.content : [];
-  for (const part of content) {
-    if (!part || typeof part !== 'object') continue;
-    const obj = part as {
-      type?: unknown;
-      image_url?: unknown;
-      imageUrl?: unknown;
-      b64_json?: unknown;
-      mime_type?: unknown;
-      media_type?: unknown;
-    };
-    const imageUrlValue =
-      (typeof obj.image_url === 'string' && obj.image_url) ||
-      (obj.image_url &&
-      typeof obj.image_url === 'object' &&
-      typeof (obj.image_url as { url?: unknown }).url === 'string'
-        ? ((obj.image_url as { url: string }).url ?? '')
-        : '') ||
-      (obj.imageUrl &&
-      typeof obj.imageUrl === 'object' &&
-      typeof (obj.imageUrl as { url?: unknown }).url === 'string'
-        ? ((obj.imageUrl as { url: string }).url ?? '')
-        : '');
-    if (imageUrlValue && imageUrlValue.startsWith('data:image/')) {
-      return { dataUrl: imageUrlValue, caption };
-    }
-    const b64 = typeof obj.b64_json === 'string' ? obj.b64_json : '';
-    if (b64) {
-      const mime =
-        (typeof obj.mime_type === 'string' && obj.mime_type) ||
-        (typeof obj.media_type === 'string' && obj.media_type) ||
-        'image/png';
-      return { dataUrl: toDataUrl(b64, mime), caption };
+      const captionImageUrl = extractImageUrlFromText(caption);
+      if (captionImageUrl) return { dataUrl: captionImageUrl, caption };
+
+      const images = Array.isArray(message.images) ? message.images : [];
+      for (const image of images) {
+        const imageUrlObj =
+          image && typeof image.image_url === 'object' && image.image_url
+            ? (image.image_url as { url?: unknown })
+            : null;
+        const imageUrlAltObj =
+          image && typeof image.imageUrl === 'object' && image.imageUrl
+            ? (image.imageUrl as { url?: unknown })
+            : null;
+        const url =
+          (typeof image?.image_url === 'string' && image.image_url) ||
+          (imageUrlObj && typeof imageUrlObj.url === 'string' && imageUrlObj.url) ||
+          (typeof image?.imageUrl === 'string' && image.imageUrl) ||
+          (imageUrlAltObj && typeof imageUrlAltObj.url === 'string' && imageUrlAltObj.url) ||
+          '';
+        if (isImageUrl(url)) {
+          return { dataUrl: url, caption };
+        }
+      }
+
+      const content = Array.isArray(message.content) ? message.content : [];
+      for (const part of content) {
+        if (!part || typeof part !== 'object') continue;
+        const obj = part as {
+          type?: unknown;
+          image_url?: unknown;
+          imageUrl?: unknown;
+          b64_json?: unknown;
+          mime_type?: unknown;
+          media_type?: unknown;
+          url?: unknown;
+        };
+        const imageUrlValue =
+          (typeof obj.image_url === 'string' && obj.image_url) ||
+          (obj.image_url &&
+          typeof obj.image_url === 'object' &&
+          typeof (obj.image_url as { url?: unknown }).url === 'string'
+            ? ((obj.image_url as { url: string }).url ?? '')
+            : '') ||
+          (typeof obj.imageUrl === 'string' && obj.imageUrl) ||
+          (obj.imageUrl &&
+          typeof obj.imageUrl === 'object' &&
+          typeof (obj.imageUrl as { url?: unknown }).url === 'string'
+            ? ((obj.imageUrl as { url: string }).url ?? '')
+            : '') ||
+          (typeof obj.url === 'string' && obj.url) ||
+          '';
+        if (imageUrlValue && isImageUrl(imageUrlValue)) {
+          return { dataUrl: imageUrlValue, caption };
+        }
+        const b64 = typeof obj.b64_json === 'string' ? obj.b64_json : '';
+        if (b64) {
+          const mime =
+            (typeof obj.mime_type === 'string' && obj.mime_type) ||
+            (typeof obj.media_type === 'string' && obj.media_type) ||
+            'image/png';
+          return { dataUrl: toDataUrl(b64, mime), caption };
+        }
+      }
     }
   }
 
@@ -163,7 +209,7 @@ function extractImageDataUrl(payload: unknown): { dataUrl: string; caption: stri
         b64_json?: unknown;
         mime_type?: unknown;
       };
-      if (typeof row.url === 'string' && row.url.startsWith('data:image/')) {
+      if (typeof row.url === 'string' && isImageUrl(row.url)) {
         return { dataUrl: row.url, caption };
       }
       if (typeof row.b64_json === 'string' && row.b64_json) {
@@ -364,7 +410,8 @@ async function generateInfographic(input: {
     }
     const image = extractImageDataUrl(json);
     if (!image) {
-      errors.push(`[${model}] no image returned`);
+      const hint = extractImageDebugHint(json);
+      errors.push(`[${model}] no image returned${hint ? `; response="${hint}"` : ''}`);
       continue;
     }
     const markdown =

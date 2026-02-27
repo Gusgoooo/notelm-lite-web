@@ -85,9 +85,12 @@ function WebpageIcon() {
 }
 
 function getImageFromContent(content: string): string | null {
-  const markdownImage = content.match(/!\[[^\]]*]\((data:image\/[^)]+)\)/i);
+  const markdownImage = content.match(/!\[[^\]]*]\((data:image\/[^)]+|https?:\/\/[^)\s]+)\)/i);
   if (markdownImage && markdownImage[1]) return markdownImage[1];
-  const rawDataUrl = content.match(/(data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+)/);
+  const rawDataUrl = content.match(/(data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+)/i);
+  if (rawDataUrl?.[1]) return rawDataUrl[1];
+  const rawHttpUrl = content.match(/(https?:\/\/[^\s)]+?\.(?:png|jpe?g|webp|gif)(?:\?[^\s)]*)?)/i);
+  if (rawHttpUrl?.[1]) return rawHttpUrl[1];
   return rawDataUrl?.[1] ?? null;
 }
 
@@ -147,7 +150,7 @@ function MindmapThumbnail({ code }: { code: string }) {
 
 function toPreviewText(content: string): string {
   return content
-    .replace(/!\[[^\]]*]\((?:data:image\/[^)]+)\)/gi, '[Infographic]')
+    .replace(/!\[[^\]]*]\((?:data:image\/[^)]+|https?:\/\/[^)]+)\)/gi, '[Infographic]')
     .replace(/```mermaid[\s\S]*?```/gi, '[Mindmap]')
     .replace(/```html[\s\S]*?```/gi, '[Interactive Webpage]')
     .replace(/\s+/g, ' ')

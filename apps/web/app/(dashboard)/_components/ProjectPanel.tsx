@@ -92,6 +92,13 @@ export function ProjectPanel() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
+  const [researchTopic, setResearchTopic] = useState('');
+  const [bootstrapOpen, setBootstrapOpen] = useState(false);
+  const [bootstrapError, setBootstrapError] = useState('');
+  const [bootstrapStep, setBootstrapStep] = useState<0 | 1 | 2 | 3>(0);
+  const [bootstrapHint, setBootstrapHint] = useState('');
+
+  const presetTopics = ['想研究AIGC和设计', '教育领域AI应用', '乡村振兴相关', '新媒体传播'];
 
   const fetchMine = async () => {
     setLoadingMine(true);
@@ -185,6 +192,51 @@ export function ProjectPanel() {
     if (res.ok) setNotebooks((prev) => prev.filter((n) => n.id !== id));
   };
 
+  const createNotebookFromTopic = async () => {
+    const topic = researchTopic.trim();
+    if (!topic) {
+      setError('请先输入研究方向');
+      return;
+    }
+
+    setBootstrapOpen(true);
+    setBootstrapError('');
+    setBootstrapStep(1);
+    setBootstrapHint('开始联网检索相关论文（最多 20 个来源），稍后您也可以自己上传论文补充。');
+
+    try {
+      const createRes = await fetch('/api/notebooks/bootstrap/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic }),
+      });
+      const createData = await createRes.json().catch(() => ({}));
+      if (!createRes.ok || !createData?.notebookId) {
+        throw new Error(createData?.error ?? '创建并检索来源失败');
+      }
+
+      const notebookId = String(createData.notebookId);
+      setBootstrapStep(2);
+      setBootstrapHint('分析并延展研究方向中…');
+
+      const dirRes = await fetch('/api/notebooks/bootstrap/directions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notebookId, topic }),
+      });
+      const dirData = await dirRes.json().catch(() => ({}));
+      if (!dirRes.ok) {
+        throw new Error(dirData?.error ?? '研究方向生成失败');
+      }
+
+      setBootstrapStep(3);
+      setBootstrapHint('已完成，正在进入研究空间…');
+      router.push(`/?notebookId=${encodeURIComponent(notebookId)}`);
+    } catch (e) {
+      setBootstrapError(e instanceof Error ? e.message : '初始化失败，请稍后重试');
+    }
+  };
+
   return (
     <div className="flex-1 min-h-0 overflow-auto">
       <div className="mx-auto max-w-7xl p-6 md:p-8">
@@ -238,6 +290,38 @@ export function ProjectPanel() {
         {error && <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
         <div className="space-y-6">
+          <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900/50">
+            <div className="mx-auto max-w-3xl space-y-3">
+              <textarea
+                value={researchTopic}
+                onChange={(event) => setResearchTopic(event.target.value)}
+                placeholder="请简单输入你感兴趣的研究方向"
+                className="h-40 w-full resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-base text-gray-900 outline-none transition focus:border-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-gray-500"
+              />
+              <div className="flex flex-wrap gap-2">
+                {presetTopics.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setResearchTopic(preset)}
+                    className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs text-gray-700 transition hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  onClick={() => void createNotebookFromTopic()}
+                  disabled={!researchTopic.trim() || bootstrapStep === 1 || bootstrapStep === 2}
+                  className="h-10 px-5"
+                >
+                  新建Note
+                </Button>
+              </div>
+            </div>
+          </section>
+
           <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-4 dark:border-gray-800 dark:bg-gray-900/40">
             <div className="mb-3">
               <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">我的Notebook</h2>
@@ -380,6 +464,63 @@ export function ProjectPanel() {
           </section>
         </div>
       </div>
+
+      {bootstrapOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">正在创建研究 Notebook</h3>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{bootstrapHint}</p>
+
+            <div className="mt-4 space-y-2">
+              {[
+                '开始联网检索相关论文（最多20个来源）',
+                '分析并延展研究方向',
+                '完成',
+              ].map((label, idx) => {
+                const stepNumber = (idx + 1) as 1 | 2 | 3;
+                const done = bootstrapStep > stepNumber;
+                const running = bootstrapStep === stepNumber;
+                return (
+                  <div
+                    key={label}
+                    className={`flex items-center gap-2 rounded border px-2 py-2 text-xs ${
+                      done
+                        ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/20 dark:text-green-300'
+                        : running
+                          ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-300'
+                          : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-2 w-2 rounded-full ${
+                        done ? 'bg-green-600' : running ? 'bg-blue-600' : 'bg-gray-400'
+                      }`}
+                    />
+                    <span>{label}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {bootstrapError ? <p className="mt-3 text-xs text-red-600 dark:text-red-400">{bootstrapError}</p> : null}
+
+            <div className="mt-4 flex justify-end">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setBootstrapOpen(false);
+                  setBootstrapError('');
+                  setBootstrapStep(0);
+                  setBootstrapHint('');
+                }}
+                disabled={bootstrapStep === 1 || bootstrapStep === 2}
+              >
+                关闭
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -21,7 +21,6 @@ type Source = {
 };
 
 const MAX_WEB_SOURCES = 20;
-const SAFE_FUNCTION_UPLOAD_BYTES = 4 * 1024 * 1024;
 const allowedMimes = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -79,10 +78,6 @@ function RefreshIcon() {
   );
 }
 
-function isHttpUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
-}
-
 export function SourcesPanel({
   notebookId,
   readOnly = false,
@@ -129,6 +124,14 @@ export function SourcesPanel({
     return () => clearInterval(timer);
   }, [fetchSources, sources]);
 
+  useEffect(() => {
+    const onSourcesUpdated = () => {
+      void fetchSources(false);
+    };
+    window.addEventListener('sources-updated', onSourcesUpdated);
+    return () => window.removeEventListener('sources-updated', onSourcesUpdated);
+  }, [fetchSources]);
+
   const uploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (readOnly) return;
     const file = e.target.files?.[0];
@@ -156,87 +159,27 @@ export function SourcesPanel({
     }
     setUploading(true);
     try {
-      // Prefer direct object-storage upload to bypass Vercel function body limits.
-      const preflightRes = await fetch('/api/sources/upload-url', {
+      const form = new FormData();
+      form.set('notebookId', notebookId);
+      form.set('file', file);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 60_000);
+      const res = await fetch('/api/sources/upload', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          notebookId,
-          filename: file.name,
-          mimeType: file.type || undefined,
-        }),
+        body: form,
+        signal: controller.signal,
       });
-      const preflightData = await preflightRes.json().catch(() => ({}));
-      if (!preflightRes.ok) {
-        alert(preflightData?.error ?? '获取上传地址失败');
-        return;
-      }
-
-      const uploadUrl = typeof preflightData?.uploadUrl === 'string' ? preflightData.uploadUrl : '';
-      const sourceId = typeof preflightData?.sourceId === 'string' ? preflightData.sourceId : '';
-      const fileUrl = typeof preflightData?.fileUrl === 'string' ? preflightData.fileUrl : '';
-      const mimeType = typeof preflightData?.mimeType === 'string' ? preflightData.mimeType : undefined;
-      if (!sourceId || !fileUrl) {
-        alert('上传初始化失败：缺少 sourceId 或 fileUrl');
-        return;
-      }
-
-      if (isHttpUrl(uploadUrl)) {
-        const putRes = await fetch(uploadUrl, {
-          method: 'PUT',
-          headers: file.type ? { 'Content-Type': file.type } : undefined,
-          body: file,
-        });
-        if (!putRes.ok) {
-          alert(`对象存储直传失败（${putRes.status}）`);
-          return;
-        }
-
-        const createRes = await fetch('/api/sources', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sourceId,
-            notebookId,
-            filename: file.name,
-            fileUrl,
-            mime: mimeType,
-          }),
-        });
-        if (!createRes.ok) {
-          const err = await createRes.json().catch(() => ({}));
-          alert(err?.error ?? '上传完成但来源入库失败');
-          return;
-        }
-      } else {
-        // Local filesystem fallback (dev only). Large files may exceed function payload limits.
-        if (file.size > SAFE_FUNCTION_UPLOAD_BYTES) {
-          alert('文件过大，请在生产环境使用 S3 直传上传（当前环境不支持大文件直传）。');
-          return;
-        }
-        const form = new FormData();
-        form.set('notebookId', notebookId);
-        form.set('file', file);
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 60_000);
-        const res = await fetch('/api/sources/upload', {
-          method: 'POST',
-          body: form,
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          alert(err?.error ?? '上传失败');
-          return;
-        }
+      clearTimeout(timer);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error ?? `服务端上传失败（${res.status}）`);
       }
       await fetchSources(false);
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         alert('上传超时（60秒），请检查对象存储配置后重试');
       } else {
-        alert('上传请求失败，请稍后重试');
+        alert(err instanceof Error ? err.message : '上传请求失败，请稍后重试');
       }
     } finally {
       setUploading(false);
