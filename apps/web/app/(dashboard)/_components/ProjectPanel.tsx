@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
@@ -29,15 +29,6 @@ type MarketNotebook = {
   ownerEmail: string | null;
   isMine?: boolean;
 };
-
-function RefreshIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-      <path d="M21 3v6h-6" />
-    </svg>
-  );
-}
 
 function MoreIcon() {
   return (
@@ -69,6 +60,14 @@ function TrashIcon() {
   );
 }
 
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  );
+}
+
 function formatTime(value: string | null | undefined): string {
   if (!value) return '未发布';
   try {
@@ -93,13 +92,22 @@ export function ProjectPanel() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [researchTopic, setResearchTopic] = useState('');
+  const [suggestedTopics, setSuggestedTopics] = useState<string[]>([
+    '想研究AIGC和设计',
+    '教育领域AI应用',
+    '乡村振兴相关',
+    '新媒体传播',
+  ]);
+  const [loadingSuggestedTopics, setLoadingSuggestedTopics] = useState(false);
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
   const [bootstrapError, setBootstrapError] = useState('');
   const [bootstrapStep, setBootstrapStep] = useState<0 | 1 | 2 | 3>(0);
   const [bootstrapHint, setBootstrapHint] = useState('');
+  const [bootstrapProgress, setBootstrapProgress] = useState(0);
+  const [bootstrapElapsed, setBootstrapElapsed] = useState(0);
 
-  const presetTopics = ['想研究AIGC和设计', '教育领域AI应用', '乡村振兴相关', '新媒体传播'];
-  const bootstrapProgress = bootstrapStep === 1 ? 35 : bootstrapStep === 2 ? 72 : bootstrapStep === 3 ? 100 : 0;
+  const bootstrapControllerRef = useRef<AbortController | null>(null);
+  const bootstrapRunningRef = useRef(false);
 
   const fetchMine = async () => {
     setLoadingMine(true);
@@ -147,9 +155,72 @@ export function ProjectPanel() {
     }
   };
 
+  const fetchSuggestedTopics = async () => {
+    setLoadingSuggestedTopics(true);
+    try {
+      const res = await fetch('/api/notebooks/bootstrap/recommendations', { cache: 'no-store' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      const topics = Array.isArray(data?.topics)
+        ? data.topics
+            .filter((item: unknown) => typeof item === 'string')
+            .map((item: string) => item.trim())
+            .filter(Boolean)
+            .slice(0, 8)
+        : [];
+      if (topics.length > 0) setSuggestedTopics(topics);
+    } catch {
+      // ignore and use fallback
+    } finally {
+      setLoadingSuggestedTopics(false);
+    }
+  };
+
   useEffect(() => {
     void Promise.all([fetchMine(), fetchMarket()]);
+    void fetchSuggestedTopics();
   }, []);
+
+  useEffect(() => {
+    if (!bootstrapOpen) {
+      setBootstrapElapsed(0);
+      return;
+    }
+    const start = Date.now();
+    const timer = window.setInterval(() => {
+      setBootstrapElapsed(Math.floor((Date.now() - start) / 1000));
+    }, 200);
+    return () => window.clearInterval(timer);
+  }, [bootstrapOpen]);
+
+  useEffect(() => {
+    if (!bootstrapOpen) {
+      setBootstrapProgress(0);
+      return;
+    }
+    const target = bootstrapStep === 1 ? 34 : bootstrapStep === 2 ? 76 : bootstrapStep === 3 ? 100 : 0;
+    const timer = window.setInterval(() => {
+      setBootstrapProgress((prev) => {
+        if (prev >= target) return prev;
+        const delta = Math.max(1, Math.round((target - prev) / 10));
+        return Math.min(target, prev + delta);
+      });
+    }, 120);
+    return () => window.clearInterval(timer);
+  }, [bootstrapOpen, bootstrapStep]);
+
+  const closeBootstrapModal = (abort = true) => {
+    if (abort) {
+      bootstrapRunningRef.current = false;
+      bootstrapControllerRef.current?.abort();
+    }
+    setBootstrapOpen(false);
+    setBootstrapError('');
+    setBootstrapStep(0);
+    setBootstrapHint('');
+    setBootstrapProgress(0);
+    setBootstrapElapsed(0);
+  };
 
   const createNotebook = async () => {
     setCreating(true);
@@ -200,56 +271,65 @@ export function ProjectPanel() {
       return;
     }
 
+    bootstrapRunningRef.current = true;
     setBootstrapOpen(true);
     setBootstrapError('');
     setBootstrapStep(1);
     setBootstrapHint('开始联网检索相关论文（最多 20 个来源），稍后您也可以自己上传论文补充。');
 
     try {
+      const firstController = new AbortController();
+      bootstrapControllerRef.current = firstController;
       const createRes = await fetch('/api/notebooks/bootstrap/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic }),
+        signal: firstController.signal,
       });
       const createData = await createRes.json().catch(() => ({}));
       if (!createRes.ok || !createData?.notebookId) {
         throw new Error(createData?.error ?? '创建并检索来源失败');
       }
+      if (!bootstrapRunningRef.current) return;
 
       const notebookId = String(createData.notebookId);
       setBootstrapStep(2);
       setBootstrapHint('分析并延展研究方向中…');
 
+      const secondController = new AbortController();
+      bootstrapControllerRef.current = secondController;
       const dirRes = await fetch('/api/notebooks/bootstrap/directions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notebookId, topic }),
+        signal: secondController.signal,
       });
       const dirData = await dirRes.json().catch(() => ({}));
       if (!dirRes.ok) {
         throw new Error(dirData?.error ?? '研究方向生成失败');
       }
+      if (!bootstrapRunningRef.current) return;
 
       setBootstrapStep(3);
       setBootstrapHint('已完成，正在进入研究空间…');
+      setBootstrapProgress(100);
+      closeBootstrapModal(false);
       router.push(`/?notebookId=${encodeURIComponent(notebookId)}`);
     } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        return;
+      }
       setBootstrapError(e instanceof Error ? e.message : '初始化失败，请稍后重试');
+    } finally {
+      bootstrapRunningRef.current = false;
+      bootstrapControllerRef.current = null;
     }
   };
 
   return (
     <div className="flex-1 min-h-0 overflow-auto">
       <div className="mx-auto max-w-7xl p-6 md:p-8">
-        <div className="mb-6 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-gray-100 md:text-3xl">
-              Panel
-            </h1>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              管理我的 notebook，并浏览知识库市场中的公开内容。
-            </p>
-          </div>
+        <div className="mb-4 flex items-start justify-end gap-4">
           <div className="text-right">
             {session?.user?.email && (
               <div className="group inline-flex flex-col items-end">
@@ -274,30 +354,45 @@ export function ProjectPanel() {
           </div>
         </div>
 
-        <div className="mb-5 flex items-center gap-3">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => void Promise.all([fetchMine(), fetchMarket()])}
-            aria-label="Refresh"
-          >
-            <RefreshIcon />
-          </Button>
-        </div>
-
         {error && <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
         <div className="space-y-6">
-          <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900/50">
-            <div className="mx-auto max-w-3xl space-y-3">
+          <section>
+            <div className="mx-auto max-w-[900px]">
+              <h1 className="text-center text-3xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">
+                研脉Notebook·你的研究助手
+              </h1>
+              <form
+                className="relative mx-auto mt-4 w-full max-w-[860px]"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void createNotebookFromTopic();
+                }}
+              >
               <textarea
                 value={researchTopic}
                 onChange={(event) => setResearchTopic(event.target.value)}
                 placeholder="请简单输入你感兴趣的研究方向"
-                className="h-40 w-full resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-base text-gray-900 outline-none transition focus:border-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:focus:border-gray-500"
+                className="h-[128px] w-full resize-none rounded-[20px] border border-gray-200 bg-gray-50 px-4 pb-12 pt-4 text-sm text-gray-900 shadow-sm outline-none transition focus:border-gray-300 focus:bg-white dark:border-gray-700 dark:bg-gray-900/80 dark:text-gray-100 dark:focus:border-gray-600 dark:focus:bg-gray-900"
               />
-              <div className="flex flex-wrap gap-2">
-                {presetTopics.map((preset) => (
+              <button
+                type="submit"
+                disabled={!researchTopic.trim() || bootstrapStep === 1 || bootstrapStep === 2}
+                className="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="新建Note"
+                title="新建Note"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.4">
+                  <path d="M12 19V6" />
+                  <path d="m6 12 6-6 6 6" />
+                </svg>
+              </button>
+              </form>
+              <div className="mt-3 flex flex-wrap justify-center gap-2">
+                {loadingSuggestedTopics ? (
+                  <ShinyText text="正在生成推荐研究方向..." className="text-xs text-gray-500 dark:text-gray-400" />
+                ) : (
+                  suggestedTopics.map((preset) => (
                   <button
                     key={preset}
                     type="button"
@@ -306,16 +401,8 @@ export function ProjectPanel() {
                   >
                     {preset}
                   </button>
-                ))}
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  onClick={() => void createNotebookFromTopic()}
-                  disabled={!researchTopic.trim() || bootstrapStep === 1 || bootstrapStep === 2}
-                  className="h-10 px-5"
-                >
-                  新建Note
-                </Button>
+                  ))
+                )}
               </div>
             </div>
           </section>
@@ -468,14 +555,32 @@ export function ProjectPanel() {
 
       {bootstrapOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">正在创建研究 Notebook</h3>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{bootstrapHint}</p>
+          <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-4 shadow-xl dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">正在创建研究 Notebook</h3>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{bootstrapHint}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => closeBootstrapModal(true)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                aria-label="关闭进程"
+              >
+                <CloseIcon />
+              </button>
+            </div>
             <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
               <div
-                className="h-full rounded-full bg-blue-600 transition-all duration-500"
+                className="relative h-full rounded-full bg-gradient-to-r from-blue-500 via-cyan-500 to-indigo-500 transition-all duration-500"
                 style={{ width: `${bootstrapProgress}%` }}
-              />
+              >
+                <span className="absolute inset-0 animate-pulse bg-white/20" />
+              </div>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400">
+              <span>进行中 {bootstrapElapsed}s</span>
+              <span>进度 {bootstrapProgress}%</span>
             </div>
 
             <div className="mt-4 space-y-2">
@@ -511,16 +616,16 @@ export function ProjectPanel() {
 
             {bootstrapError ? <p className="mt-3 text-xs text-red-600 dark:text-red-400">{bootstrapError}</p> : null}
 
-            <div className="mt-4 flex justify-end">
+            <div className="mt-4 flex items-center justify-between">
               <Button
                 variant="ghost"
-                onClick={() => {
-                  setBootstrapOpen(false);
-                  setBootstrapError('');
-                  setBootstrapStep(0);
-                  setBootstrapHint('');
-                }}
-                disabled={bootstrapStep === 1 || bootstrapStep === 2}
+                onClick={() => closeBootstrapModal(true)}
+              >
+                退出进程
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => closeBootstrapModal(true)}
               >
                 关闭
               </Button>

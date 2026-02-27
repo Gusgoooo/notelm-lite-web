@@ -27,13 +27,23 @@ function parseInput(body: unknown): AgentSettingsInput {
       mindmap: toCleanString(modelsRaw.mindmap),
       infographic: toCleanString(modelsRaw.infographic),
       webpage: toCleanString(modelsRaw.webpage),
+      paper_outline: toCleanString(modelsRaw.paper_outline),
+      report: toCleanString(modelsRaw.report),
     },
     prompts: {
       summary: toCleanString(promptsRaw.summary),
       mindmap: toCleanString(promptsRaw.mindmap),
       infographic: toCleanString(promptsRaw.infographic),
       webpage: toCleanString(promptsRaw.webpage),
+      paper_outline: toCleanString(promptsRaw.paper_outline),
+      report: toCleanString(promptsRaw.report),
     },
+    paperOutlineFormats: Array.isArray(raw.paperOutlineFormats)
+      ? raw.paperOutlineFormats
+          .filter((item) => typeof item === 'string')
+          .map((item) => String(item).trim())
+          .filter(Boolean)
+      : [],
   };
 }
 

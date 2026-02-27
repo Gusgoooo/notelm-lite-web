@@ -13,10 +13,18 @@ type Source = {
   notebookId: string;
   filename: string;
   fileUrl: string;
+  mime?: string | null;
   status: 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | string;
   errorMessage: string | null;
   chunkCount?: number;
   sourceType?: 'pdf' | 'word' | '复制文本' | 'python脚本' | 'skills技能包' | '联网检索' | string;
+  createdAt: string;
+};
+
+type PendingUpload = {
+  id: string;
+  filename: string;
+  progress: number;
   createdAt: string;
 };
 
@@ -29,6 +37,7 @@ type ResearchState = {
 };
 
 const MAX_WEB_SOURCES = 20;
+const LARGE_FILE_DIRECT_UPLOAD_THRESHOLD = 4.5 * 1024 * 1024;
 const allowedMimes = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -59,9 +68,9 @@ function isPythonFile(file: File): boolean {
 }
 
 function getSourceStatusMeta(status: string) {
-  if (status === 'READY') return { label: '已完成', colorClass: 'text-green-600', dotClass: 'bg-green-600' };
-  if (status === 'FAILED') return { label: '失败', colorClass: 'text-red-600', dotClass: 'bg-red-600' };
-  if (status === 'PROCESSING') return { label: '处理中', colorClass: 'text-blue-600', dotClass: 'bg-blue-600' };
+  if (status === 'READY') return { label: '已完成', colorClass: 'text-green-600', dotClass: 'bg-gray-400' };
+  if (status === 'FAILED') return { label: '失败', colorClass: 'text-red-600', dotClass: 'bg-gray-400' };
+  if (status === 'PROCESSING') return { label: '处理中', colorClass: 'text-blue-600', dotClass: 'bg-gray-400' };
   if (status === 'PENDING') return { label: '待处理', colorClass: 'text-gray-500', dotClass: 'bg-gray-400' };
   return { label: status, colorClass: 'text-gray-500', dotClass: 'bg-gray-400' };
 }
@@ -86,16 +95,21 @@ function RefreshIcon() {
   );
 }
 
-function ChevronDownIcon({ open }: { open: boolean }) {
+function InfoIcon() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      className={`h-3.5 w-3.5 transition-transform duration-300 ${open ? 'rotate-180' : ''}`}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-    >
-      <path d="m6 9 6 6 6-6" />
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8h.01M11 12h2v5h-2z" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 4v11" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 20h14" />
     </svg>
   );
 }
@@ -116,6 +130,10 @@ function extractHostname(urlValue: string): string {
   }
 }
 
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
 export function SourcesPanel({
   notebookId,
   readOnly = false,
@@ -131,6 +149,7 @@ export function SourcesPanel({
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
   const [pasteText, setPasteText] = useState('');
   const [pasting, setPasting] = useState(false);
   const [pasteStatus, setPasteStatus] = useState('');
@@ -139,7 +158,8 @@ export function SourcesPanel({
   const [webSearchStatus, setWebSearchStatus] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [researchState, setResearchState] = useState<ResearchState | null>(null);
-  const [expandedWebSourceId, setExpandedWebSourceId] = useState<string | null>(null);
+  const [hydratingSourceId, setHydratingSourceId] = useState<string | null>(null);
+  const [hydrateStatus, setHydrateStatus] = useState('');
 
   const fetchSources = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -190,13 +210,6 @@ export function SourcesPanel({
     return () => window.removeEventListener('sources-updated', onSourcesUpdated);
   }, [fetchSources, fetchResearchState]);
 
-  useEffect(() => {
-    if (!expandedWebSourceId) return;
-    if (!sources.some((s) => s.id === expandedWebSourceId)) {
-      setExpandedWebSourceId(null);
-    }
-  }, [sources, expandedWebSourceId]);
-
   const uploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (readOnly) return;
     const file = e.target.files?.[0];
@@ -223,22 +236,149 @@ export function SourcesPanel({
       return;
     }
     setUploading(true);
+    const tempUploadId = `upload_${Date.now()}`;
+    setPendingUpload({
+      id: tempUploadId,
+      filename: file.name,
+      progress: 0,
+      createdAt: new Date().toISOString(),
+    });
     try {
-      const form = new FormData();
-      form.set('notebookId', notebookId);
-      form.set('file', file);
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 60_000);
-      const res = await fetch('/api/sources/upload', {
-        method: 'POST',
-        body: form,
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err?.error ?? `服务端上传失败（${res.status}）`);
+      const uploadWithProgress = (
+        input: {
+          url: string;
+          method: 'PUT' | 'POST';
+          body: Document | XMLHttpRequestBodyInit;
+          headers?: Record<string, string>;
+        }
+      ): Promise<{ status: number; responseText: string }> =>
+        new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open(input.method, input.url);
+          if (input.headers) {
+            for (const [key, value] of Object.entries(input.headers)) {
+              xhr.setRequestHeader(key, value);
+            }
+          }
+          xhr.upload.onprogress = (event) => {
+            if (!event.lengthComputable) return;
+            const ratio = Math.max(0, Math.min(1, event.loaded / event.total));
+            setPendingUpload((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    progress: Math.max(prev.progress, Math.round(ratio * 100)),
+                  }
+                : prev
+            );
+          };
+          xhr.onload = () => resolve({ status: xhr.status, responseText: xhr.responseText ?? '' });
+          xhr.onerror = () => reject(new Error('上传请求失败'));
+          xhr.ontimeout = () => reject(new Error('上传超时（60秒），请检查对象存储配置后重试'));
+          xhr.timeout = 60_000;
+          xhr.send(input.body);
+        });
+
+      const uploadViaServer = async () => {
+        const form = new FormData();
+        form.set('notebookId', notebookId);
+        form.set('file', file);
+        const res = await uploadWithProgress({
+          url: '/api/sources/upload',
+          method: 'POST',
+          body: form,
+        });
+        if (res.status < 200 || res.status >= 300) {
+          let err: unknown = {};
+          try {
+            err = JSON.parse(res.responseText);
+          } catch {
+            err = {};
+          }
+          const message =
+            err && typeof err === 'object' && 'error' in err && typeof err.error === 'string'
+              ? err.error
+              : `服务端上传失败（${res.status}）`;
+          throw new Error(String(message));
+        }
+      };
+
+      const uploadViaDirect = async (meta: {
+        uploadUrl: string;
+        sourceId: string;
+        fileUrl: string;
+        mimeType?: string;
+      }) => {
+        const headers =
+          file.type || meta.mimeType
+            ? { 'Content-Type': String(file.type || meta.mimeType) }
+            : undefined;
+        const putRes = await uploadWithProgress({
+          url: String(meta.uploadUrl),
+          method: 'PUT',
+          headers,
+          body: file,
+        });
+        if (putRes.status < 200 || putRes.status >= 300) {
+          throw new Error(`对象存储上传失败（${putRes.status}）`);
+        }
+
+        setPendingUpload((prev) => (prev ? { ...prev, progress: 100 } : prev));
+        const createRes = await fetch('/api/sources', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sourceId: meta.sourceId,
+            notebookId,
+            filename: file.name,
+            fileUrl: meta.fileUrl,
+            mime: meta.mimeType ?? file.type,
+          }),
+        });
+        const created = await createRes.json().catch(() => ({}));
+        if (!createRes.ok) {
+          throw new Error(created?.error ?? `创建来源记录失败（${createRes.status}）`);
+        }
+      };
+
+      const tryDirectFirst = async (): Promise<boolean> => {
+        const getRes = await fetch('/api/sources/upload-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            notebookId,
+            filename: file.name,
+            mimeType: file.type,
+          }),
+        });
+        const meta = await getRes.json().catch(() => ({}));
+        if (!getRes.ok || !meta?.uploadUrl || !meta?.sourceId || !meta?.fileUrl) {
+          return false;
+        }
+        if (!isHttpUrl(String(meta.uploadUrl))) {
+          return false;
+        }
+        try {
+          await uploadViaDirect({
+            uploadUrl: String(meta.uploadUrl),
+            sourceId: String(meta.sourceId),
+            fileUrl: String(meta.fileUrl),
+            mimeType: typeof meta.mimeType === 'string' ? meta.mimeType : undefined,
+          });
+          return true;
+        } catch (error) {
+          if (file.size > LARGE_FILE_DIRECT_UPLOAD_THRESHOLD) {
+            throw error;
+          }
+          return false;
+        }
+      };
+
+      const usedDirect = await tryDirectFirst();
+      if (!usedDirect) {
+        await uploadViaServer();
       }
+      setPendingUpload((prev) => (prev ? { ...prev, progress: 100 } : prev));
       await fetchSources(false);
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
@@ -247,6 +387,9 @@ export function SourcesPanel({
         alert(err instanceof Error ? err.message : '上传请求失败，请稍后重试');
       }
     } finally {
+      setTimeout(() => {
+        setPendingUpload((prev) => (prev?.id === tempUploadId ? null : prev));
+      }, 240);
       setUploading(false);
       e.target.value = '';
     }
@@ -272,6 +415,24 @@ export function SourcesPanel({
       await fetchSources(false);
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const loadOriginalSource = async (sourceId: string) => {
+    if (readOnly || hydratingSourceId) return;
+    setHydratingSourceId(sourceId);
+    setHydrateStatus('正在加载原文并写入知识库…');
+    try {
+      const res = await fetch(`/api/sources/${sourceId}/load-original`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setHydrateStatus(data?.error ?? '加载原文失败，请手动下载后上传');
+        return;
+      }
+      setHydrateStatus('原文已开始处理，完成后会显示为普通文档来源。');
+      await fetchSources(false);
+    } finally {
+      setHydratingSourceId(null);
     }
   };
 
@@ -457,11 +618,25 @@ export function SourcesPanel({
                   {pasteStatus}
                 </p>
               ) : null}
-              <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                {researchState?.sourceStats
-                  ? `来源数量：${sources.length}（初始 ${researchState.sourceStats.totalBefore} -> 清洗后 ${researchState.sourceStats.totalAfter}）`
-                  : `来源数量：${sources.length}`}
-              </p>
+              {hydrateStatus ? (
+                <p
+                  className={`text-[11px] ${
+                    /失败/i.test(hydrateStatus) ? 'text-red-600' : 'text-gray-500 dark:text-gray-400'
+                  }`}
+                >
+                  {hydrateStatus}
+                </p>
+              ) : null}
+              <div className="pt-1">
+                <p className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  来源
+                </p>
+                <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                  {researchState?.sourceStats
+                    ? `数量：${sources.length}（初始 ${researchState.sourceStats.totalBefore} -> 清洗后 ${researchState.sourceStats.totalAfter}）`
+                    : `数量：${sources.length}`}
+                </p>
+              </div>
             </div>
           </>
         )}
@@ -472,20 +647,49 @@ export function SourcesPanel({
           <div className="p-2">
             <ShinyText text="Loading..." className="text-xs text-gray-500 dark:text-gray-400" />
           </div>
-        ) : sources.length === 0 ? (
+        ) : sources.length === 0 && !pendingUpload ? (
           <p className="p-2 text-xs text-gray-500 dark:text-gray-400">
             {readOnly ? '该共享 notebook 暂无可用来源。' : '还没有来源文件，先上传一个。'}
           </p>
         ) : (
           <ul className="space-y-2">
+            {pendingUpload ? (
+              <li key={pendingUpload.id}>
+                <Card className="border-gray-200/80 bg-white/70 p-2 dark:border-gray-800 dark:bg-gray-900/60">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="h-2 w-2 shrink-0 rounded-full bg-gray-400" />
+                      <p className="truncate text-xs font-medium" title={pendingUpload.filename}>
+                        {pendingUpload.filename}
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="uppercase">
+                      上传中
+                    </Badge>
+                  </div>
+                  <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+                    <div
+                      className="h-full rounded-full bg-blue-500 transition-all duration-200"
+                      style={{ width: `${pendingUpload.progress}%` }}
+                    />
+                  </div>
+                  <div className="mt-1 flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400">
+                    <span>正在上传文件…</span>
+                    <span>{pendingUpload.progress}%</span>
+                  </div>
+                </Card>
+              </li>
+            ) : null}
             {sources.map((s) => (
               <li key={s.id}>
                 <Card className="group border-gray-200/80 bg-white/70 p-2 dark:border-gray-800 dark:bg-gray-900/60">
                   {(() => {
                     const statusMeta = getSourceStatusMeta(s.status);
                     const isWebSource = s.sourceType === '联网检索';
-                    const isExpanded = isWebSource && expandedWebSourceId === s.id;
                     const hostname = isWebSource ? extractHostname(s.fileUrl) : '';
+                    const isRunning = s.status === 'PENDING' || s.status === 'PROCESSING';
+                    const showStatus = isRunning || s.status === 'FAILED';
+                    const shouldShowLoadOriginal = isWebSource && (s.chunkCount ?? 0) <= 1;
                     return (
                       <>
                         <div className="flex items-center justify-between gap-2">
@@ -512,54 +716,52 @@ export function SourcesPanel({
                           <Badge variant="secondary" className="uppercase">
                             {s.sourceType ?? 'unknown'}
                           </Badge>
-                          <Badge variant="outline">{s.chunkCount ?? 0} chunks</Badge>
-                        </div>
-                        <p className={`mt-1 text-[11px] ${statusMeta.colorClass}`}>
-                          {statusMeta.label}
-                          {s.errorMessage ? ` — ${s.errorMessage}` : ''}
-                        </p>
-                        {isWebSource && (
-                          <>
+                          {shouldShowLoadOriginal ? (
                             <button
                               type="button"
-                              onClick={() =>
-                                setExpandedWebSourceId((prev) => (prev === s.id ? null : s.id))
-                              }
-                              className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-600 transition hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-100"
+                              onClick={() => void loadOriginalSource(s.id)}
+                              disabled={Boolean(hydratingSourceId)}
+                              className="inline-flex h-6 items-center gap-1 rounded border border-gray-300 px-2 text-[11px] text-gray-600 transition hover:bg-gray-100 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
                             >
-                              <span>{isExpanded ? '收起来源详情' : '查看来源详情'}</span>
-                              <ChevronDownIcon open={Boolean(isExpanded)} />
+                              <DownloadIcon />
+                              <span>{hydratingSourceId === s.id ? '处理中…' : '加载原文'}</span>
                             </button>
-                            <div
-                              className={`overflow-hidden transition-all duration-300 ease-out ${
-                                isExpanded ? 'mt-2 max-h-44 opacity-100' : 'max-h-0 opacity-0'
-                              }`}
-                            >
-                              <div className="rounded-md border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-600 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300">
-                                <p className="truncate">
-                                  域名：{hostname || '未知'}
-                                </p>
-                                <p className="mt-1 truncate">
-                                  时间：{formatTime(s.createdAt)}
-                                </p>
-                                <p className="mt-1 truncate">
-                                  状态：{statusMeta.label} · Chunks：{s.chunkCount ?? 0}
-                                </p>
-                                {s.fileUrl ? (
-                                  <a
-                                    href={s.fileUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="mt-1 block truncate text-blue-600 underline dark:text-blue-400"
-                                    onClick={(event) => event.stopPropagation()}
-                                    title={s.fileUrl}
-                                  >
-                                    来源链接：{s.fileUrl}
-                                  </a>
-                                ) : null}
+                          ) : (
+                            <Badge variant="outline">{s.chunkCount ?? 0} chunks</Badge>
+                          )}
+                        </div>
+                        {showStatus ? (
+                          <p className={`mt-1 text-[11px] ${statusMeta.colorClass}`}>
+                            {statusMeta.label}
+                            {s.errorMessage ? ` — ${s.errorMessage}` : ''}
+                          </p>
+                        ) : null}
+                        {isWebSource && (
+                          <div className="mt-1 overflow-hidden transition-all duration-300 ease-out max-h-0 opacity-0 group-hover:max-h-44 group-hover:opacity-100">
+                            <div className="rounded-md border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-600 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300">
+                              <div className="flex items-center gap-1 text-gray-700 dark:text-gray-200">
+                                <InfoIcon />
+                                <span>查看来源信息</span>
                               </div>
+                              <p className="mt-1 truncate">域名：{hostname || '未知'}</p>
+                              <p className="mt-1 truncate">时间：{formatTime(s.createdAt)}</p>
+                              <p className="mt-1">
+                                此来源当前仅为摘要。点击“加载原文”可自动下载并入库；若失败，请前往下载后再上传，可支持全文分析。
+                              </p>
+                              {s.fileUrl ? (
+                                <a
+                                  href={s.fileUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="mt-1 block truncate text-blue-600 underline dark:text-blue-400"
+                                  onClick={(event) => event.stopPropagation()}
+                                  title={s.fileUrl}
+                                >
+                                  来源链接：{s.fileUrl}
+                                </a>
+                              ) : null}
                             </div>
-                          </>
+                          </div>
                         )}
                       </>
                     );

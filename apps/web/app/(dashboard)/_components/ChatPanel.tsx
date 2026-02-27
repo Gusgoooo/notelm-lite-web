@@ -158,6 +158,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [historyError, setHistoryError] = useState('');
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [tailVersion, setTailVersion] = useState(0);
+  const [thinkingSeconds, setThinkingSeconds] = useState(0);
   const [researchState, setResearchState] = useState<ResearchState | null>(null);
   const [loadingResearchState, setLoadingResearchState] = useState(false);
   const [researchStateError, setResearchStateError] = useState('');
@@ -249,6 +250,18 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [tailVersion]);
+
+  useEffect(() => {
+    if (!loading) {
+      setThinkingSeconds(0);
+      return;
+    }
+    const start = Date.now();
+    const timer = window.setInterval(() => {
+      setThinkingSeconds(Math.floor((Date.now() - start) / 1000));
+    }, 200);
+    return () => window.clearInterval(timer);
+  }, [loading]);
 
   const send = useCallback(
     async (overrideText?: string) => {
@@ -661,7 +674,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           {loading && (
             <div className="ml-0 mr-auto w-full max-w-[680px] rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-500 shadow-sm dark:border-gray-800 dark:bg-gray-900">
               <ShinyText
-                text="Thinking..."
+                text={`Thinking... ${thinkingSeconds}s`}
                 speed={2}
                 spread={100}
                 color="#9ca3af"

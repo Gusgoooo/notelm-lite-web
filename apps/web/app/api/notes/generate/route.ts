@@ -232,6 +232,36 @@ type OpenRouterConfig = {
   baseUrl: string;
 };
 
+async function requestOpenRouterImageGeneration(input: {
+  config: OpenRouterConfig;
+  model: string;
+  prompt: string;
+}): Promise<{ dataUrl: string; caption: string } | null> {
+  const response = await fetch(`${input.config.baseUrl.replace(/\/$/, '')}/images/generations`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${input.config.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: input.model,
+      prompt: input.prompt,
+      size: '1536x1024',
+    }),
+  });
+  const raw = await response.text();
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    json = raw;
+  }
+  if (!response.ok) return null;
+  const image = extractImageDataUrl(json);
+  if (!image) return null;
+  return image;
+}
+
 async function requestOpenRouterText(input: {
   config: OpenRouterConfig;
   model: string;
@@ -305,6 +335,14 @@ function extractHtmlBlock(content: string): string | null {
   return null;
 }
 
+function extractMarkdownBlock(content: string): string {
+  const fenced = content.match(/```markdown\s*([\s\S]*?)```/i)?.[1];
+  if (fenced) return fenced.trim();
+  const generic = content.match(/```md\s*([\s\S]*?)```/i)?.[1];
+  if (generic) return generic.trim();
+  return content.trim();
+}
+
 async function generateSummary(source: string, config: OpenRouterConfig, model: string, rolePrompt: string) {
   const prompts = [
     `请将以下内容简化成中文摘要，要求：\n1) 50-100字以内；\n2) 只输出摘要正文；\n3) 不要标题，不要分点。\n\n${source}`,
@@ -363,19 +401,49 @@ async function generateWebpage(source: string, config: OpenRouterConfig, model: 
   return `\`\`\`html\n${html}\n\`\`\``;
 }
 
-async function generatePaperOutline(source: string, config: OpenRouterConfig, model: string, rolePrompt: string) {
+async function generateOutlineStructuredSummary(input: {
+  source: string;
+  config: OpenRouterConfig;
+  model: string;
+  rolePrompt: string;
+  paperFormat: string;
+}) {
   return requestOpenRouterText({
-    config,
-    model,
-    systemPrompt: rolePrompt,
+    config: input.config,
+    model: input.model,
+    systemPrompt: input.rolePrompt,
+    userPrompt:
+      `你将收到多条笔记，请先做“结构化综述”供后续大纲生成。\n` +
+      `目标格式：${input.paperFormat}\n` +
+      `输出要求：\n` +
+      `1) 仅输出 Markdown；\n` +
+      `2) 包含：核心研究问题、关键概念、变量关系、证据来源、方法选项、争议点、研究空白；\n` +
+      `3) 使用短句和分层列表，保持紧凑；\n` +
+      `4) 严格基于输入，不写论文正文。\n\n${input.source}`,
+  });
+}
+
+async function generatePaperOutline(input: {
+  source: string;
+  config: OpenRouterConfig;
+  model: string;
+  rolePrompt: string;
+  paperFormat: string;
+}) {
+  return requestOpenRouterText({
+    config: input.config,
+    model: input.model,
+    systemPrompt: input.rolePrompt,
     userPrompt:
       `请根据以下资料撰写一份“可直接展开写作”的论文大纲（Markdown 格式）。\n` +
+      `论文格式：${input.paperFormat}\n` +
       `要求：\n` +
-      `1) 包含：题目建议、摘要提纲、关键词、章节结构（至少5章）、每章段落目标；\n` +
-      `2) 每个章节下给出“段落撰写规范”（写作目标、证据要求、常见错误）；\n` +
-      `3) 全文使用简体中文；\n` +
-      `4) 输出为标准 Markdown（包含标题、列表、表格均可）；\n` +
-      `5) 仅基于输入内容，不要虚构事实。\n\n${source}`,
+      `1) 仅输出“论文大纲”，不要代写任何正文；\n` +
+      `2) 包含：题目建议、摘要提纲、关键词、章节结构（至少5章）、每章段落目标；\n` +
+      `3) 每个章节下给出“段落撰写规范”（写作目标、证据要求、常见错误）；\n` +
+      `4) 全文使用简体中文；\n` +
+      `5) 输出为标准 Markdown（包含标题、列表、表格均可）；\n` +
+      `6) 仅基于输入内容，不要虚构事实。\n\n${input.source}`,
   });
 }
 
@@ -413,6 +481,9 @@ async function generateInfographic(input: {
   const errors: string[] = [];
 
   for (const model of models) {
+    const basePrompt =
+      `请根据以下笔记内容生成一张中文信息图，信息要准确，版式清晰，适合产品决策汇报。\n` +
+      `请优先突出：核心结论、关键数据、行动建议。\n\n${input.source}`;
     const response = await fetch(`${input.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -423,12 +494,7 @@ async function generateInfographic(input: {
         model,
         messages: [
           { role: 'system', content: input.rolePrompt },
-          {
-            role: 'user',
-            content:
-              `请根据以下笔记内容生成一张中文信息图，信息要准确，版式清晰，适合产品决策汇报。\n` +
-              `请优先突出：核心结论、关键数据、行动建议。\n\n${input.source}`,
-          },
+          { role: 'user', content: basePrompt },
         ],
         modalities: ['image', 'text'],
         stream: false,
@@ -449,8 +515,22 @@ async function generateInfographic(input: {
     const image = extractImageDataUrl(json);
     if (!image) {
       const hint = extractImageDebugHint(json);
-      errors.push(`[${model}] no image returned${hint ? `; response="${hint}"` : ''}`);
-      continue;
+      const fallbackPrompt =
+        hint || `根据以下信息图提纲生成中文信息图，风格现代、层级清晰、适合汇报：\n\n${input.source}`;
+      const viaImagesApi = await requestOpenRouterImageGeneration({
+        config: input.config,
+        model,
+        prompt: fallbackPrompt,
+      });
+      if (!viaImagesApi) {
+        errors.push(`[${model}] no image returned${hint ? `; response="${hint}"` : ''}`);
+        continue;
+      }
+      const markdown =
+        `![Infographic](${viaImagesApi.dataUrl})\n\n` +
+        (viaImagesApi.caption ? `> ${viaImagesApi.caption}\n\n` : '') +
+        `模型：\`${model}\``;
+      return { content: markdown, model };
     }
     const markdown =
       `![Infographic](${image.dataUrl})\n\n` +
@@ -471,6 +551,15 @@ function buildTitle(mode: GenerateMode, selected: NoteRow[]): string {
   return `${base} · 思维导图`;
 }
 
+function normalizePaperFormat(input: unknown, allowed: string[]): string {
+  const fallback = allowed[0] ?? '默认格式';
+  if (typeof input !== 'string') return fallback;
+  const value = input.trim();
+  if (!value) return fallback;
+  if (allowed.includes(value)) return value;
+  return fallback;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -485,6 +574,7 @@ export async function POST(request: Request) {
         ? (body.mode as GenerateMode)
         : null;
     const noteIds = normalizeNoteIds(body?.noteIds);
+    const paperFormatInput = body?.paperFormat;
 
     if (!notebookId) {
       return NextResponse.json({ error: 'notebookId is required' }, { status: 400 });
@@ -523,6 +613,10 @@ export async function POST(request: Request) {
     if (!openrouterConfig.apiKey) {
       throw new Error('OpenRouter API key is not configured in admin settings');
     }
+    const selectedPaperFormat = normalizePaperFormat(
+      paperFormatInput,
+      settings.paperOutlineFormats
+    );
 
     let generatedContent = '';
     if (mode === 'summary') {
@@ -550,12 +644,24 @@ export async function POST(request: Request) {
       );
     }
     if (mode === 'paper_outline') {
-      generatedContent = await generatePaperOutline(
-        source,
-        openrouterConfig,
-        settings.models.summary,
-        settings.prompts.summary
-      );
+      const outlineSource =
+        ordered.length > 1
+          ? await generateOutlineStructuredSummary({
+              source,
+              config: openrouterConfig,
+              model: settings.models.paper_outline,
+              rolePrompt: settings.prompts.paper_outline,
+              paperFormat: selectedPaperFormat,
+            })
+          : source;
+      const outline = await generatePaperOutline({
+        source: outlineSource,
+        config: openrouterConfig,
+        model: settings.models.paper_outline,
+        rolePrompt: settings.prompts.paper_outline,
+        paperFormat: selectedPaperFormat,
+      });
+      generatedContent = extractMarkdownBlock(outline);
     }
     if (mode === 'report') {
       generatedContent = await generateReport(

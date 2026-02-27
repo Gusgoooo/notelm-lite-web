@@ -244,6 +244,13 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
   const [mermaidLoading, setMermaidLoading] = useState(false);
   const [mermaidError, setMermaidError] = useState('');
   const [expandedView, setExpandedView] = useState<'preview' | 'source'>('preview');
+  const [outlineFormats, setOutlineFormats] = useState<string[]>([
+    '默认格式',
+    '硕士学位论文',
+    '本科毕业论文',
+    '期刊',
+  ]);
+  const [selectedOutlineFormat, setSelectedOutlineFormat] = useState('默认格式');
 
   const fetchNotes = useCallback(async () => {
     if (!notebookId) return;
@@ -260,6 +267,33 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
   useEffect(() => {
     void fetchNotes();
   }, [fetchNotes]);
+
+  useEffect(() => {
+    let canceled = false;
+    const fetchOutlineFormats = async () => {
+      try {
+        const res = await fetch('/api/notes/outline-formats', { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return;
+        const formats = Array.isArray(data?.formats)
+          ? data.formats
+              .filter((item: unknown) => typeof item === 'string')
+              .map((item: string) => item.trim())
+              .filter(Boolean)
+          : [];
+        if (!canceled && formats.length > 0) {
+          setOutlineFormats(formats);
+          setSelectedOutlineFormat((prev) => (formats.includes(prev) ? prev : formats[0]));
+        }
+      } catch {
+        // ignore
+      }
+    };
+    void fetchOutlineFormats();
+    return () => {
+      canceled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -394,6 +428,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
           notebookId,
           noteIds: selectedIds,
           mode,
+          paperFormat: mode === 'paper_outline' ? selectedOutlineFormat : undefined,
         }),
       });
       setGenerationProgress(52);
@@ -661,6 +696,20 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
               </span>
               <span className="pl-7 text-[11px] leading-4 opacity-80">包含段落撰写规范</span>
             </button>
+            <div className="rounded border border-gray-200 bg-gray-50/80 px-2 py-2 text-xs dark:border-gray-700 dark:bg-gray-800/70">
+              <label className="mb-1 block text-[11px] text-gray-500 dark:text-gray-400">论文格式</label>
+              <select
+                value={selectedOutlineFormat}
+                onChange={(event) => setSelectedOutlineFormat(event.target.value)}
+                className="h-8 w-full rounded border border-gray-300 bg-white px-2 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+              >
+                {outlineFormats.map((format) => (
+                  <option key={format} value={format}>
+                    {format}
+                  </option>
+                ))}
+              </select>
+            </div>
             <button
               type="button"
               onClick={() => void generateFromSelection('report')}

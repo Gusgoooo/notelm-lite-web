@@ -2,13 +2,14 @@
 
 import { useMemo, useState } from 'react';
 
-type FeatureMode = 'summary' | 'mindmap' | 'infographic' | 'webpage';
+type FeatureMode = 'summary' | 'mindmap' | 'infographic' | 'webpage' | 'paper_outline' | 'report';
 
 type AgentSettings = {
   openrouterApiKey: string;
   openrouterBaseUrl: string;
   models: Record<FeatureMode, string>;
   prompts: Record<FeatureMode, string>;
+  paperOutlineFormats: string[];
 };
 
 const MODE_LABELS: Array<{ mode: FeatureMode; label: string }> = [
@@ -16,6 +17,8 @@ const MODE_LABELS: Array<{ mode: FeatureMode; label: string }> = [
   { mode: 'mindmap', label: '转换成思维导图' },
   { mode: 'infographic', label: '转换成信息图' },
   { mode: 'webpage', label: '生成互动PPT' },
+  { mode: 'paper_outline', label: '撰写论文大纲' },
+  { mode: 'report', label: '生成报告' },
 ];
 
 export function AdminSettingsForm({ initialSettings }: { initialSettings: AgentSettings }) {
@@ -102,6 +105,28 @@ export function AdminSettingsForm({ initialSettings }: { initialSettings: AgentS
             />
           </div>
         ))}
+      </div>
+
+      <div className="rounded border border-gray-200 dark:border-gray-700 p-3 space-y-2">
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">论文大纲格式选项</h3>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          每行一个格式，前端会在“撰写论文大纲”前让用户选择。
+        </p>
+        <textarea
+          value={form.paperOutlineFormats.join('\n')}
+          onChange={(e) =>
+            setForm((prev) => ({
+              ...prev,
+              paperOutlineFormats: e.target.value
+                .split('\n')
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .slice(0, 12),
+            }))
+          }
+          rows={5}
+          className="w-full rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm resize-y"
+        />
       </div>
 
       <div className="flex items-center gap-3">

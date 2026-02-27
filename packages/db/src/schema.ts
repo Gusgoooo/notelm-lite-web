@@ -144,6 +144,8 @@ export const appSettings = pgTable('app_settings', {
       mindmap?: string;
       infographic?: string;
       webpage?: string;
+      paper_outline?: string;
+      report?: string;
     }>()
     .notNull()
     .default({}),
@@ -153,6 +155,9 @@ export const appSettings = pgTable('app_settings', {
       mindmap?: string;
       infographic?: string;
       webpage?: string;
+      paper_outline?: string;
+      report?: string;
+      paperOutlineFormats?: string[];
     }>()
     .notNull()
     .default({}),

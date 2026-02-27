@@ -71,6 +71,18 @@ export async function POST(request: Request) {
     if (!access.canEditSources) {
       return NextResponse.json({ error: '该 notebook 来源为只读，请先保存为我的 notebook' }, { status: 403 });
     }
+    const maxServerUploadBytes =
+      Number.parseInt(process.env.MAX_SERVER_UPLOAD_BYTES ?? '4500000', 10) || 4_500_000;
+    if (file.size > maxServerUploadBytes) {
+      return NextResponse.json(
+        {
+          error: `文件较大（${Math.ceil(file.size / 1024 / 1024)}MB），请使用对象存储直传模式`,
+          code: 'FILE_TOO_LARGE_FOR_SERVER_UPLOAD',
+          maxServerUploadBytes,
+        },
+        { status: 413 }
+      );
+    }
     const buffer = Buffer.from(await file.arrayBuffer());
     const filename = file.name || 'document.pdf';
     const sourceId = `src_${randomUUID()}`;
