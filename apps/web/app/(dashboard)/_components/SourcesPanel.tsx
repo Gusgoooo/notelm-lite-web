@@ -170,6 +170,7 @@ export function SourcesPanel({
   const [researchState, setResearchState] = useState<ResearchState | null>(null);
   const [hydratingSourceId, setHydratingSourceId] = useState<string | null>(null);
   const [hydrateStatus, setHydrateStatus] = useState('');
+  const [expandedWebSourceIds, setExpandedWebSourceIds] = useState<string[]>([]);
 
   const fetchSources = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -219,6 +220,12 @@ export function SourcesPanel({
     window.addEventListener('sources-updated', onSourcesUpdated);
     return () => window.removeEventListener('sources-updated', onSourcesUpdated);
   }, [fetchSources, fetchResearchState]);
+
+  useEffect(() => {
+    setExpandedWebSourceIds((prev) =>
+      prev.filter((id) => sources.some((source) => source.id === id))
+    );
+  }, [sources]);
 
   const uploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (readOnly) return;
@@ -510,6 +517,12 @@ export function SourcesPanel({
     );
   };
 
+  const toggleWebSourceDetails = (sourceId: string) => {
+    setExpandedWebSourceIds((prev) =>
+      prev.includes(sourceId) ? prev.filter((id) => id !== sourceId) : [...prev, sourceId]
+    );
+  };
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center justify-between border-b px-4">
@@ -664,7 +677,7 @@ export function SourcesPanel({
           <ul className="space-y-2">
             {pendingUpload ? (
               <li key={pendingUpload.id}>
-                <Card className="border-gray-200/80 bg-white/70 p-2 dark:border-gray-800 dark:bg-gray-900/60">
+                <Card className="group border-gray-200/80 bg-white/70 p-2 dark:border-gray-800 dark:bg-gray-900/60">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-1.5">
                       <span className="h-2 w-2 shrink-0 rounded-full bg-gray-400" />
@@ -691,12 +704,13 @@ export function SourcesPanel({
             ) : null}
             {sources.map((s) => (
               <li key={s.id}>
-                <Card className="group border-gray-200/80 bg-white/70 p-2 dark:border-gray-800 dark:bg-gray-900/60">
+                <Card className="border-gray-200/80 bg-white/70 p-2 dark:border-gray-800 dark:bg-gray-900/60">
                   {(() => {
                     const statusMeta = getSourceStatusMeta(s.status);
                     const isWebSource = s.sourceType === '联网检索';
                     const hostname = isWebSource ? extractHostname(s.fileUrl) : '';
                     const preview = compactPreview(s.preview);
+                    const detailsExpanded = expandedWebSourceIds.includes(s.id);
                     const isRunning = s.status === 'PENDING' || s.status === 'PROCESSING';
                     const showStatus = isRunning || s.status === 'FAILED';
                     const shouldShowLoadOriginal = isWebSource && (s.chunkCount ?? 0) <= 1;
@@ -731,6 +745,16 @@ export function SourcesPanel({
                           <Badge variant="secondary" className="uppercase">
                             {s.sourceType ?? 'unknown'}
                           </Badge>
+                          {isWebSource ? (
+                            <button
+                              type="button"
+                              onClick={() => toggleWebSourceDetails(s.id)}
+                              className="inline-flex h-6 items-center gap-1 rounded border border-gray-200 bg-white px-2 text-[11px] font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                            >
+                              <InfoIcon />
+                              <span>{detailsExpanded ? '收起来源' : '查看来源'}</span>
+                            </button>
+                          ) : null}
                           {shouldShowLoadOriginal ? (
                             <button
                               type="button"
@@ -751,28 +775,39 @@ export function SourcesPanel({
                             {s.errorMessage ? ` — ${s.errorMessage}` : ''}
                           </p>
                         ) : null}
-                        {isWebSource && (
-                          <div className="mt-1 overflow-hidden transition-all duration-300 ease-out max-h-0 opacity-0 group-hover:max-h-32 group-hover:opacity-100">
-                            <div className="space-y-2 pt-1">
-                              {preview ? (
-                                <p className="line-clamp-3 text-[11px] leading-5 text-gray-500 dark:text-gray-400">
-                                  {preview}
-                                </p>
-                              ) : null}
+                        {isWebSource ? (
+                          <div
+                            className={`overflow-hidden transition-all duration-300 ease-out ${
+                              detailsExpanded ? 'mt-2 max-h-44 opacity-100' : 'max-h-0 opacity-0'
+                            }`}
+                          >
+                            <div className="rounded-md border border-gray-200 bg-gray-50/80 p-2 dark:border-gray-700 dark:bg-gray-800/50">
+                              <p className="text-[11px] font-medium text-gray-600 dark:text-gray-300">
+                                来源网站
+                              </p>
                               <a
                                 href={s.fileUrl}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="inline-flex h-7 items-center gap-1 rounded border border-gray-300 px-2 text-[11px] text-gray-600 transition hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                                className="mt-1 block truncate text-[11px] text-blue-600 underline dark:text-blue-400"
                                 onClick={(event) => event.stopPropagation()}
-                                title={hostname || s.filename}
+                                title={hostname || s.fileUrl}
                               >
-                                <InfoIcon />
-                                <span>查看来源</span>
+                                {hostname || s.fileUrl}
                               </a>
+                              {preview ? (
+                                <>
+                                  <p className="mt-2 text-[11px] font-medium text-gray-600 dark:text-gray-300">
+                                    摘要
+                                  </p>
+                                  <p className="mt-1 line-clamp-4 text-[11px] leading-5 text-gray-500 dark:text-gray-400">
+                                    {preview}
+                                  </p>
+                                </>
+                              ) : null}
                             </div>
                           </div>
-                        )}
+                        ) : null}
                       </>
                     );
                   })()}

@@ -16,6 +16,13 @@ type Note = {
 
 type GenerateMode = 'infographic' | 'summary' | 'mindmap' | 'webpage' | 'paper_outline' | 'report';
 
+type PendingGeneratedNote = {
+  id: string;
+  mode: GenerateMode;
+  progress: number;
+  createdAt: string;
+};
+
 function TrashIcon() {
   return (
     <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
@@ -99,14 +106,6 @@ function ReportIcon() {
     <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M4 4h16v16H4z" />
       <path d="M8 14v3M12 10v7M16 12v5" />
-    </svg>
-  );
-}
-
-function LoadingIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5 animate-spin" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M21 12a9 9 0 1 1-3.2-6.9" />
     </svg>
   );
 }
@@ -230,15 +229,24 @@ function getCardTypeLabel(input: {
   return '笔记';
 }
 
+function pendingModeTitle(mode: GenerateMode): string {
+  if (mode === 'infographic') return '信息图';
+  if (mode === 'summary') return '摘要';
+  if (mode === 'mindmap') return '思维导图';
+  if (mode === 'paper_outline') return '论文大纲';
+  if (mode === 'report') return '报告';
+  return '互动PPT';
+}
+
 export function NotesPanel({ notebookId }: { notebookId: string | null }) {
   const [notes, setNotes] = useState<Note[]>([]);
+  const [pendingGenerations, setPendingGenerations] = useState<PendingGeneratedNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [expandedDraft, setExpandedDraft] = useState('');
   const [generating, setGenerating] = useState(false);
   const [generatingMode, setGeneratingMode] = useState<GenerateMode | null>(null);
-  const [generationProgress, setGenerationProgress] = useState(0);
   const [error, setError] = useState('');
   const [mermaidSvg, setMermaidSvg] = useState('');
   const [mermaidLoading, setMermaidLoading] = useState(false);
@@ -252,6 +260,31 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
   ]);
   const [selectedOutlineFormat, setSelectedOutlineFormat] = useState('默认格式');
   const [paperOutlinePickerOpen, setPaperOutlinePickerOpen] = useState(false);
+
+  const addPendingGeneration = useCallback((mode: GenerateMode, id?: string) => {
+    const pendingId = id ?? `pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    setPendingGenerations((prev) => {
+      if (prev.some((item) => item.id === pendingId)) return prev;
+      return [
+        {
+          id: pendingId,
+          mode,
+          progress: 8,
+          createdAt: new Date().toISOString(),
+        },
+        ...prev,
+      ];
+    });
+    return pendingId;
+  }, []);
+
+  const updatePendingGeneration = useCallback((id: string, updater: (item: PendingGeneratedNote) => PendingGeneratedNote) => {
+    setPendingGenerations((prev) => prev.map((item) => (item.id === id ? updater(item) : item)));
+  }, []);
+
+  const removePendingGeneration = useCallback((id: string) => {
+    setPendingGenerations((prev) => prev.filter((item) => item.id !== id));
+  }, []);
 
   const fetchNotes = useCallback(async () => {
     if (!notebookId) return;
@@ -301,9 +334,25 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     const onUpdate = () => {
       void fetchNotes();
     };
+    const onPendingAdd = (event: Event) => {
+      const detail = (event as CustomEvent<{ id?: string; mode?: GenerateMode }>).detail;
+      if (!detail?.mode) return;
+      addPendingGeneration(detail.mode, detail.id);
+    };
+    const onPendingRemove = (event: Event) => {
+      const detail = (event as CustomEvent<{ id?: string }>).detail;
+      if (!detail?.id) return;
+      removePendingGeneration(detail.id);
+    };
     window.addEventListener('notes-updated', onUpdate);
-    return () => window.removeEventListener('notes-updated', onUpdate);
-  }, [fetchNotes]);
+    window.addEventListener('notes-pending-add', onPendingAdd as EventListener);
+    window.addEventListener('notes-pending-remove', onPendingRemove as EventListener);
+    return () => {
+      window.removeEventListener('notes-updated', onUpdate);
+      window.removeEventListener('notes-pending-add', onPendingAdd as EventListener);
+      window.removeEventListener('notes-pending-remove', onPendingRemove as EventListener);
+    };
+  }, [addPendingGeneration, fetchNotes, removePendingGeneration]);
 
   useEffect(() => {
     setSelectedIds([]);
@@ -313,6 +362,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     setError('');
     setMermaidSvg('');
     setMermaidError('');
+    setPendingGenerations([]);
   }, [notebookId]);
 
   const expandedNote = useMemo(
@@ -381,19 +431,23 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
   }, [expandedMermaid]);
 
   useEffect(() => {
-    if (!generating) {
-      setGenerationProgress(0);
+    if (pendingGenerations.length === 0) {
       return;
     }
     const timer = window.setInterval(() => {
-      setGenerationProgress((prev) => {
-        if (prev >= 92) return 92;
-        const delta = Math.max(2, Math.round((100 - prev) / 14));
-        return Math.min(92, prev + delta);
-      });
+      setPendingGenerations((prev) =>
+        prev.map((item) => {
+          if (item.progress >= 92) return item;
+          const delta = Math.max(2, Math.round((100 - item.progress) / 14));
+          return {
+            ...item,
+            progress: Math.min(92, item.progress + delta),
+          };
+        })
+      );
     }, 480);
     return () => window.clearInterval(timer);
-  }, [generating]);
+  }, [generating, pendingGenerations.length]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) =>
@@ -417,9 +471,11 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
 
   const generateFromSelection = async (mode: GenerateMode, paperFormatOverride?: string) => {
     if (!notebookId || selectedIds.length === 0 || generating) return;
+    const noteIds = [...selectedIds];
+    const pendingId = addPendingGeneration(mode);
+    setSelectedIds([]);
     setGenerating(true);
     setGeneratingMode(mode);
-    setGenerationProgress(8);
     setError('');
     try {
       const res = await fetch('/api/notes/generate', {
@@ -427,29 +483,29 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           notebookId,
-          noteIds: selectedIds,
+          noteIds,
           mode,
           paperFormat: mode === 'paper_outline' ? (paperFormatOverride ?? selectedOutlineFormat) : undefined,
         }),
       });
-      setGenerationProgress(52);
+      updatePendingGeneration(pendingId, (item) => ({ ...item, progress: Math.max(item.progress, 52) }));
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data?.error ?? '转换失败');
+        removePendingGeneration(pendingId);
         return;
       }
+      updatePendingGeneration(pendingId, (item) => ({ ...item, progress: 100 }));
       await fetchNotes();
-      setGenerationProgress(100);
       await new Promise((resolve) => setTimeout(resolve, 260));
       if (typeof data?.note?.id === 'string') {
-        setSelectedIds([data.note.id]);
         setExpandedId(data.note.id);
-      } else {
-        setSelectedIds([]);
       }
+      removePendingGeneration(pendingId);
       window.dispatchEvent(new CustomEvent('notes-updated'));
     } catch (e) {
       setError(e instanceof Error ? e.message : '转换失败');
+      removePendingGeneration(pendingId);
     } finally {
       setGenerating(false);
       setGeneratingMode(null);
@@ -463,15 +519,6 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     if (mode === 'paper_outline') return '论文大纲';
     if (mode === 'report') return '报告';
     return '互动PPT';
-  };
-
-  const modeDescription = (mode: GenerateMode) => {
-    if (mode === 'paper_outline') return '包含段落撰写规范，生成可直接展开写作的结构。';
-    if (mode === 'report') return '将内容组织为图文并茂的 HTML 报告，并优先加入图表展示。';
-    if (mode === 'infographic') return '正在归纳关键信息并生成信息图。';
-    if (mode === 'mindmap') return '正在抽取层级结构并生成思维导图。';
-    if (mode === 'summary') return '正在压缩信息并简化为短摘要。';
-    return '正在生成可交互的网页内容。';
   };
 
   if (!notebookId) {
@@ -517,12 +564,38 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
           <div className="p-2">
             <ShinyText text="Loading notes..." className="text-xs text-gray-500 dark:text-gray-400" />
           </div>
-        ) : notes.length === 0 ? (
+        ) : notes.length === 0 && pendingGenerations.length === 0 ? (
           <p className="text-xs text-gray-500 dark:text-gray-400 p-2">
             还没有笔记，可在聊天区点击“保存到笔记”。
           </p>
         ) : (
           <ul className="space-y-2">
+            {pendingGenerations.map((pending) => (
+              <li
+                key={pending.id}
+                className="h-[126px] rounded border border-gray-200 bg-white/60 p-2 pb-2 dark:border-gray-800 dark:bg-gray-900/40"
+              >
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" checked={false} readOnly className="rounded border-gray-300 opacity-40 dark:border-gray-700" />
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">{pendingModeTitle(pending.mode)}</p>
+                </div>
+                <div className="mt-2 flex h-[58px] flex-col justify-center gap-2">
+                  <p className="text-xs font-medium text-gray-700 dark:text-gray-200">
+                    正在生成{pendingModeTitle(pending.mode)}…
+                  </p>
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+                    <div
+                      className="h-full rounded-full bg-blue-500 transition-all duration-300"
+                      style={{ width: `${pending.progress}%` }}
+                    />
+                  </div>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">进度 {pending.progress}%</p>
+                </div>
+                <p className="pt-0 text-[11px] leading-none text-gray-500 dark:text-gray-400">
+                  {formatTime(pending.createdAt)}
+                </p>
+              </li>
+            ))}
             {notes.map((note) => {
               const selected = selectedIds.includes(note.id);
               const displayTitle = getDisplayTitle(note);
@@ -715,30 +788,6 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
           )}
         </div>
       </div>
-
-      {generating && generatingMode && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-4">
-          <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-4 shadow-xl dark:border-gray-800 dark:bg-gray-900">
-            <div className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
-              <LoadingIcon />
-              <p className="text-sm font-semibold">正在生成{modeLabel(generatingMode)}</p>
-            </div>
-            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{modeDescription(generatingMode)}</p>
-            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
-              <div
-                className="h-full rounded-full bg-blue-600 transition-all duration-300"
-                style={{ width: `${generationProgress}%` }}
-              />
-            </div>
-            <div className="mt-2 flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-600" />
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500 [animation-delay:150ms]" />
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400 [animation-delay:300ms]" />
-              <span className="ml-1">进度 {generationProgress}%</span>
-            </div>
-          </div>
-        </div>
-      )}
 
       {paperOutlinePickerOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4">

@@ -201,6 +201,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatContentRef = useRef<HTMLDivElement>(null);
+  const selectionTimerRef = useRef<number | null>(null);
 
   const fetchHistoryPage = useCallback(
     async (page: number, reset: boolean) => {
@@ -291,7 +292,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   }, [loading]);
 
   const createNote = useCallback(
-    async (content: string, title?: string) => {
+    async (content: string, title?: string, emitUpdate = true) => {
       if (!notebookId) throw new Error('notebookId is required');
       const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/notes`, {
         method: 'POST',
@@ -305,61 +306,93 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       if (!res.ok) {
         throw new Error(data?.error ?? '保存到笔记失败');
       }
-      window.dispatchEvent(new CustomEvent('notes-updated'));
+      if (emitUpdate) {
+        window.dispatchEvent(new CustomEvent('notes-updated'));
+      }
       return data;
     },
     [notebookId]
   );
 
   useEffect(() => {
-    const updateSelectionToast = () => {
+    const clearTimer = () => {
+      if (selectionTimerRef.current != null) {
+        window.clearTimeout(selectionTimerRef.current);
+        selectionTimerRef.current = null;
+      }
+    };
+
+    const getSelectionCandidate = () => {
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-        setSelectionToast(null);
-        return;
+        return null;
       }
 
-      const text = selection.toString().replace(/\s+/g, ' ').trim();
+      const text = selection.toString().replace(/\u00a0/g, ' ').trim();
       if (!text) {
-        setSelectionToast(null);
-        return;
+        return null;
       }
 
       const range = selection.getRangeAt(0);
       const container = chatContentRef.current;
-      const anchorNode = range.commonAncestorContainer;
-      const anchorElement =
-        anchorNode.nodeType === Node.ELEMENT_NODE
-          ? (anchorNode as Element)
-          : anchorNode.parentElement;
-      if (!container || !anchorElement || !container.contains(anchorElement)) {
-        setSelectionToast(null);
-        return;
+      const startElement =
+        range.startContainer.nodeType === Node.ELEMENT_NODE
+          ? (range.startContainer as Element)
+          : range.startContainer.parentElement;
+      const endElement =
+        range.endContainer.nodeType === Node.ELEMENT_NODE
+          ? (range.endContainer as Element)
+          : range.endContainer.parentElement;
+      if (!container || !startElement || !endElement) {
+        return null;
+      }
+      if (!container.contains(startElement) || !container.contains(endElement)) {
+        return null;
       }
 
-      const assistantRoot = anchorElement.closest('[data-assistant-message="true"]');
-      if (!assistantRoot) {
-        setSelectionToast(null);
-        return;
+      const startRoot = startElement.closest('[data-assistant-message="true"]');
+      const endRoot = endElement.closest('[data-assistant-message="true"]');
+      if (!startRoot || !endRoot || startRoot !== endRoot) {
+        return null;
       }
 
-      const rect = range.getBoundingClientRect();
-      if (!rect.width && !rect.height) {
-        setSelectionToast(null);
-        return;
+      const rects = Array.from(range.getClientRects());
+      const tailRect = rects[rects.length - 1] ?? range.getBoundingClientRect();
+      if (!tailRect.width && !tailRect.height) {
+        return null;
       }
 
-      setSelectionToast({
+      const preferredY =
+        tailRect.bottom + 38 <= window.innerHeight ? tailRect.bottom + 8 : tailRect.top - 40;
+
+      return {
         text,
-        x: Math.min(window.innerWidth - 148, Math.max(12, rect.right + 8)),
-        y: Math.max(12, rect.top - 40),
-      });
+        x: Math.min(window.innerWidth - 148, Math.max(12, tailRect.right + 8)),
+        y: Math.max(12, preferredY),
+      } satisfies SelectionToastState;
     };
 
-    const clearSelectionToast = () => setSelectionToast(null);
+    const updateSelectionToast = () => {
+      clearTimer();
+      setSelectionToast(null);
+      const candidate = getSelectionCandidate();
+      if (!candidate) return;
+      selectionTimerRef.current = window.setTimeout(() => {
+        selectionTimerRef.current = null;
+        const latest = getSelectionCandidate();
+        setSelectionToast(latest);
+      }, 300);
+    };
+
+    const clearSelectionToast = () => {
+      clearTimer();
+      setSelectionToast(null);
+    };
+
     document.addEventListener('selectionchange', updateSelectionToast);
     window.addEventListener('scroll', clearSelectionToast, true);
     return () => {
+      clearTimer();
       document.removeEventListener('selectionchange', updateSelectionToast);
       window.removeEventListener('scroll', clearSelectionToast, true);
     };
@@ -478,6 +511,12 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       const parsed = parseMessageActions(message.content);
       const answerText = parsed.displayContent.trim();
       if (!answerText) return;
+      const pendingId = `pending_${mode}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      window.dispatchEvent(
+        new CustomEvent('notes-pending-add', {
+          detail: { id: pendingId, mode },
+        })
+      );
 
       const isReport = mode === 'report';
       if (isReport) {
@@ -492,7 +531,8 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       try {
         const createData = await createNote(
           answerText,
-          isReport ? '论文对比洞察' : '回答延展信息图'
+          isReport ? '论文对比洞察' : '回答延展信息图',
+          false
         );
         if (!createData?.id) {
           throw new Error('保存洞察素材失败');
@@ -520,8 +560,10 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           setReportStep(3);
           setReportHint('已完成，互动PPT已添加到我的笔记。');
         }
+        window.dispatchEvent(new CustomEvent('notes-pending-remove', { detail: { id: pendingId } }));
         window.dispatchEvent(new CustomEvent('notes-updated'));
       } catch (e) {
+        window.dispatchEvent(new CustomEvent('notes-pending-remove', { detail: { id: pendingId } }));
         if (isReport) {
           setReportError(e instanceof Error ? e.message : '转换报告失败');
         } else {
