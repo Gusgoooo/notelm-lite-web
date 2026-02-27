@@ -190,11 +190,6 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [refineStep, setRefineStep] = useState<0 | 1 | 2>(0);
   const [refineHint, setRefineHint] = useState('');
   const [refineError, setRefineError] = useState('');
-  const [reportOpen, setReportOpen] = useState(false);
-  const [reportStep, setReportStep] = useState<0 | 1 | 2 | 3>(0);
-  const [reportHint, setReportHint] = useState('');
-  const [reportError, setReportError] = useState('');
-  const [reportRunningMessageId, setReportRunningMessageId] = useState<string | null>(null);
   const [quickActionRunning, setQuickActionRunning] = useState<{ messageId: string; mode: 'report' | 'infographic' } | null>(null);
   const [selectionToast, setSelectionToast] = useState<SelectionToastState | null>(null);
   const [savingSelection, setSavingSelection] = useState(false);
@@ -374,9 +369,11 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
 
     const updateSelectionToast = () => {
       clearTimer();
-      setSelectionToast(null);
       const candidate = getSelectionCandidate();
-      if (!candidate) return;
+      if (!candidate) {
+        setSelectionToast((prev) => (prev ? null : prev));
+        return;
+      }
       selectionTimerRef.current = window.setTimeout(() => {
         selectionTimerRef.current = null;
         const latest = getSelectionCandidate();
@@ -507,27 +504,20 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
 
   const generateArtifactFromAnswer = useCallback(
     async (message: Message, mode: 'report' | 'infographic') => {
-      if (!notebookId || reportRunningMessageId || quickActionRunning) return;
+      if (!notebookId || quickActionRunning) return;
       const parsed = parseMessageActions(message.content);
       const answerText = parsed.displayContent.trim();
       if (!answerText) return;
       const pendingId = `pending_${mode}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const pendingTitle = buildNoteTitleFromAnswer(answerText);
       window.dispatchEvent(
         new CustomEvent('notes-pending-add', {
-          detail: { id: pendingId, mode },
+          detail: { id: pendingId, mode, title: pendingTitle },
         })
       );
 
       const isReport = mode === 'report';
-      if (isReport) {
-        setReportOpen(true);
-        setReportError('');
-        setReportStep(1);
-        setReportHint('正在保存洞察内容为笔记素材…');
-        setReportRunningMessageId(message.id);
-      } else {
-        setQuickActionRunning({ messageId: message.id, mode });
-      }
+      setQuickActionRunning({ messageId: message.id, mode });
       try {
         const createData = await createNote(
           answerText,
@@ -536,11 +526,6 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         );
         if (!createData?.id) {
           throw new Error('保存洞察素材失败');
-        }
-
-        if (isReport) {
-          setReportStep(2);
-          setReportHint('正在转换成互动PPT…');
         }
         const genRes = await fetch('/api/notes/generate', {
           method: 'POST',
@@ -555,37 +540,24 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         if (!genRes.ok) {
           throw new Error(genData?.error ?? (isReport ? '转换报告失败' : '生成信息图失败'));
         }
-
-        if (isReport) {
-          setReportStep(3);
-          setReportHint('已完成，互动PPT已添加到我的笔记。');
-        }
         window.dispatchEvent(new CustomEvent('notes-pending-remove', { detail: { id: pendingId } }));
         window.dispatchEvent(new CustomEvent('notes-updated'));
       } catch (e) {
         window.dispatchEvent(new CustomEvent('notes-pending-remove', { detail: { id: pendingId } }));
-        if (isReport) {
-          setReportError(e instanceof Error ? e.message : '转换报告失败');
-        } else {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `a-${Date.now()}`,
-              role: 'assistant',
-              content: `Error: ${e instanceof Error ? e.message : '生成信息图失败'}`,
-            },
-          ]);
-          setTailVersion((v) => v + 1);
-        }
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `a-${Date.now()}`,
+            role: 'assistant',
+            content: `Error: ${e instanceof Error ? e.message : isReport ? '转换报告失败' : '生成信息图失败'}`,
+          },
+        ]);
+        setTailVersion((v) => v + 1);
       } finally {
-        if (isReport) {
-          setReportRunningMessageId(null);
-        } else {
-          setQuickActionRunning(null);
-        }
+        setQuickActionRunning(null);
       }
     },
-    [createNote, notebookId, quickActionRunning, reportRunningMessageId]
+    [createNote, notebookId, quickActionRunning]
   );
 
   const renderResearchSection = () => {
@@ -806,12 +778,11 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                   type="button"
                                   onClick={() => void generateArtifactFromAnswer(m, 'report')}
                                   disabled={
-                                    reportRunningMessageId === m.id ||
                                     (quickActionRunning?.messageId === m.id && quickActionRunning.mode === 'report')
                                   }
                                   className="inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 transition hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
                                 >
-                                  {reportRunningMessageId === m.id ? '生成中…' : '生成报告'}
+                                  {quickActionRunning?.messageId === m.id && quickActionRunning.mode === 'report' ? '生成中…' : '生成报告'}
                                 </button>
                               ) : null}
                               {showRichActions ? (
@@ -998,63 +969,6 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                   }
                 }}
                 disabled={Boolean(selectingDirectionId)}
-              >
-                关闭
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-      {reportOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">正在生成报告</h3>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{reportHint}</p>
-            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
-              <div
-                className="h-full rounded-full bg-blue-600 transition-all duration-500"
-                style={{ width: `${reportStep === 1 ? 35 : reportStep === 2 ? 75 : reportStep === 3 ? 100 : 0}%` }}
-              />
-            </div>
-            <div className="mt-4 space-y-2">
-              {['保存洞察素材', '转换报告', '完成'].map((label, idx) => {
-                const stepNumber = (idx + 1) as 1 | 2 | 3;
-                const done = reportStep > stepNumber;
-                const running = reportStep === stepNumber;
-                return (
-                  <div
-                    key={label}
-                    className={`flex items-center gap-2 rounded border px-2 py-2 text-xs ${
-                      done
-                        ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/20 dark:text-green-300'
-                        : running
-                          ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-300'
-                          : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-2 w-2 rounded-full ${
-                        done ? 'bg-green-600' : running ? 'bg-blue-600 animate-pulse' : 'bg-gray-400'
-                      }`}
-                    />
-                    <span>{label}</span>
-                  </div>
-                );
-              })}
-            </div>
-            {reportError ? <p className="mt-3 text-xs text-red-600 dark:text-red-400">{reportError}</p> : null}
-            <div className="mt-4 flex justify-end">
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  if (!reportRunningMessageId) {
-                    setReportOpen(false);
-                    setReportStep(0);
-                    setReportHint('');
-                    setReportError('');
-                  }
-                }}
-                disabled={Boolean(reportRunningMessageId)}
               >
                 关闭
               </Button>

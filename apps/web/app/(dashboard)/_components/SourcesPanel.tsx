@@ -111,6 +111,7 @@ function getSourceDotClass(input: {
   chunkCount?: number;
 }) {
   if (input.status === 'FAILED') return 'bg-red-500';
+  if (input.status === 'PROCESSING') return 'bg-blue-500';
   if (input.status !== 'READY') return 'bg-gray-400';
   if (input.sourceType === '联网检索') return 'bg-gray-400';
   if ((input.chunkCount ?? 0) > 0) return 'bg-green-500';

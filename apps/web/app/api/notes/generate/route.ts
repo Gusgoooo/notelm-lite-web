@@ -236,7 +236,7 @@ async function requestOpenRouterImageGeneration(input: {
   config: OpenRouterConfig;
   model: string;
   prompt: string;
-}): Promise<{ dataUrl: string; caption: string } | null> {
+}): Promise<{ image: { dataUrl: string; caption: string } | null; error: string }> {
   const response = await fetch(`${input.config.baseUrl.replace(/\/$/, '')}/images/generations`, {
     method: 'POST',
     headers: {
@@ -247,6 +247,7 @@ async function requestOpenRouterImageGeneration(input: {
       model: input.model,
       prompt: input.prompt,
       size: '1536x1024',
+      response_format: 'b64_json',
     }),
   });
   const raw = await response.text();
@@ -256,10 +257,21 @@ async function requestOpenRouterImageGeneration(input: {
   } catch {
     json = raw;
   }
-  if (!response.ok) return null;
+  if (!response.ok) {
+    return {
+      image: null,
+      error: `${response.status} ${extractErrorMessage(json)}`,
+    };
+  }
   const image = extractImageDataUrl(json);
-  if (!image) return null;
-  return image;
+  if (!image) {
+    const hint = extractImageDebugHint(json);
+    return {
+      image: null,
+      error: `no image returned${hint ? `; response="${hint}"` : ''}`,
+    };
+  }
+  return { image, error: '' };
 }
 
 async function requestOpenRouterText(input: {
@@ -314,6 +326,21 @@ function cleanSummaryText(raw: string): string {
     .replace(/^\s*[-*+]\s+/gm, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function cleanStructuredText(raw: string): string {
+  return raw
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function clipForPlanner(raw: string, maxChars: number): string {
+  const compact = raw.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxChars) return compact;
+  return `${compact.slice(0, maxChars)}...`;
 }
 
 function extractHtmlBlock(content: string): string | null {
@@ -457,74 +484,92 @@ async function generateReport(source: string, config: OpenRouterConfig, model: s
   return `\`\`\`html\n${html}\n\`\`\``;
 }
 
+async function buildInfographicBrief(input: {
+  source: string;
+  config: OpenRouterConfig;
+  model: string;
+  rolePrompt: string;
+  ultraCompact?: boolean;
+}): Promise<string> {
+  const sourceCompact = input.source.replace(/\s+/g, ' ').trim();
+  const passthroughLimit = input.ultraCompact ? 320 : 720;
+  if (sourceCompact.length <= passthroughLimit) {
+    return sourceCompact;
+  }
+  const clippedSource = clipForPlanner(input.source, input.ultraCompact ? 2400 : 4200);
+  try {
+    const brief = await requestOpenRouterText({
+      config: input.config,
+      model: input.model,
+      systemPrompt: input.rolePrompt,
+      userPrompt:
+        `请将以下内容重组为“可直接用于信息图生图”的中文提纲。\n` +
+        `输出要求：\n` +
+        `1) 只输出纯文本，不要 Markdown，不要代码块；\n` +
+        `2) 严格按这个结构输出：\n` +
+        `标题：...\n核心结论：...\n要点1：...\n要点2：...\n要点3：...\n` +
+        `若信息足够，可继续补充要点4-5、关键数据、行动建议；\n` +
+        `3) 每一条都用短句，不解释，不铺陈，不写长段落；\n` +
+        `4) ${input.ultraCompact ? '总长度控制在 220 字以内' : '总长度控制在 420 字以内'}；\n` +
+        `5) 如果原文太长，优先压缩，不要遗漏核心结论与关键数据。\n\n${clippedSource}`,
+    });
+    const cleaned = cleanStructuredText(brief);
+    return cleaned || clipForPlanner(sourceCompact, input.ultraCompact ? 220 : 420);
+  } catch {
+    return clipForPlanner(sourceCompact, input.ultraCompact ? 220 : 420);
+  }
+}
+
 async function generateInfographic(input: {
   source: string;
   config: OpenRouterConfig;
   preferredModel: string;
+  plannerModel: string;
   rolePrompt: string;
 }): Promise<{ content: string; model: string }> {
   const models = uniqueNonEmpty(
     [input.preferredModel, ...IMAGE_MODEL_FALLBACKS].map((m) => normalizeImageModelAlias(m))
   );
   const errors: string[] = [];
+  const structured = await buildInfographicBrief({
+    source: input.source,
+    config: input.config,
+    model: input.plannerModel,
+    rolePrompt: input.rolePrompt,
+  });
+  const ultraCompact = await buildInfographicBrief({
+    source: structured || input.source,
+    config: input.config,
+    model: input.plannerModel,
+    rolePrompt: input.rolePrompt,
+    ultraCompact: true,
+  });
 
   for (const model of models) {
-    const basePrompt =
-      `请根据以下笔记内容生成一张中文信息图，信息要准确，版式清晰，适合产品决策汇报。\n` +
-      `请优先突出：核心结论、关键数据、行动建议。\n\n${input.source}`;
-    const response = await fetch(`${input.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${input.config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: input.rolePrompt },
-          { role: 'user', content: basePrompt },
-        ],
-        modalities: ['image', 'text'],
-        stream: false,
-        image_config: { aspect_ratio: '16:9' },
-      }),
-    });
-    const raw = await response.text();
-    let json: unknown;
-    try {
-      json = JSON.parse(raw);
-    } catch {
-      json = raw;
-    }
-    if (!response.ok) {
-      errors.push(`[${model}] ${response.status} ${extractErrorMessage(json)}`);
-      continue;
-    }
-    const image = extractImageDataUrl(json);
-    if (!image) {
-      const hint = extractImageDebugHint(json);
-      const fallbackPrompt =
-        hint || `根据以下信息图提纲生成中文信息图，风格现代、层级清晰、适合汇报：\n\n${input.source}`;
-      const viaImagesApi = await requestOpenRouterImageGeneration({
+    const prompts = [
+      `请直接生成一张中文信息图图片，不要返回文字说明。\n` +
+        `画面要求：16:9、现代扁平、信息卡片式布局、清晰留白、重点突出标题/关键数据/行动建议。\n` +
+        `内容结构：\n${structured || input.source}`,
+      `请直接生成一张更简洁的中文信息图图片，不要返回文字说明。\n` +
+        `画面要求：16:9、中文、层级极清晰、少文字、高可读性。\n` +
+        `仅保留最核心信息：\n${ultraCompact || structured || input.source}`,
+    ];
+    for (const prompt of prompts) {
+      const result = await requestOpenRouterImageGeneration({
         config: input.config,
         model,
-        prompt: fallbackPrompt,
+        prompt,
       });
-      if (!viaImagesApi) {
-        errors.push(`[${model}] no image returned${hint ? `; response="${hint}"` : ''}`);
+      if (!result.image) {
+        errors.push(`[${model}] ${result.error}`);
         continue;
       }
       const markdown =
-        `![Infographic](${viaImagesApi.dataUrl})\n\n` +
-        (viaImagesApi.caption ? `> ${viaImagesApi.caption}\n\n` : '') +
+        `![Infographic](${result.image.dataUrl})\n\n` +
+        (result.image.caption ? `> ${result.image.caption}\n\n` : '') +
         `模型：\`${model}\``;
       return { content: markdown, model };
     }
-    const markdown =
-      `![Infographic](${image.dataUrl})\n\n` +
-      (image.caption ? `> ${image.caption}\n\n` : '') +
-      `模型：\`${model}\``;
-    return { content: markdown, model };
   }
   throw new Error(`Image generation failed: ${errors.join(' | ')}`);
 }
@@ -664,6 +709,7 @@ export async function POST(request: Request) {
         source,
         config: openrouterConfig,
         preferredModel: settings.models.infographic,
+        plannerModel: settings.models.summary,
         rolePrompt: settings.prompts.infographic,
       });
       generatedContent = content;

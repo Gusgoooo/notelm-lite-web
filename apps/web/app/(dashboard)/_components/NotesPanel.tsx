@@ -19,6 +19,7 @@ type GenerateMode = 'infographic' | 'summary' | 'mindmap' | 'webpage' | 'paper_o
 type PendingGeneratedNote = {
   id: string;
   mode: GenerateMode;
+  title: string;
   progress: number;
   createdAt: string;
 };
@@ -238,9 +239,16 @@ function pendingModeTitle(mode: GenerateMode): string {
   return '互动PPT';
 }
 
+function formatElapsedSeconds(createdAt: string, nowMs: number): string {
+  const started = new Date(createdAt).getTime();
+  if (!Number.isFinite(started)) return '0s';
+  return `${Math.max(0, Math.floor((nowMs - started) / 1000))}s`;
+}
+
 export function NotesPanel({ notebookId }: { notebookId: string | null }) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [pendingGenerations, setPendingGenerations] = useState<PendingGeneratedNote[]>([]);
+  const [pendingClock, setPendingClock] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -261,7 +269,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
   const [selectedOutlineFormat, setSelectedOutlineFormat] = useState('默认格式');
   const [paperOutlinePickerOpen, setPaperOutlinePickerOpen] = useState(false);
 
-  const addPendingGeneration = useCallback((mode: GenerateMode, id?: string) => {
+  const addPendingGeneration = useCallback((mode: GenerateMode, id?: string, title?: string) => {
     const pendingId = id ?? `pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     setPendingGenerations((prev) => {
       if (prev.some((item) => item.id === pendingId)) return prev;
@@ -269,6 +277,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
         {
           id: pendingId,
           mode,
+          title: title?.trim() || `正在生成${pendingModeTitle(mode)}`,
           progress: 8,
           createdAt: new Date().toISOString(),
         },
@@ -335,9 +344,9 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
       void fetchNotes();
     };
     const onPendingAdd = (event: Event) => {
-      const detail = (event as CustomEvent<{ id?: string; mode?: GenerateMode }>).detail;
+      const detail = (event as CustomEvent<{ id?: string; mode?: GenerateMode; title?: string }>).detail;
       if (!detail?.mode) return;
-      addPendingGeneration(detail.mode, detail.id);
+      addPendingGeneration(detail.mode, detail.id, detail.title);
     };
     const onPendingRemove = (event: Event) => {
       const detail = (event as CustomEvent<{ id?: string }>).detail;
@@ -449,6 +458,14 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     return () => window.clearInterval(timer);
   }, [generating, pendingGenerations.length]);
 
+  useEffect(() => {
+    if (pendingGenerations.length === 0) return;
+    const timer = window.setInterval(() => {
+      setPendingClock(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [pendingGenerations.length]);
+
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
@@ -472,7 +489,15 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
   const generateFromSelection = async (mode: GenerateMode, paperFormatOverride?: string) => {
     if (!notebookId || selectedIds.length === 0 || generating) return;
     const noteIds = [...selectedIds];
-    const pendingId = addPendingGeneration(mode);
+    const selectedNotes = noteIds
+      .map((id) => notes.find((note) => note.id === id))
+      .filter(Boolean) as Note[];
+    const leadTitle = selectedNotes[0]
+      ? getDisplayTitle(selectedNotes[0]) || selectedNotes[0].title
+      : pendingModeTitle(mode);
+    const pendingTitle =
+      selectedNotes.length <= 1 ? leadTitle : `${leadTitle} 等${selectedNotes.length}条`;
+    const pendingId = addPendingGeneration(mode, undefined, pendingTitle);
     setSelectedIds([]);
     setGenerating(true);
     setGeneratingMode(mode);
@@ -580,9 +605,17 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
                   <p className="text-[11px] text-gray-500 dark:text-gray-400">{pendingModeTitle(pending.mode)}</p>
                 </div>
                 <div className="mt-2 flex h-[58px] flex-col justify-center gap-2">
-                  <p className="text-xs font-medium text-gray-700 dark:text-gray-200">
-                    正在生成{pendingModeTitle(pending.mode)}…
-                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p
+                      className="min-w-0 truncate text-xs font-medium text-gray-700 dark:text-gray-200"
+                      title={pending.title}
+                    >
+                      {pending.title}
+                    </p>
+                    <span className="shrink-0 text-[11px] text-blue-600 dark:text-blue-400">
+                      运行中 {formatElapsedSeconds(pending.createdAt, pendingClock)}
+                    </span>
+                  </div>
                   <div className="h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
                     <div
                       className="h-full rounded-full bg-blue-500 transition-all duration-300"
