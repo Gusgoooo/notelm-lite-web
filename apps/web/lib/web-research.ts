@@ -10,6 +10,13 @@ export type WebSource = {
 };
 
 const WEB_SOURCE_MIME = 'application/x-web-source';
+const DEFAULT_SEARCH_MODELS = [
+  'perplexity/sonar-pro',
+  'perplexity/sonar-reasoning-pro',
+  'openai/gpt-4o-search-preview',
+  'openai/gpt-4o-mini-search-preview',
+] as const;
+const DEFAULT_TRANSLATE_MODEL = 'openai/gpt-4o-mini';
 
 function extractTextFromContent(content: unknown): string {
   if (typeof content === 'string') return content.trim();
@@ -49,6 +56,22 @@ function normalizeSnippet(value: string): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, 1600);
 }
 
+function uniqueNonEmpty(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const normalized = typeof value === 'string' ? value.trim() : '';
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function containsCjk(value: string): boolean {
+  return /[\u3400-\u9fff]/.test(value);
+}
+
 function tryParseJson(content: string): unknown {
   const raw = content.trim();
   try {
@@ -66,6 +89,22 @@ function tryParseJson(content: string): unknown {
   }
 }
 
+function extractErrorMessage(payload: unknown): string {
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    'error' in payload &&
+    payload.error &&
+    typeof payload.error === 'object' &&
+    'message' in payload.error &&
+    typeof payload.error.message === 'string'
+  ) {
+    return payload.error.message;
+  }
+  if (typeof payload === 'string') return payload;
+  return 'Unknown error';
+}
+
 function extractSources(payload: unknown): WebSource[] {
   if (!payload || typeof payload !== 'object') return [];
   const raw = (payload as { sources?: unknown }).sources;
@@ -78,10 +117,54 @@ function extractSources(payload: unknown): WebSource[] {
     if (!url) continue;
     const title = normalizeTitle(typeof row.title === 'string' ? row.title : '', url);
     const snippet = normalizeSnippet(typeof row.snippet === 'string' ? row.snippet : '');
-    if (!snippet) continue;
     out.push({ title, url, snippet });
   }
   return out;
+}
+
+function extractSourcesFromLooseText(content: string): WebSource[] {
+  const lines = content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const out: WebSource[] = [];
+  const seen = new Set<string>();
+
+  for (const line of lines) {
+    const urlMatch = line.match(/https?:\/\/[^\s)>\]}",]+/i);
+    if (!urlMatch?.[0]) continue;
+    const url = normalizeUrl(urlMatch[0]);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+
+    const markdownTitleMatch = line.match(/\[([^\]]+)\]\(https?:\/\/[^\s)]+\)/i);
+    const rawWithoutUrl = line
+      .replace(urlMatch[0], ' ')
+      .replace(/\[[^\]]+]\(.*?\)/g, ' ')
+      .replace(/^[\-*+\d.)\s|]+/, ' ')
+      .replace(/(?:^|\s)(url|链接|link)\s*[:：]/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const title = normalizeTitle(markdownTitleMatch?.[1] ?? rawWithoutUrl, url);
+
+    let snippet = '';
+    const snippetMatch = line.match(/(?:snippet|summary|摘要|简介)\s*[:：]\s*(.+)$/i);
+    if (snippetMatch?.[1]) {
+      snippet = normalizeSnippet(snippetMatch[1]);
+    } else if (rawWithoutUrl && rawWithoutUrl !== title) {
+      snippet = normalizeSnippet(rawWithoutUrl);
+    }
+
+    out.push({ title, url, snippet });
+  }
+
+  return out;
+}
+
+function extractSourcesFromContent(content: string): WebSource[] {
+  const strict = extractSources(tryParseJson(content));
+  if (strict.length > 0) return strict;
+  return extractSourcesFromLooseText(content);
 }
 
 function scoreWebSource(item: WebSource): number {
@@ -99,6 +182,105 @@ function scoreWebSource(item: WebSource): number {
   return score;
 }
 
+async function requestOpenRouterText(input: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  systemPrompt: string;
+  userPrompt: string;
+}): Promise<string> {
+  const response = await fetch(`${input.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${input.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: input.model,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: input.systemPrompt },
+        { role: 'user', content: input.userPrompt },
+      ],
+    }),
+  });
+
+  const raw = await response.text();
+  let parsed: unknown = raw;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // fall back to raw text below
+  }
+  if (!response.ok) {
+    throw new Error(`[${input.model}] ${response.status} ${extractErrorMessage(parsed)}`);
+  }
+
+  if (typeof parsed === 'object' && parsed) {
+    const messageContent = extractTextFromContent(
+      (parsed as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content
+    );
+    if (messageContent) return messageContent;
+  }
+
+  if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  throw new Error(`[${input.model}] empty response`);
+}
+
+async function translateSnippetsToChinese(input: {
+  apiKey: string;
+  baseUrl: string;
+  sources: WebSource[];
+}): Promise<WebSource[]> {
+  const candidates = input.sources.filter((item) => item.snippet && !containsCjk(item.snippet));
+  if (candidates.length === 0) return input.sources;
+
+  try {
+    const model = (process.env.OPENROUTER_TRANSLATE_MODEL ?? DEFAULT_TRANSLATE_MODEL).trim() || DEFAULT_TRANSLATE_MODEL;
+    const text = await requestOpenRouterText({
+      apiKey: input.apiKey,
+      baseUrl: input.baseUrl,
+      model,
+      systemPrompt:
+        'You translate research snippets into concise Simplified Chinese. Return ONLY JSON: {"items":[{"url":"https://...","snippet":"中文摘要"}]}.',
+      userPrompt:
+        `Translate the following snippets into concise Simplified Chinese.\n` +
+        `Keep meanings accurate. If a snippet is too short, keep it short. Return JSON only.\n\n` +
+        JSON.stringify(
+          {
+            items: candidates.map((item) => ({
+              url: item.url,
+              snippet: item.snippet,
+            })),
+          },
+          null,
+          2
+        ),
+    });
+
+    const payload = tryParseJson(text);
+    const translated = Array.isArray((payload as { items?: unknown })?.items)
+      ? ((payload as { items: Array<Record<string, unknown>> }).items ?? [])
+      : [];
+    const translatedMap = new Map<string, string>();
+    for (const item of translated) {
+      if (!item || typeof item !== 'object') continue;
+      const url = typeof item.url === 'string' ? normalizeUrl(item.url) : null;
+      const snippet = typeof item.snippet === 'string' ? normalizeSnippet(item.snippet) : '';
+      if (!url || !snippet) continue;
+      translatedMap.set(url, snippet);
+    }
+
+    if (translatedMap.size === 0) return input.sources;
+    return input.sources.map((item) => ({
+      ...item,
+      snippet: translatedMap.get(item.url) ?? item.snippet,
+    }));
+  } catch {
+    return input.sources;
+  }
+}
+
 export async function searchWebViaOpenRouter(input: {
   topic: string;
   limit: number;
@@ -106,71 +288,78 @@ export async function searchWebViaOpenRouter(input: {
   const settings = await getAgentSettings();
   const apiKey = settings.openrouterApiKey.trim();
   const baseUrl = settings.openrouterBaseUrl.trim() || 'https://openrouter.ai/api/v1';
-  const model = (process.env.OPENROUTER_SEARCH_MODEL ?? 'openai/gpt-4o-search-preview').trim();
   if (!apiKey) throw new Error('OpenRouter API key is not configured');
 
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      messages: [
-        {
-          role: 'system',
-          content:
-            'You are a web research assistant. Search the public web and return ONLY JSON with this shape: {"sources":[{"title":"...","url":"https://...","snippet":"..."}]}. No markdown. Prefer Chinese and English sources.',
-        },
-        {
-          role: 'user',
-          content:
-            `Topic: ${input.topic}\n` +
-            `Find up to ${input.limit} reliable, diverse web sources.\n` +
-            `Requirements:\n` +
-            `1) URL must be direct page URL.\n` +
-            `2) snippet must be Simplified Chinese.\n` +
-            `3) prioritize research papers / research reports when possible.\n` +
-            `4) strongly prefer sources with downloadable full text.\n` +
-            `5) prefer arXiv (arxiv.org) when relevant, because the paper can usually be downloaded.\n` +
-            `6) avoid duplicates and spam.\n` +
-            `7) return JSON only.`,
-        },
-      ],
-    }),
+  const configuredPrimary = (process.env.OPENROUTER_SEARCH_MODEL ?? '').trim();
+  const configuredFallbacks = (process.env.OPENROUTER_SEARCH_FALLBACK_MODELS ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const models = uniqueNonEmpty([
+    configuredPrimary || DEFAULT_SEARCH_MODELS[0],
+    ...configuredFallbacks,
+    ...DEFAULT_SEARCH_MODELS,
+  ]);
+
+  const aggregated: WebSource[] = [];
+  const errors: string[] = [];
+
+  for (const model of models) {
+    try {
+      const messageContent = await requestOpenRouterText({
+        apiKey,
+        baseUrl,
+        model,
+        systemPrompt:
+          'You are a web research assistant. Prefer returning JSON with this shape: {"sources":[{"title":"...","url":"https://...","snippet":"..."}]}. If some fields are unavailable, keep them empty instead of omitting results. Prefer Chinese and English sources.',
+        userPrompt:
+          `Topic: ${input.topic}\n` +
+          `Find up to ${input.limit} reliable, diverse web sources.\n` +
+          `Requirements:\n` +
+          `1) URL should be a direct page URL.\n` +
+          `2) prioritize research papers / research reports when possible.\n` +
+          `3) strongly prefer sources with downloadable full text.\n` +
+          `4) prefer arXiv (arxiv.org) when relevant, because the paper can usually be downloaded.\n` +
+          `5) avoid duplicates and spam.\n` +
+          `6) return JSON if possible, but do not drop results only because formatting is difficult.\n` +
+          `7) if a snippet is unavailable, return an empty string instead of omitting the source.`,
+      });
+      const fetched = extractSourcesFromContent(messageContent);
+      if (fetched.length === 0) {
+        errors.push(`[${model}] no parsable sources`);
+        continue;
+      }
+      aggregated.push(...fetched);
+      const uniqueCount = new Set(aggregated.map((item) => item.url)).size;
+      if (uniqueCount >= input.limit) break;
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : `[${model}] search failed`);
+    }
+  }
+
+  if (aggregated.length === 0) {
+    throw new Error(
+      errors.length > 0
+        ? `Web search failed: ${errors.join(' | ')}`
+        : 'Web search failed: no sources returned'
+    );
+  }
+
+  const translated = await translateSnippetsToChinese({
+    apiKey,
+    baseUrl,
+    sources: aggregated,
   });
 
-  const raw = await response.text();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`Web search model response is not JSON: ${raw.slice(0, 180)}`);
-  }
-  if (!response.ok) {
-    const message =
-      typeof parsed === 'object' &&
-      parsed &&
-      'error' in parsed &&
-      parsed.error &&
-      typeof parsed.error === 'object' &&
-      'message' in parsed.error &&
-      typeof parsed.error.message === 'string'
-        ? parsed.error.message
-        : `HTTP ${response.status}`;
-    throw new Error(`Web search failed: ${message}`);
-  }
-  const messageContent = extractTextFromContent(
-    (parsed as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content
-  );
-  const contentJson = tryParseJson(messageContent);
-  const fetched = extractSources(contentJson);
-  fetched.sort((a, b) => scoreWebSource(b) - scoreWebSource(a));
+  translated.sort((a, b) => scoreWebSource(b) - scoreWebSource(a));
   const unique = new Map<string, WebSource>();
-  for (const item of fetched) {
-    if (!unique.has(item.url)) unique.set(item.url, item);
+  for (const item of translated) {
+    if (!unique.has(item.url)) {
+      unique.set(item.url, {
+        ...item,
+        snippet: item.snippet || '',
+      });
+    }
     if (unique.size >= input.limit) break;
   }
   return Array.from(unique.values()).slice(0, input.limit);
@@ -200,7 +389,9 @@ export async function ingestWebSources(input: {
 
   const chunkTexts = candidates.map(
     (item) =>
-      `【联网检索来源】\n主题：${input.topic}\n标题：${item.title}\nURL：${item.url}\n摘要：${item.snippet}`
+      `【联网检索来源】\n主题：${input.topic}\n标题：${item.title}\nURL：${item.url}\n摘要：${
+        item.snippet || '（检索结果未附摘要，建议打开原始来源查看）'
+      }`
   );
   const vectors = await createEmbeddings(chunkTexts);
   const dimensions = getEmbeddingDimensions();
