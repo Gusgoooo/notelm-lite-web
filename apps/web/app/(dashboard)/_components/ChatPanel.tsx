@@ -110,6 +110,23 @@ function isRefineCompletedMessage(content: string): boolean {
   return /已完成资料重整，当前选题为：/i.test(content);
 }
 
+function normalizeForActionCheck(content: string): string {
+  return content
+    .replace(REPORT_ACTION_MARKER, '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[#>*_\-\[\]()`]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function shouldShowRichAnswerActions(content: string): boolean {
+  const plain = normalizeForActionCheck(content);
+  if (!plain) return false;
+  if (/^error:/i.test(plain)) return false;
+  if (/无法回答|来源不足|没有足够信息|请稍后重试/i.test(plain)) return false;
+  return plain.length >= 140;
+}
+
 function MarkdownContent({ content }: { content: string }) {
   return (
     <ReactMarkdown
@@ -172,6 +189,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [reportHint, setReportHint] = useState('');
   const [reportError, setReportError] = useState('');
   const [reportRunningMessageId, setReportRunningMessageId] = useState<string | null>(null);
+  const [quickActionRunning, setQuickActionRunning] = useState<{ messageId: string; mode: 'report' | 'infographic' } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -370,24 +388,29 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     [notebookId, selectingDirectionId, researchState, fetchHistoryPage]
   );
 
-  const convertInsightToReport = useCallback(
-    async (message: Message) => {
-      if (!notebookId || reportRunningMessageId) return;
+  const generateArtifactFromAnswer = useCallback(
+    async (message: Message, mode: 'report' | 'infographic') => {
+      if (!notebookId || reportRunningMessageId || quickActionRunning) return;
       const parsed = parseMessageActions(message.content);
       const answerText = parsed.displayContent.trim();
       if (!answerText) return;
 
-      setReportOpen(true);
-      setReportError('');
-      setReportStep(1);
-      setReportHint('正在保存洞察内容为笔记素材…');
-      setReportRunningMessageId(message.id);
+      const isReport = mode === 'report';
+      if (isReport) {
+        setReportOpen(true);
+        setReportError('');
+        setReportStep(1);
+        setReportHint('正在保存洞察内容为笔记素材…');
+        setReportRunningMessageId(message.id);
+      } else {
+        setQuickActionRunning({ messageId: message.id, mode });
+      }
       try {
         const createRes = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/notes`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            title: '论文对比洞察',
+            title: isReport ? '论文对比洞察' : '回答延展信息图',
             content: answerText,
           }),
         });
@@ -396,32 +419,52 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           throw new Error(createData?.error ?? '保存洞察素材失败');
         }
 
-        setReportStep(2);
-        setReportHint('正在转换成互动PPT…');
+        if (isReport) {
+          setReportStep(2);
+          setReportHint('正在转换成互动PPT…');
+        }
         const genRes = await fetch('/api/notes/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             notebookId,
             noteIds: [String(createData.id)],
-            mode: 'report',
+            mode,
           }),
         });
         const genData = await genRes.json().catch(() => ({}));
         if (!genRes.ok) {
-          throw new Error(genData?.error ?? '转换报告失败');
+          throw new Error(genData?.error ?? (isReport ? '转换报告失败' : '生成信息图失败'));
         }
 
-        setReportStep(3);
-        setReportHint('已完成，互动PPT已添加到我的笔记。');
+        if (isReport) {
+          setReportStep(3);
+          setReportHint('已完成，互动PPT已添加到我的笔记。');
+        }
         window.dispatchEvent(new CustomEvent('notes-updated'));
       } catch (e) {
-        setReportError(e instanceof Error ? e.message : '转换报告失败');
+        if (isReport) {
+          setReportError(e instanceof Error ? e.message : '转换报告失败');
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `a-${Date.now()}`,
+              role: 'assistant',
+              content: `Error: ${e instanceof Error ? e.message : '生成信息图失败'}`,
+            },
+          ]);
+          setTailVersion((v) => v + 1);
+        }
       } finally {
-        setReportRunningMessageId(null);
+        if (isReport) {
+          setReportRunningMessageId(null);
+        } else {
+          setQuickActionRunning(null);
+        }
       }
     },
-    [notebookId, reportRunningMessageId]
+    [notebookId, quickActionRunning, reportRunningMessageId]
   );
 
   const renderResearchSection = () => {
@@ -545,6 +588,8 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               {messages.map((m) => {
                 const parsed = parseMessageActions(m.content);
                 const refineDone = isRefineCompletedMessage(parsed.displayContent);
+                const showRichActions =
+                  m.role === 'assistant' && !refineDone && shouldShowRichAnswerActions(parsed.displayContent);
                 return (
                   <div
                     key={m.id}
@@ -603,23 +648,13 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                               保存到笔记
                             </Button>
                           ) : null}
-                          {parsed.canConvertReport ? (
-                            <button
-                              type="button"
-                              onClick={() => void convertInsightToReport(m)}
-                              disabled={reportRunningMessageId === m.id}
-                              className="inline-flex h-6 items-center rounded-full border border-gray-300 bg-gray-100 px-2 text-[11px] text-gray-700 transition hover:bg-gray-200 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-                            >
-                              {reportRunningMessageId === m.id ? '转换中…' : '转换成报告'}
-                            </button>
-                          ) : null}
                         </div>
                         {refineDone &&
                         researchState?.phase === 'ready' &&
                         Array.isArray(researchState.starterQuestions) &&
                         researchState.starterQuestions.length > 0 ? (
                           <div className="mt-3 border-t pt-3">
-                            <p className="text-xs text-gray-600 dark:text-gray-300">可继续探索的启发问题：</p>
+                            <p className="text-xs text-gray-600 dark:text-gray-300">可继续探索的研究议题：</p>
                             <div className="mt-2 flex flex-col items-start gap-1.5">
                               {researchState.starterQuestions.slice(0, 3).map((q, idx) => (
                                 <button
@@ -632,6 +667,56 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                   {q}
                                 </button>
                               ))}
+                            </div>
+                            <p className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                              您还可以直接问我问题，我会基于来源给您回答。
+                            </p>
+                          </div>
+                        ) : null}
+                        {showRichActions || parsed.canConvertReport ? (
+                          <div className="mt-3 border-t pt-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {showRichActions ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void send('请基于你上一条回答，延展更多相关论点、对比视角与可继续研究的方向。')
+                                  }
+                                  disabled={loading}
+                                  className="inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 transition hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                                >
+                                  延展更多论点
+                                </button>
+                              ) : null}
+                              {(showRichActions || parsed.canConvertReport) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void generateArtifactFromAnswer(m, 'report')}
+                                  disabled={
+                                    reportRunningMessageId === m.id ||
+                                    (quickActionRunning?.messageId === m.id && quickActionRunning.mode === 'report')
+                                  }
+                                  className="inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 transition hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                                >
+                                  {reportRunningMessageId === m.id ? '生成中…' : '生成报告'}
+                                </button>
+                              ) : null}
+                              {showRichActions ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void generateArtifactFromAnswer(m, 'infographic')}
+                                  disabled={
+                                    quickActionRunning?.messageId === m.id &&
+                                    quickActionRunning.mode === 'infographic'
+                                  }
+                                  className="inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 transition hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                                >
+                                  {quickActionRunning?.messageId === m.id &&
+                                  quickActionRunning.mode === 'infographic'
+                                    ? '生成中…'
+                                    : '生成信息图帮助理解'}
+                                </button>
+                              ) : null}
                             </div>
                           </div>
                         ) : null}

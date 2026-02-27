@@ -360,7 +360,7 @@ export function ProjectPanel() {
           <section>
             <div className="mx-auto max-w-[900px]">
               <h1 className="text-center text-3xl font-semibold tracking-tight text-gray-900 dark:text-gray-100">
-                研脉Notebook·你的研究助手
+                研脉Notebook·万物皆可研究
               </h1>
               <form
                 className="relative mx-auto mt-4 w-full max-w-[860px]"
@@ -616,18 +616,9 @@ export function ProjectPanel() {
 
             {bootstrapError ? <p className="mt-3 text-xs text-red-600 dark:text-red-400">{bootstrapError}</p> : null}
 
-            <div className="mt-4 flex items-center justify-between">
-              <Button
-                variant="ghost"
-                onClick={() => closeBootstrapModal(true)}
-              >
+            <div className="mt-4 flex items-center justify-end">
+              <Button variant="ghost" onClick={() => closeBootstrapModal(true)}>
                 退出进程
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => closeBootstrapModal(true)}
-              >
-                关闭
               </Button>
             </div>
           </div>

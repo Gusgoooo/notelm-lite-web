@@ -17,6 +17,7 @@ type Source = {
   status: 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED' | string;
   errorMessage: string | null;
   chunkCount?: number;
+  preview?: string | null;
   sourceType?: 'pdf' | 'word' | '复制文本' | 'python脚本' | 'skills技能包' | '联网检索' | string;
   createdAt: string;
 };
@@ -68,11 +69,11 @@ function isPythonFile(file: File): boolean {
 }
 
 function getSourceStatusMeta(status: string) {
-  if (status === 'READY') return { label: '已完成', colorClass: 'text-green-600', dotClass: 'bg-gray-400' };
-  if (status === 'FAILED') return { label: '失败', colorClass: 'text-red-600', dotClass: 'bg-gray-400' };
-  if (status === 'PROCESSING') return { label: '处理中', colorClass: 'text-blue-600', dotClass: 'bg-gray-400' };
-  if (status === 'PENDING') return { label: '待处理', colorClass: 'text-gray-500', dotClass: 'bg-gray-400' };
-  return { label: status, colorClass: 'text-gray-500', dotClass: 'bg-gray-400' };
+  if (status === 'READY') return { label: '已完成', colorClass: 'text-green-600' };
+  if (status === 'FAILED') return { label: '失败', colorClass: 'text-red-600' };
+  if (status === 'PROCESSING') return { label: '处理中', colorClass: 'text-blue-600' };
+  if (status === 'PENDING') return { label: '待处理', colorClass: 'text-gray-500' };
+  return { label: status, colorClass: 'text-gray-500' };
 }
 
 function TrashIcon() {
@@ -104,6 +105,18 @@ function InfoIcon() {
   );
 }
 
+function getSourceDotClass(input: {
+  status: string;
+  sourceType?: string;
+  chunkCount?: number;
+}) {
+  if (input.status === 'FAILED') return 'bg-red-500';
+  if (input.status !== 'READY') return 'bg-gray-400';
+  if (input.sourceType === '联网检索') return 'bg-gray-400';
+  if ((input.chunkCount ?? 0) > 0) return 'bg-green-500';
+  return 'bg-gray-400';
+}
+
 function DownloadIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -112,14 +125,6 @@ function DownloadIcon() {
       <path d="M5 20h14" />
     </svg>
   );
-}
-
-function formatTime(value: string): string {
-  try {
-    return new Date(value).toLocaleString('zh-CN');
-  } catch {
-    return value;
-  }
 }
 
 function extractHostname(urlValue: string): string {
@@ -132,6 +137,11 @@ function extractHostname(urlValue: string): string {
 
 function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
+}
+
+function compactPreview(value: string | null | undefined): string {
+  if (!value) return '';
+  return value.replace(/\s+/g, ' ').trim();
 }
 
 export function SourcesPanel({
@@ -424,9 +434,8 @@ export function SourcesPanel({
     setHydrateStatus('正在加载原文并写入知识库…');
     try {
       const res = await fetch(`/api/sources/${sourceId}/load-original`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setHydrateStatus(data?.error ?? '加载原文失败，请手动下载后上传');
+        setHydrateStatus('加载失败，请前往下载后再上传，可支持全文分析。');
         return;
       }
       setHydrateStatus('原文已开始处理，完成后会显示为普通文档来源。');
@@ -687,14 +696,20 @@ export function SourcesPanel({
                     const statusMeta = getSourceStatusMeta(s.status);
                     const isWebSource = s.sourceType === '联网检索';
                     const hostname = isWebSource ? extractHostname(s.fileUrl) : '';
+                    const preview = compactPreview(s.preview);
                     const isRunning = s.status === 'PENDING' || s.status === 'PROCESSING';
                     const showStatus = isRunning || s.status === 'FAILED';
                     const shouldShowLoadOriginal = isWebSource && (s.chunkCount ?? 0) <= 1;
+                    const dotClass = getSourceDotClass({
+                      status: s.status,
+                      sourceType: s.sourceType,
+                      chunkCount: s.chunkCount,
+                    });
                     return (
                       <>
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex min-w-0 items-center gap-1.5">
-                            <span className={`h-2 w-2 shrink-0 rounded-full ${statusMeta.dotClass}`} />
+                            <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
                             <p className="truncate text-xs font-medium" title={s.filename}>
                               {s.filename}
                             </p>
@@ -721,7 +736,7 @@ export function SourcesPanel({
                               type="button"
                               onClick={() => void loadOriginalSource(s.id)}
                               disabled={Boolean(hydratingSourceId)}
-                              className="inline-flex h-6 items-center gap-1 rounded border border-gray-300 px-2 text-[11px] text-gray-600 transition hover:bg-gray-100 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                              className="inline-flex h-6 items-center gap-1 rounded border border-gray-200 bg-gray-50 px-2 text-[11px] font-normal text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-800/70 dark:text-gray-300 dark:hover:bg-gray-800"
                             >
                               <DownloadIcon />
                               <span>{hydratingSourceId === s.id ? '处理中…' : '加载原文'}</span>
@@ -737,29 +752,24 @@ export function SourcesPanel({
                           </p>
                         ) : null}
                         {isWebSource && (
-                          <div className="mt-1 overflow-hidden transition-all duration-300 ease-out max-h-0 opacity-0 group-hover:max-h-44 group-hover:opacity-100">
-                            <div className="rounded-md border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-600 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300">
-                              <div className="flex items-center gap-1 text-gray-700 dark:text-gray-200">
-                                <InfoIcon />
-                                <span>查看来源信息</span>
-                              </div>
-                              <p className="mt-1 truncate">域名：{hostname || '未知'}</p>
-                              <p className="mt-1 truncate">时间：{formatTime(s.createdAt)}</p>
-                              <p className="mt-1">
-                                此来源当前仅为摘要。点击“加载原文”可自动下载并入库；若失败，请前往下载后再上传，可支持全文分析。
-                              </p>
-                              {s.fileUrl ? (
-                                <a
-                                  href={s.fileUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="mt-1 block truncate text-blue-600 underline dark:text-blue-400"
-                                  onClick={(event) => event.stopPropagation()}
-                                  title={s.fileUrl}
-                                >
-                                  来源链接：{s.fileUrl}
-                                </a>
+                          <div className="mt-1 overflow-hidden transition-all duration-300 ease-out max-h-0 opacity-0 group-hover:max-h-32 group-hover:opacity-100">
+                            <div className="space-y-2 pt-1">
+                              {preview ? (
+                                <p className="line-clamp-3 text-[11px] leading-5 text-gray-500 dark:text-gray-400">
+                                  {preview}
+                                </p>
                               ) : null}
+                              <a
+                                href={s.fileUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex h-7 items-center gap-1 rounded border border-gray-300 px-2 text-[11px] text-gray-600 transition hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                                onClick={(event) => event.stopPropagation()}
+                                title={hostname || s.filename}
+                              >
+                                <InfoIcon />
+                                <span>查看来源</span>
+                              </a>
                             </div>
                           </div>
                         )}

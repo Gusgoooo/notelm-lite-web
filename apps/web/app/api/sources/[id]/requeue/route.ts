@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, sources, eq } from 'db';
+import { db, sources, sourceChunks, eq } from 'db';
 import { getNotebookAccess } from '@/lib/notebook-access';
 
 export async function POST(
@@ -19,6 +19,7 @@ export async function POST(
     if (!access.canEditSources) {
       return NextResponse.json({ error: '该 notebook 来源为只读，请先保存为我的 notebook' }, { status: 403 });
     }
+    await db.delete(sourceChunks).where(eq(sourceChunks.sourceId, sourceId));
     await db
       .update(sources)
       .set({ status: 'PENDING', errorMessage: null })

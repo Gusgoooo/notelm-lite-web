@@ -347,6 +347,23 @@ async function processDocument(sourceId: string): Promise<void> {
   if (!source) throw new Error(`Source ${sourceId} not found`);
   const currentStatus = String(source.status);
   if (currentStatus !== 'PENDING' && currentStatus !== 'PROCESSING') return;
+
+  const existingChunkRow = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(sourceChunks)
+    .where(eq(sourceChunks.sourceId, sourceId));
+  const existingChunkCount = Number(existingChunkRow[0]?.count ?? 0);
+  if (existingChunkCount > 0) {
+    await db
+      .update(sources)
+      .set({ status: 'READY' as never, errorMessage: null })
+      .where(eq(sources.id, sourceId));
+    console.log(
+      `Skipped reprocessing source ${sourceId}: found ${existingChunkCount} existing chunks, restoring READY`
+    );
+    return;
+  }
+
   await db
     .update(sources)
     .set({ status: 'PROCESSING' as never, errorMessage: null })

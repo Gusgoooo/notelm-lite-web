@@ -168,7 +168,7 @@ export async function POST(
     await db.insert(sources).values({
       id: sourceId,
       notebookId: source.notebookId,
-      filename: resolved.filename,
+      filename: source.filename,
       fileUrl: key,
       mime: resolved.mime,
       status: 'PROCESSING',
@@ -198,4 +198,3 @@ export async function POST(
     );
   }
 }
-

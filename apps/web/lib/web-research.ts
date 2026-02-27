@@ -84,6 +84,21 @@ function extractSources(payload: unknown): WebSource[] {
   return out;
 }
 
+function scoreWebSource(item: WebSource): number {
+  const url = item.url.toLowerCase();
+  const title = item.title.toLowerCase();
+  const snippet = item.snippet.toLowerCase();
+  let score = 0;
+  if (url.includes('arxiv.org')) score += 100;
+  if (url.endsWith('.pdf') || url.includes('.pdf?')) score += 50;
+  if (url.includes('/pdf/')) score += 30;
+  if (url.includes('doi.org')) score += 18;
+  if (url.includes('acm.org') || url.includes('ieee.org') || url.includes('springer') || url.includes('sciencedirect')) score += 16;
+  if (/paper|论文|研究|study|preprint|journal|conference/.test(`${title} ${snippet}`)) score += 12;
+  if (/download|full\s*text|全文|pdf/.test(`${url} ${snippet}`)) score += 10;
+  return score;
+}
+
 export async function searchWebViaOpenRouter(input: {
   topic: string;
   limit: number;
@@ -118,8 +133,10 @@ export async function searchWebViaOpenRouter(input: {
             `1) URL must be direct page URL.\n` +
             `2) snippet must be Simplified Chinese.\n` +
             `3) prioritize research papers / research reports when possible.\n` +
-            `4) avoid duplicates and spam.\n` +
-            `5) return JSON only.`,
+            `4) strongly prefer sources with downloadable full text.\n` +
+            `5) prefer arXiv (arxiv.org) when relevant, because the paper can usually be downloaded.\n` +
+            `6) avoid duplicates and spam.\n` +
+            `7) return JSON only.`,
         },
       ],
     }),
@@ -150,6 +167,7 @@ export async function searchWebViaOpenRouter(input: {
   );
   const contentJson = tryParseJson(messageContent);
   const fetched = extractSources(contentJson);
+  fetched.sort((a, b) => scoreWebSource(b) - scoreWebSource(a));
   const unique = new Map<string, WebSource>();
   for (const item of fetched) {
     if (!unique.has(item.url)) unique.set(item.url, item);
@@ -233,4 +251,3 @@ export async function ingestWebSources(input: {
 
   return { added: sourceRows.length, skipped: input.fetched.length - sourceRows.length };
 }
-

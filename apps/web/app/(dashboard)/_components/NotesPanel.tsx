@@ -251,6 +251,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     '期刊',
   ]);
   const [selectedOutlineFormat, setSelectedOutlineFormat] = useState('默认格式');
+  const [paperOutlinePickerOpen, setPaperOutlinePickerOpen] = useState(false);
 
   const fetchNotes = useCallback(async () => {
     if (!notebookId) return;
@@ -414,7 +415,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     window.dispatchEvent(new CustomEvent('notes-updated'));
   };
 
-  const generateFromSelection = async (mode: GenerateMode) => {
+  const generateFromSelection = async (mode: GenerateMode, paperFormatOverride?: string) => {
     if (!notebookId || selectedIds.length === 0 || generating) return;
     setGenerating(true);
     setGeneratingMode(mode);
@@ -428,7 +429,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
           notebookId,
           noteIds: selectedIds,
           mode,
-          paperFormat: mode === 'paper_outline' ? selectedOutlineFormat : undefined,
+          paperFormat: mode === 'paper_outline' ? (paperFormatOverride ?? selectedOutlineFormat) : undefined,
         }),
       });
       setGenerationProgress(52);
@@ -686,7 +687,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
             </button>
             <button
               type="button"
-              onClick={() => void generateFromSelection('paper_outline')}
+              onClick={() => setPaperOutlinePickerOpen(true)}
               disabled={generating}
               className="min-h-12 px-3 py-2 rounded bg-indigo-500/20 text-indigo-700 dark:bg-indigo-400/20 dark:text-indigo-300 disabled:opacity-50 inline-flex flex-col items-start justify-center"
             >
@@ -696,20 +697,6 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
               </span>
               <span className="pl-7 text-[11px] leading-4 opacity-80">包含段落撰写规范</span>
             </button>
-            <div className="rounded border border-gray-200 bg-gray-50/80 px-2 py-2 text-xs dark:border-gray-700 dark:bg-gray-800/70">
-              <label className="mb-1 block text-[11px] text-gray-500 dark:text-gray-400">论文格式</label>
-              <select
-                value={selectedOutlineFormat}
-                onChange={(event) => setSelectedOutlineFormat(event.target.value)}
-                className="h-8 w-full rounded border border-gray-300 bg-white px-2 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-              >
-                {outlineFormats.map((format) => (
-                  <option key={format} value={format}>
-                    {format}
-                  </option>
-                ))}
-              </select>
-            </div>
             <button
               type="button"
               onClick={() => void generateFromSelection('report')}
@@ -748,6 +735,58 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500 [animation-delay:150ms]" />
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400 [animation-delay:300ms]" />
               <span className="ml-1">进度 {generationProgress}%</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {paperOutlinePickerOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-4 shadow-xl dark:border-gray-800 dark:bg-gray-900">
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">选择论文格式</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                选择后将开始生成专业论文大纲，并附带段落撰写规范。
+              </p>
+            </div>
+            <div className="mt-3 space-y-2">
+              {outlineFormats.map((format) => {
+                const active = selectedOutlineFormat === format;
+                return (
+                  <button
+                    key={format}
+                    type="button"
+                    onClick={() => setSelectedOutlineFormat(format)}
+                    className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition ${
+                      active
+                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700 dark:border-indigo-400 dark:bg-indigo-950/30 dark:text-indigo-300'
+                        : 'border-gray-200 bg-gray-50 text-gray-700 hover:bg-white dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
+                    }`}
+                  >
+                    <span>{format}</span>
+                    {active ? <span className="text-xs">已选择</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPaperOutlinePickerOpen(false)}
+                className="h-8 rounded-md border border-gray-300 px-3 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-200"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPaperOutlinePickerOpen(false);
+                  void generateFromSelection('paper_outline', selectedOutlineFormat);
+                }}
+                className="h-8 rounded-md bg-black px-3 text-xs font-medium text-white"
+              >
+                开始生成
+              </button>
             </div>
           </div>
         </div>

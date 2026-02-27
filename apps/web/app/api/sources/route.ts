@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db, sources, sourceChunks, eq, desc, inArray, sql } from 'db';
+import { db, sources, sourceChunks, eq, and, desc, inArray, sql } from 'db';
 import { randomUUID } from 'crypto';
 import { getNotebookAccess } from '@/lib/notebook-access';
 
@@ -93,6 +93,7 @@ export async function GET(request: Request) {
       .orderBy(desc(sources.createdAt));
     const sourceIds = list.map((s) => s.id);
     const chunkCountMap = new Map<string, number>();
+    const previewMap = new Map<string, string>();
     if (sourceIds.length > 0) {
       const counts = await db
         .select({
@@ -105,11 +106,25 @@ export async function GET(request: Request) {
       for (const row of counts) {
         chunkCountMap.set(row.sourceId, Number(row.chunkCount) || 0);
       }
+
+      const previews = await db
+        .select({
+          sourceId: sourceChunks.sourceId,
+          content: sourceChunks.content,
+        })
+        .from(sourceChunks)
+        .where(and(inArray(sourceChunks.sourceId, sourceIds), eq(sourceChunks.chunkIndex, 0)));
+      for (const row of previews) {
+        if (!previewMap.has(row.sourceId)) {
+          previewMap.set(row.sourceId, row.content);
+        }
+      }
     }
     return NextResponse.json(
       list.map((row) => ({
         ...row,
         chunkCount: chunkCountMap.get(row.id) ?? 0,
+        preview: previewMap.get(row.id) ?? null,
         sourceType: getSourceType(row.mime ?? null, row.filename),
       }))
     );
