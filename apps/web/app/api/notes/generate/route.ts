@@ -237,7 +237,7 @@ async function requestOpenRouterImageGeneration(input: {
   model: string;
   prompt: string;
 }): Promise<{ image: { dataUrl: string; caption: string } | null; error: string }> {
-  const response = await fetch(`${input.config.baseUrl.replace(/\/$/, '')}/images/generations`, {
+  const response = await fetch(`${input.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${input.config.apiKey}`,
@@ -245,9 +245,13 @@ async function requestOpenRouterImageGeneration(input: {
     },
     body: JSON.stringify({
       model: input.model,
-      prompt: input.prompt,
-      size: '1536x1024',
-      response_format: 'b64_json',
+      messages: [{ role: 'user', content: input.prompt }],
+      modalities: ['image', 'text'],
+      stream: false,
+      image_config: {
+        aspect_ratio: '16:9',
+        image_size: '2K',
+      },
     }),
   });
   const raw = await response.text();

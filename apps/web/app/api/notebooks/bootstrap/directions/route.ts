@@ -43,7 +43,7 @@ function normalizeStars(value: unknown): number {
   return 3;
 }
 
-function normalizeDirections(payload: unknown, topic: string): ResearchDirection[] {
+function normalizeDirections(payload: unknown): ResearchDirection[] {
   if (!payload || typeof payload !== 'object') return [];
   const raw = (payload as { directions?: unknown }).directions;
   if (!Array.isArray(raw)) return [];
@@ -57,7 +57,11 @@ function normalizeDirections(payload: unknown, topic: string): ResearchDirection
     const researchMethod = String(row.researchMethod ?? row.method ?? '').trim().slice(0, 120);
     const dataSourceAccess = String(row.dataSourceAccess ?? row.dataSources ?? '').trim().slice(0, 120);
     const trendHeat = String(row.trendHeat ?? row.trend ?? '').trim().slice(0, 80);
-    if (!title || !researchQuestion) continue;
+    const sourceBasis = String(row.sourceBasis ?? row.evidence ?? row.basis ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 220);
+    if (!title || !researchQuestion || sourceBasis.length < 6) continue;
     out.push({
       id: `dir_${out.length + 1}`,
       title,
@@ -70,60 +74,7 @@ function normalizeDirections(payload: unknown, topic: string): ResearchDirection
     });
     if (out.length >= 10) break;
   }
-  if (out.length >= 5) return out;
-
-  return [
-    {
-      id: 'dir_fallback_1',
-      title: `${topic}中的关键机制识别`,
-      researchQuestion: `在${topic}场景下，最影响结果表现的关键机制是什么？`,
-      coreVariables: '核心机制变量 / 结果变量',
-      researchMethod: '文献综述 + 计量分析',
-      dataSourceAccess: '公开论文与行业数据可获取',
-      difficultyStars: 3,
-      trendHeat: '近三年持续升温',
-    },
-    {
-      id: 'dir_fallback_2',
-      title: `${topic}的应用效果评估`,
-      researchQuestion: `${topic}在不同人群或场景下的效果差异是否显著？`,
-      coreVariables: '应用强度 / 绩效指标',
-      researchMethod: '准实验 / 对比研究',
-      dataSourceAccess: '需要结合公开数据与小规模调研',
-      difficultyStars: 4,
-      trendHeat: '高热度',
-    },
-    {
-      id: 'dir_fallback_3',
-      title: `${topic}的风险与治理`,
-      researchQuestion: `${topic}推广中最常见的风险点是什么，如何建立治理框架？`,
-      coreVariables: '风险暴露 / 治理策略',
-      researchMethod: '案例研究 + 专家访谈',
-      dataSourceAccess: '案例可收集，访谈成本中等',
-      difficultyStars: 3,
-      trendHeat: '中高热度',
-    },
-    {
-      id: 'dir_fallback_4',
-      title: `${topic}的区域/行业异质性`,
-      researchQuestion: `${topic}在不同区域或行业中的效果为何会出现差异？`,
-      coreVariables: '地区特征 / 行业特征 / 输出结果',
-      researchMethod: '分组回归 + 交互项分析',
-      dataSourceAccess: '多源公开数据可拼接',
-      difficultyStars: 4,
-      trendHeat: '中等偏高',
-    },
-    {
-      id: 'dir_fallback_5',
-      title: `${topic}未来三年趋势预测`,
-      researchQuestion: `基于现有证据，${topic}未来三年的关键演化方向是什么？`,
-      coreVariables: '趋势指标 / 政策与技术因素',
-      researchMethod: '趋势分析 + 德尔菲法',
-      dataSourceAccess: '公开资料较易获取',
-      difficultyStars: 2,
-      trendHeat: '高热度',
-    },
-  ];
+  return out;
 }
 
 async function generateDirections(input: {
@@ -149,21 +100,23 @@ async function generateDirections(input: {
         {
           role: 'system',
           content:
-            '你是资深研究选题顾问。请输出 JSON，格式为 {"directions":[...]}，不要输出 markdown，不要输出额外说明。',
+            '你是资深研究选题顾问。你只能基于用户提供的来源材料归纳并发散研究议题，不允许脱离来源虚构。请输出 JSON，格式为 {"directions":[...]}，不要输出 markdown，不要输出额外说明。',
         },
         {
           role: 'user',
-          content:
+            content:
             `研究主题：${input.topic}\n\n` +
             `参考材料（来自联网检索来源摘要）：\n${input.context}\n\n` +
             `请延展 5-10 个“可直接开题”的研究方向，每个方向包含字段：\n` +
-            `title, researchQuestion, coreVariables, researchMethod, dataSourceAccess, difficultyStars(1-5), trendHeat。\n` +
+            `title, researchQuestion, coreVariables, researchMethod, dataSourceAccess, difficultyStars(1-5), trendHeat, sourceBasis。\n` +
             `要求：\n` +
+            `0) 每个方向都必须明确说明它是基于哪些来源现象/结论归纳出来的，写入 sourceBasis；若材料不足，不要编造，直接少给或返回空数组；\n` +
             `1) 研究问题必须可提问且可验证；\n` +
             `2) 方法要具体（定量/定性/实验/混合）；\n` +
             `3) 数据可得性要给出现实判断；\n` +
             `4) difficultyStars 必须为数字；\n` +
-            `5) 全部使用简体中文。`,
+            `5) 全部使用简体中文；\n` +
+            `6) 禁止输出与参考材料无直接关联的泛泛选题。`,
         },
       ],
       stream: false,
@@ -193,7 +146,11 @@ async function generateDirections(input: {
     (payload as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content ?? ''
   );
   const parsed = tryParseJson(content);
-  return normalizeDirections(parsed, input.topic);
+  const directions = normalizeDirections(parsed);
+  if (directions.length < 3) {
+    throw new Error('检索来源不足以稳定归纳研究议题，请补充更相关的全文来源后重试');
+  }
+  return directions;
 }
 
 export async function POST(request: Request) {
@@ -221,17 +178,28 @@ export async function POST(request: Request) {
 
     const chunks = await db
       .select({
+        sourceTitle: sources.filename,
         content: sourceChunks.content,
       })
       .from(sourceChunks)
       .innerJoin(sources, eq(sourceChunks.sourceId, sources.id))
       .where(and(eq(sources.notebookId, notebookId), eq(sources.status, 'READY')))
       .limit(80);
-    const context = chunks.map((row) => row.content).join('\n\n').slice(0, 36_000);
+    const context = chunks
+      .map((row, index) => `[来源${index + 1}] ${row.sourceTitle}\n${row.content}`)
+      .join('\n\n')
+      .slice(0, 36_000);
+
+    if (!context.trim()) {
+      return NextResponse.json(
+        { error: '当前检索来源尚不足以生成研究议题，请先等待来源处理完成或补充全文来源' },
+        { status: 409 }
+      );
+    }
 
     const directions = await generateDirections({
       topic,
-      context: context || `主题：${topic}`,
+      context,
     });
 
     const now = new Date().toISOString();
@@ -260,4 +228,3 @@ export async function POST(request: Request) {
     );
   }
 }
-

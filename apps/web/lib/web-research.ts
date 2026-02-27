@@ -56,6 +56,59 @@ function normalizeSnippet(value: string): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, 1600);
 }
 
+function extractArxivId(urlValue: string): string | null {
+  try {
+    const url = new URL(urlValue);
+    if (!/(^|\.)arxiv\.org$/i.test(url.hostname)) return null;
+    const match = url.pathname.match(/^\/(?:abs|pdf)\/([^/]+?)(?:\.pdf)?$/i);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function isPlaceholderArxivId(id: string): boolean {
+  if (!id) return true;
+  if (/^\d{4}\.0{4,5}$/i.test(id)) return true;
+  if (/^test$/i.test(id)) return true;
+  return false;
+}
+
+async function validateArxivSource(item: WebSource): Promise<boolean> {
+  const arxivId = extractArxivId(item.url);
+  if (!arxivId) return true;
+  if (isPlaceholderArxivId(arxivId)) return false;
+
+  try {
+    const absUrl = `https://arxiv.org/abs/${arxivId}`;
+    const response = await fetch(absUrl, {
+      headers: {
+        'user-agent': 'Mozilla/5.0 (compatible; NotebookGoBot/1.0; +https://notebookgo.vercel.app)',
+        accept: 'text/html,application/xhtml+xml',
+      },
+      cache: 'no-store',
+    });
+    if (!response.ok) return false;
+    const html = await response.text();
+    if (/Article identifier ['"]?.+?['"]? not recognized/i.test(html)) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function filterReachableWebSources(items: WebSource[]): Promise<WebSource[]> {
+  const validated = await Promise.all(
+    items.map(async (item) => ({
+      item,
+      ok: await validateArxivSource(item),
+    }))
+  );
+  return validated.filter((row) => row.ok).map((row) => row.item);
+}
+
 function uniqueNonEmpty(values: Array<string | undefined>): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -322,7 +375,8 @@ export async function searchWebViaOpenRouter(input: {
           `4) prefer arXiv (arxiv.org) when relevant, because the paper can usually be downloaded.\n` +
           `5) avoid duplicates and spam.\n` +
           `6) return JSON if possible, but do not drop results only because formatting is difficult.\n` +
-          `7) if a snippet is unavailable, return an empty string instead of omitting the source.`,
+          `7) if a snippet is unavailable, return an empty string instead of omitting the source.\n` +
+          `8) do not invent placeholder/example links; never return fake arXiv ids such as 2007.00000.`,
       });
       const fetched = extractSourcesFromContent(messageContent);
       if (fetched.length === 0) {
@@ -350,10 +404,11 @@ export async function searchWebViaOpenRouter(input: {
     baseUrl,
     sources: aggregated,
   });
+  const reachable = await filterReachableWebSources(translated);
 
-  translated.sort((a, b) => scoreWebSource(b) - scoreWebSource(a));
+  reachable.sort((a, b) => scoreWebSource(b) - scoreWebSource(a));
   const unique = new Map<string, WebSource>();
-  for (const item of translated) {
+  for (const item of reachable) {
     if (!unique.has(item.url)) {
       unique.set(item.url, {
         ...item,
@@ -362,7 +417,11 @@ export async function searchWebViaOpenRouter(input: {
     }
     if (unique.size >= input.limit) break;
   }
-  return Array.from(unique.values()).slice(0, input.limit);
+  const final = Array.from(unique.values()).slice(0, input.limit);
+  if (final.length === 0) {
+    throw new Error('Web search failed: returned links were invalid or unreachable');
+  }
+  return final;
 }
 
 export async function ingestWebSources(input: {

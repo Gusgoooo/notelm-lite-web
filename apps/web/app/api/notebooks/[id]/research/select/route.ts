@@ -36,17 +36,20 @@ async function generateStarterQuestions(input: {
   directionTitle: string;
   directionQuestion: string;
   sourceTitles: string[];
+  sourceEvidence: string;
 }): Promise<string[]> {
+  const sourceLabel = input.sourceTitles.slice(0, 3);
+  const fallback = [
+    `请基于当前来源（如《${sourceLabel[0] || '当前来源1'}》）梳理“${input.directionTitle}”中被反复支持的核心变量，并指出还缺哪一类证据？`,
+    `请对比当前来源在“${input.directionQuestion}”上的一致结论与分歧结论，哪部分最值得继续验证？`,
+    `若要继续推进“${input.directionTitle}”，请根据现有来源说明下一步最该补哪类数据、样本或方法？`,
+  ];
   const settings = await getAgentSettings();
   const apiKey = settings.openrouterApiKey.trim();
   const baseUrl = settings.openrouterBaseUrl.trim() || 'https://openrouter.ai/api/v1';
   const model = (settings.models.summary || process.env.OPENROUTER_CHAT_MODEL || 'openrouter/auto').trim();
   if (!apiKey) {
-    return [
-      `基于“${input.directionTitle}”，请给出一个可执行的研究设计（样本、变量、方法、评估指标）。`,
-      `围绕“${input.directionQuestion}”，请指出当前证据最薄弱的环节，并给出下一步补证方案。`,
-      `请基于现有来源列出3条可验证假设，并说明每条假设需要补充哪些数据。`,
-    ];
+    return fallback;
   }
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
@@ -61,7 +64,7 @@ async function generateStarterQuestions(input: {
       messages: [
         {
           role: 'system',
-          content: '你是研究顾问，只输出 JSON：{"questions":["...","...","..."]}。',
+          content: '你是研究顾问。你只能基于给定来源证据提出下一步研究议题，不允许脱离来源虚构。只输出 JSON：{"questions":["...","...","..."]}。',
         },
         {
           role: 'user',
@@ -70,11 +73,13 @@ async function generateStarterQuestions(input: {
             `已选方向：${input.directionTitle}\n` +
             `核心问题：${input.directionQuestion}\n` +
             `当前知识库来源标题：${input.sourceTitles.join('；')}\n\n` +
+            `当前来源摘要与证据：\n${input.sourceEvidence}\n\n` +
             `请生成 3 个启发式研究问题，要求：\n` +
-            `1) 可直接追问；\n` +
+            `1) 必须直接基于当前来源中已有的结论、方法、变量或争议来追问；\n` +
             `2) 不重复；\n` +
             `3) 面向下一步研究行动；\n` +
-            `4) 使用简体中文。\n` +
+            `4) 使用简体中文；\n` +
+            `5) 如果来源不足以支持某个问题，不要编造，宁可少给。\n` +
             `输出 JSON。`,
         },
       ],
@@ -83,11 +88,7 @@ async function generateStarterQuestions(input: {
   });
   const raw = await response.text();
   if (!response.ok) {
-    return [
-      `基于“${input.directionTitle}”，请给出一个可执行的研究设计（样本、变量、方法、评估指标）。`,
-      `围绕“${input.directionQuestion}”，请指出当前证据最薄弱的环节，并给出下一步补证方案。`,
-      `请基于现有来源列出3条可验证假设，并说明每条假设需要补充哪些数据。`,
-    ];
+    return fallback;
   }
   let payload: unknown;
   try {
@@ -104,11 +105,6 @@ async function generateStarterQuestions(input: {
     ? rawQuestions.filter((q): q is string => typeof q === 'string' && q.trim().length > 0).slice(0, 3)
     : [];
 
-  const fallback = [
-    `基于“${input.directionTitle}”，请给出一个可执行的研究设计（样本、变量、方法、评估指标）。`,
-    `围绕“${input.directionQuestion}”，请指出当前证据最薄弱的环节，并给出下一步补证方案。`,
-    `请基于现有来源列出3条可验证假设，并说明每条假设需要补充哪些数据。`,
-  ];
   const merged = [...generated, ...fallback];
   const unique: string[] = [];
   const seen = new Set<string>();
@@ -225,16 +221,35 @@ export async function POST(
 
     const keptSources = keepSourceIds.length
       ? await db
-          .select({ title: sources.filename })
+          .select({ title: sources.filename, id: sources.id })
           .from(sources)
           .where(and(eq(sources.notebookId, notebookId), inArray(sources.id, keepSourceIds)))
       : [];
+
+    const keptEvidenceChunks = keepSourceIds.length
+      ? await db
+          .select({
+            sourceId: sourceChunks.sourceId,
+            sourceTitle: sources.filename,
+            content: sourceChunks.content,
+          })
+          .from(sourceChunks)
+          .innerJoin(sources, eq(sourceChunks.sourceId, sources.id))
+          .where(and(eq(sources.notebookId, notebookId), inArray(sources.id, keepSourceIds)))
+          .limit(24)
+      : [];
+
+    const sourceEvidence = keptEvidenceChunks
+      .map((row, index) => `[来源${index + 1}] ${row.sourceTitle}\n${row.content}`)
+      .join('\n\n')
+      .slice(0, 16_000);
 
     const starterQuestions = await generateStarterQuestions({
       topic: stateRow.state.topic,
       directionTitle: selectedDirection.title,
       directionQuestion: selectedDirection.researchQuestion,
       sourceTitles: keptSources.map((s) => s.title).slice(0, 12),
+      sourceEvidence,
     });
 
     const totalAfter = await db
