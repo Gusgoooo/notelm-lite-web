@@ -30,6 +30,66 @@ function tryParseJson(content: string): unknown {
   }
 }
 
+function extractTopicKeywords(text: string): string[] {
+  const cleaned = text
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[，。！？、,:;；（）()【】\[\]{}"'`“”‘’/\\|<>《》]+/g, ' ')
+    .trim();
+  const stopwords = new Set([
+    '研究',
+    '问题',
+    '方向',
+    '议题',
+    '分析',
+    '探索',
+    '探究',
+    '影响',
+    '作用',
+    '关系',
+    '方法',
+    '策略',
+    '路径',
+    '机制',
+    '现状',
+    '趋势',
+    '挑战',
+    '优化',
+  ]);
+  const pieces = cleaned
+    .split(/\s+/)
+    .flatMap((part) =>
+      part
+        .split(/(?:关于|如何|是否|为什么|哪些|什么|对于|围绕|面向|针对|有关|在|中|的|与|和|及其|以及|及|对|跟)/)
+        .map((item) => item.trim())
+    )
+    .filter(Boolean);
+
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const piece of pieces) {
+    const normalized = piece.replace(/\s+/g, '');
+    const isAsciiToken = /^[a-z0-9][a-z0-9.+_-]*$/i.test(normalized);
+    if (!normalized) continue;
+    if (stopwords.has(normalized)) continue;
+    if (!isAsciiToken && normalized.length < 2) continue;
+    if (isAsciiToken && normalized.length < 2) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    unique.push(normalized);
+    if (unique.length >= 8) break;
+  }
+
+  if (unique.length > 0) return unique;
+  const fallback = cleaned.replace(/\s+/g, '').slice(0, 12);
+  return fallback.length >= 2 ? [fallback] : [];
+}
+
+function hasKeywordOverlap(text: string, keywords: string[]): boolean {
+  if (!keywords.length) return true;
+  const haystack = text.toLowerCase();
+  return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
+}
+
 function normalizeStars(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return Math.max(1, Math.min(5, Math.round(value)));
@@ -43,7 +103,7 @@ function normalizeStars(value: unknown): number {
   return 3;
 }
 
-function normalizeDirections(payload: unknown): ResearchDirection[] {
+function normalizeDirections(payload: unknown, topicKeywords: string[]): ResearchDirection[] {
   if (!payload || typeof payload !== 'object') return [];
   const raw = (payload as { directions?: unknown }).directions;
   if (!Array.isArray(raw)) return [];
@@ -62,6 +122,7 @@ function normalizeDirections(payload: unknown): ResearchDirection[] {
       .trim()
       .slice(0, 220);
     if (!title || !researchQuestion || sourceBasis.length < 6) continue;
+    if (!hasKeywordOverlap(`${title} ${researchQuestion}`, topicKeywords)) continue;
     out.push({
       id: `dir_${out.length + 1}`,
       title,
@@ -72,7 +133,7 @@ function normalizeDirections(payload: unknown): ResearchDirection[] {
       difficultyStars: normalizeStars(row.difficultyStars ?? row.difficulty ?? 3),
       trendHeat: trendHeat || '中高热度，近三年持续增长',
     });
-    if (out.length >= 10) break;
+    if (out.length >= 6) break;
   }
   return out;
 }
@@ -85,7 +146,9 @@ async function generateDirections(input: {
   const apiKey = settings.openrouterApiKey.trim();
   const baseUrl = settings.openrouterBaseUrl.trim() || 'https://openrouter.ai/api/v1';
   const model = (settings.models.summary || process.env.OPENROUTER_CHAT_MODEL || 'openrouter/auto').trim();
+  const systemPrompt = settings.researchDirectionsPrompt.trim();
   if (!apiKey) throw new Error('OpenRouter API key is not configured in admin settings');
+  const topicKeywords = extractTopicKeywords(input.topic);
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
@@ -99,24 +162,25 @@ async function generateDirections(input: {
       messages: [
         {
           role: 'system',
-          content:
-            '你是资深研究选题顾问。你只能基于用户提供的来源材料归纳并发散研究议题，不允许脱离来源虚构。请输出 JSON，格式为 {"directions":[...]}，不要输出 markdown，不要输出额外说明。',
+          content: systemPrompt,
         },
         {
           role: 'user',
-            content:
+          content:
             `研究主题：${input.topic}\n\n` +
+            `原问题关键词：${topicKeywords.join('、') || input.topic}\n\n` +
             `参考材料（来自联网检索来源摘要）：\n${input.context}\n\n` +
-            `请延展 5-10 个“可直接开题”的研究方向，每个方向包含字段：\n` +
+            `请延展 6 个“可直接开题”的研究方向，每个方向包含字段：\n` +
             `title, researchQuestion, coreVariables, researchMethod, dataSourceAccess, difficultyStars(1-5), trendHeat, sourceBasis。\n` +
             `要求：\n` +
             `0) 每个方向都必须明确说明它是基于哪些来源现象/结论归纳出来的，写入 sourceBasis；若材料不足，不要编造，直接少给或返回空数组；\n` +
-            `1) 研究问题必须可提问且可验证；\n` +
-            `2) 方法要具体（定量/定性/实验/混合）；\n` +
-            `3) 数据可得性要给出现实判断；\n` +
-            `4) difficultyStars 必须为数字；\n` +
-            `5) 全部使用简体中文；\n` +
-            `6) 禁止输出与参考材料无直接关联的泛泛选题。`,
+            `1) 每个方向都必须与用户原始问题紧密相关，且 title 或 researchQuestion 至少包含一个原问题关键词；\n` +
+            `2) 研究问题必须可提问且可验证；\n` +
+            `3) 方法要具体（定量/定性/实验/混合）；\n` +
+            `4) 数据可得性要给出现实判断；\n` +
+            `5) difficultyStars 必须为数字；\n` +
+            `6) 全部使用简体中文；\n` +
+            `7) 禁止输出与参考材料无直接关联的泛泛选题。`,
         },
       ],
       stream: false,
@@ -146,9 +210,9 @@ async function generateDirections(input: {
     (payload as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content ?? ''
   );
   const parsed = tryParseJson(content);
-  const directions = normalizeDirections(parsed);
+  const directions = normalizeDirections(parsed, topicKeywords);
   if (directions.length < 3) {
-    throw new Error('检索来源不足以稳定归纳研究议题，请补充更相关的全文来源后重试');
+    throw new Error('检索来源不足以稳定归纳研究议题，请补充更相关的全文来源或提供更明确的关键词后重试');
   }
   return directions;
 }

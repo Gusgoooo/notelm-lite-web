@@ -44,15 +44,6 @@ function ExpandIcon() {
   );
 }
 
-function RefreshIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-      <path d="M21 3v6h-6" />
-    </svg>
-  );
-}
-
 function ImageIcon() {
   return (
     <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -111,10 +102,36 @@ function ReportIcon() {
   );
 }
 
-function MarkdownPreview({ content }: { content: string }) {
+function MarkdownPreview({ content, compact = false }: { content: string; compact?: boolean }) {
   return (
-    <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-3 prose-headings:mb-2 prose-p:my-1 prose-li:my-0.5">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    <div
+      className={`prose prose-sm max-w-none prose-headings:mt-3 prose-headings:mb-2 prose-p:my-1 prose-li:my-0.5 ${
+        compact ? 'prose-p:text-xs prose-li:text-xs prose-headings:text-xs' : ''
+      }`}
+    >
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          table: ({ children }) => (
+            <div className="my-2 overflow-x-auto rounded-md border border-gray-200">
+              <table className="min-w-full border-collapse text-xs">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-gray-50">{children}</thead>,
+          th: ({ children }) => (
+            <th className="border-b border-gray-200 px-2 py-1 text-left font-semibold text-gray-700">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => <td className="border-b border-gray-100 px-2 py-1 align-top">{children}</td>,
+          code: ({ children }) => <code className="rounded bg-gray-100 px-1 py-0.5 text-[12px]">{children}</code>,
+          pre: ({ children }) => (
+            <pre className="my-2 overflow-auto rounded-md bg-gray-100 p-2 text-xs">{children}</pre>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -390,10 +407,6 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     () => getHtmlFromContent(expandedDraft),
     [expandedDraft]
   );
-  const expandedIsPaperOutline = useMemo(
-    () => (expandedNote ? isPaperOutlineNote(expandedNote) : false),
-    [expandedNote]
-  );
   const expandedIsReport = useMemo(
     () => (expandedNote ? isReportNote(expandedNote) : false),
     [expandedNote]
@@ -564,18 +577,9 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
   return (
     <div className="flex-1 flex flex-col min-h-0 relative">
       <div className="h-14 px-3 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
           我的笔记
         </h2>
-        <button
-          type="button"
-          onClick={() => void fetchNotes()}
-          className="h-7 w-7 inline-flex items-center justify-center rounded text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-100"
-          aria-label="Refresh"
-          title="Refresh"
-        >
-          <RefreshIcon />
-        </button>
       </div>
 
       {error && (
@@ -709,22 +713,28 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
                       ) : cardMermaid ? (
                         <MindmapThumbnail code={cardMermaid} />
                       ) : cardHtml ? (
-                        <p className="text-xs text-gray-500 dark:text-gray-400 h-full w-full flex items-center justify-center text-center px-0">
-                          {isReportCard ? '报告（可在展开后预览）' : '互动PPT（可在展开后预览）'}
-                        </p>
+                        <div className="flex h-full w-full flex-col items-center justify-center rounded-lg bg-gray-50 px-4 text-center">
+                          <div className="mb-2 rounded-full bg-gray-100 p-2 text-gray-500">
+                            {isReportCard ? <ReportIcon /> : <WebpageIcon />}
+                          </div>
+                          <p className="text-xs font-medium text-gray-700">
+                            {isReportCard ? '报告已生成' : '互动网页已生成'}
+                          </p>
+                          <p className="mt-1 text-[11px] leading-5 text-gray-500">
+                            {isReportCard ? '展开后可查看完整的结构化报告页面。' : '展开后可预览完整的互动网页内容。'}
+                          </p>
+                        </div>
                       ) : (
-                        <p
-                          className="text-xs text-gray-600 dark:text-gray-300 p-0 leading-5 break-words"
+                        <div
+                          className="max-h-[68px] overflow-hidden text-xs text-gray-700"
                           style={{
                             display: '-webkit-box',
                             WebkitLineClamp: 3,
                             WebkitBoxOrient: 'vertical',
-                            maxHeight: '60px',
-                            overflow: 'hidden',
                           }}
                         >
-                          {previewText || '(empty)'}
-                        </p>
+                          <MarkdownPreview content={previewText || '(empty)'} compact />
+                        </div>
                       )}
                     </div>
                     <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0 pt-0 pb-0 leading-none">
@@ -961,11 +971,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
 
                   {!expandedImage && !expandedMermaid && !expandedHtml && (
                     <div className="w-full min-h-[55vh] text-sm whitespace-pre-wrap rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
-                      {expandedIsPaperOutline ? (
-                        <MarkdownPreview content={expandedDraft} />
-                      ) : (
-                        <pre className="whitespace-pre-wrap">{expandedDraft}</pre>
-                      )}
+                      <MarkdownPreview content={expandedDraft} />
                     </div>
                   )}
                 </>

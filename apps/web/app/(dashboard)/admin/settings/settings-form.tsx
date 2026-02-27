@@ -9,6 +9,7 @@ type AgentSettings = {
   openrouterBaseUrl: string;
   models: Record<FeatureMode, string>;
   prompts: Record<FeatureMode, string>;
+  researchDirectionsPrompt: string;
   paperOutlineFormats: string[];
 };
 
@@ -105,6 +106,24 @@ export function AdminSettingsForm({ initialSettings }: { initialSettings: AgentS
             />
           </div>
         ))}
+      </div>
+
+      <div className="rounded border border-gray-200 dark:border-gray-700 p-3 space-y-2">
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">研究思路生成 Prompt</h3>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          用于“研究思路/研究方向”生成阶段的 system role prompt。
+        </p>
+        <textarea
+          value={form.researchDirectionsPrompt}
+          onChange={(e) =>
+            setForm((prev) => ({
+              ...prev,
+              researchDirectionsPrompt: e.target.value,
+            }))
+          }
+          rows={5}
+          className="w-full rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm resize-y"
+        />
       </div>
 
       <div className="rounded border border-gray-200 dark:border-gray-700 p-3 space-y-2">

@@ -31,6 +31,66 @@ function tryParseJson(content: string): unknown {
   }
 }
 
+function extractTopicKeywords(text: string): string[] {
+  const cleaned = text
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[，。！？、,:;；（）()【】\[\]{}"'`“”‘’/\\|<>《》]+/g, ' ')
+    .trim();
+  const stopwords = new Set([
+    '研究',
+    '问题',
+    '方向',
+    '议题',
+    '分析',
+    '探索',
+    '探究',
+    '影响',
+    '作用',
+    '关系',
+    '方法',
+    '策略',
+    '路径',
+    '机制',
+    '现状',
+    '趋势',
+    '挑战',
+    '优化',
+  ]);
+  const pieces = cleaned
+    .split(/\s+/)
+    .flatMap((part) =>
+      part
+        .split(/(?:关于|如何|是否|为什么|哪些|什么|对于|围绕|面向|针对|有关|在|中|的|与|和|及其|以及|及|对|跟)/)
+        .map((item) => item.trim())
+    )
+    .filter(Boolean);
+
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const piece of pieces) {
+    const normalized = piece.replace(/\s+/g, '');
+    const isAsciiToken = /^[a-z0-9][a-z0-9.+_-]*$/i.test(normalized);
+    if (!normalized) continue;
+    if (stopwords.has(normalized)) continue;
+    if (!isAsciiToken && normalized.length < 2) continue;
+    if (isAsciiToken && normalized.length < 2) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    unique.push(normalized);
+    if (unique.length >= 8) break;
+  }
+
+  if (unique.length > 0) return unique;
+  const fallback = cleaned.replace(/\s+/g, '').slice(0, 12);
+  return fallback.length >= 2 ? [fallback] : [];
+}
+
+function hasKeywordOverlap(text: string, keywords: string[]): boolean {
+  if (!keywords.length) return true;
+  const haystack = text.toLowerCase();
+  return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
+}
+
 function normalizeStarterQuestion(raw: string): string {
   const firstLine =
     raw
@@ -64,10 +124,14 @@ async function generateStarterQuestions(input: {
   sourceTitles: string[];
   sourceEvidence: string;
 }): Promise<string[]> {
+  const anchorKeywords = extractTopicKeywords(
+    `${input.topic} ${input.directionTitle} ${input.directionQuestion}`.trim()
+  );
+  const anchorLabel = anchorKeywords[0] || input.directionTitle.trim() || input.topic.trim() || '该选题';
   const fallback = [
-    '当前来源最缺哪类证据？',
-    '哪些结论还值得继续验证？',
-    '下一步该优先补什么数据？',
+    `${anchorLabel}最缺哪类证据？`,
+    `${anchorLabel}还有哪些结论待验证？`,
+    `${anchorLabel}下一步该补什么数据？`,
   ];
   const settings = await getAgentSettings();
   const apiKey = settings.openrouterApiKey.trim();
@@ -90,7 +154,7 @@ async function generateStarterQuestions(input: {
         {
           role: 'system',
           content:
-            '你是研究顾问。你只能基于给定来源证据提出下一步研究问题，不允许脱离来源虚构。每个问题都必须是简单易懂的简短问句。只输出 JSON：{"questions":["...","...","..."]}。',
+            '你是研究顾问。你只能基于给定来源证据提出下一步研究问题，不允许脱离来源虚构。每个问题都必须是简单易懂的简短问句，并且必须保留当前选题里的关键词。只输出 JSON：{"questions":["...","...","..."]}。',
         },
         {
           role: 'user',
@@ -98,15 +162,17 @@ async function generateStarterQuestions(input: {
             `主题：${input.topic}\n` +
             `已选方向：${input.directionTitle}\n` +
             `核心问题：${input.directionQuestion}\n` +
+            `选题关键词：${anchorKeywords.join('、') || anchorLabel}\n` +
             `当前知识库来源标题：${input.sourceTitles.join('；')}\n\n` +
             `当前来源摘要与证据：\n${input.sourceEvidence}\n\n` +
             `请生成 3 个启发式研究问题，要求：\n` +
             `1) 必须直接基于当前来源中已有的结论、方法、变量或争议来追问；\n` +
             `2) 不重复；\n` +
-            `3) 每条只写一个问题本身，不要写过程、建议、解释或背景；\n` +
-            `4) 使用简体中文，尽量简单易懂；\n` +
-            `5) 每条控制在 8 到 22 个字，且必须是问句；\n` +
-            `6) 如果来源不足以支持某个问题，不要编造，宁可少给。\n` +
+            `3) 每条都必须和当前选题紧密相关，且至少包含一个选题关键词；\n` +
+            `4) 每条只写一个问题本身，不要写过程、建议、解释或背景；\n` +
+            `5) 使用简体中文，尽量简单易懂；\n` +
+            `6) 每条控制在 8 到 22 个字，且必须是问句；\n` +
+            `7) 如果来源不足以支持某个问题，不要编造，宁可少给。\n` +
             `输出 JSON。`,
         },
       ],
@@ -137,6 +203,7 @@ async function generateStarterQuestions(input: {
   const seen = new Set<string>();
   for (const item of merged) {
     const key = normalizeStarterQuestion(item);
+    if (!hasKeywordOverlap(key, anchorKeywords)) continue;
     if (!key || seen.has(key)) continue;
     seen.add(key);
     unique.push(key);

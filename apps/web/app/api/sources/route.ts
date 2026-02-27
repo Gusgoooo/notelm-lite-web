@@ -91,6 +91,14 @@ export async function GET(request: Request) {
       .from(sources)
       .where(eq(sources.notebookId, notebookId))
       .orderBy(desc(sources.createdAt));
+    const webUrlByFilename = new Map<string, string>();
+    for (const row of list) {
+      const sourceType = getSourceType(row.mime ?? null, row.filename);
+      if (sourceType !== '联网检索') continue;
+      if (!webUrlByFilename.has(row.filename)) {
+        webUrlByFilename.set(row.filename, row.fileUrl);
+      }
+    }
     const sourceIds = list.map((s) => s.id);
     const chunkCountMap = new Map<string, number>();
     const previewMap = new Map<string, string>();
@@ -126,6 +134,10 @@ export async function GET(request: Request) {
         chunkCount: chunkCountMap.get(row.id) ?? 0,
         preview: previewMap.get(row.id) ?? null,
         sourceType: getSourceType(row.mime ?? null, row.filename),
+        originalUrl:
+          getSourceType(row.mime ?? null, row.filename) === '联网检索'
+            ? row.fileUrl
+            : webUrlByFilename.get(row.filename) ?? null,
       }))
     );
   } catch (e) {

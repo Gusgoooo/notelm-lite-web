@@ -647,6 +647,10 @@ export async function POST(request: Request) {
       apiKey: settings.openrouterApiKey.trim(),
       baseUrl: settings.openrouterBaseUrl.trim(),
     };
+    const reportModel =
+      settings.models.report.trim().toLowerCase() === 'openrouter/auto'
+        ? 'anthropic/claude-3.7-sonnet'
+        : settings.models.report;
     if (!openrouterConfig.apiKey) {
       throw new Error('OpenRouter API key is not configured in admin settings');
     }
@@ -704,8 +708,8 @@ export async function POST(request: Request) {
       generatedContent = await generateReport(
         source,
         openrouterConfig,
-        settings.models.webpage,
-        settings.prompts.webpage
+        reportModel,
+        settings.prompts.report
       );
     }
     if (mode === 'infographic') {

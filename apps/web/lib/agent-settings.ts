@@ -16,6 +16,7 @@ export type AgentSettings = {
   openrouterBaseUrl: string;
   models: FeatureModels;
   prompts: FeaturePrompts;
+  researchDirectionsPrompt: string;
   paperOutlineFormats: string[];
 };
 
@@ -31,7 +32,10 @@ const DEFAULT_MODELS: FeatureModels = {
     'google/gemini-3-pro-image-preview',
   webpage: process.env.OPENROUTER_CHAT_MODEL ?? process.env.CHAT_MODEL ?? 'openrouter/auto',
   paper_outline: process.env.OPENROUTER_CHAT_MODEL ?? process.env.CHAT_MODEL ?? 'openrouter/auto',
-  report: process.env.OPENROUTER_CHAT_MODEL ?? process.env.CHAT_MODEL ?? 'openrouter/auto',
+  report:
+    process.env.OPENROUTER_REPORT_MODEL ??
+    process.env.REPORT_MODEL ??
+    'anthropic/claude-3.7-sonnet',
 };
 
 const DEFAULT_PROMPTS: FeaturePrompts = {
@@ -46,10 +50,12 @@ const DEFAULT_PROMPTS: FeaturePrompts = {
   paper_outline:
     '你是论文大纲助手。严格基于输入输出结构化 Markdown 大纲，重点给出每个段落的撰写规范，不直接代写正文。',
   report:
-    '你是研究报告生成助手。输出完整 HTML 报告，强调结构化信息呈现，必要时加入图表可视化。',
+    '你是中文研究报告总编辑与信息设计师。你的任务是把给定材料重写成一份结构流畅、版式清晰、适合直接汇报的高质量 HTML 研究报告。严格基于输入，不编造事实。请优先保证：1) 逻辑顺序清楚，开头先给结论摘要；2) 章节层次明确，读者能快速扫读；3) 语言自然、克制、专业，不堆砌口号；4) 用信息卡片、对比表格、结论高亮、时间线、数据图表增强可读性；5) 样式浅色、留白充足、视觉干净；6) 对不确定内容明确标注限制与假设。',
 };
 
 const DEFAULT_PAPER_OUTLINE_FORMATS = ['默认格式', '硕士学位论文', '本科毕业论文', '期刊'];
+const DEFAULT_RESEARCH_DIRECTIONS_PROMPT =
+  '你是资深研究选题顾问。你只能基于用户提供的来源材料归纳并发散研究议题，不允许脱离来源虚构。所有方向都必须紧扣用户原始问题，并保留原问题中的关键关键词。请输出 JSON，格式为 {"directions":[...]}，不要输出 markdown，不要输出额外说明。';
 
 function toCleanString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -111,6 +117,7 @@ export function getDefaultAgentSettings(): AgentSettings {
     openrouterBaseUrl: process.env.OPENROUTER_BASE_URL ?? DEFAULT_OPENROUTER_BASE_URL,
     models: { ...DEFAULT_MODELS },
     prompts: { ...DEFAULT_PROMPTS },
+    researchDirectionsPrompt: DEFAULT_RESEARCH_DIRECTIONS_PROMPT,
     paperOutlineFormats: [...DEFAULT_PAPER_OUTLINE_FORMATS],
   };
 }
@@ -127,6 +134,12 @@ function normalizeRow(row: {
     openrouterBaseUrl: toCleanString(row.openrouterBaseUrl) || defaults.openrouterBaseUrl,
     models: mergeModels(row.models),
     prompts: mergePrompts(row.prompts),
+    researchDirectionsPrompt:
+      (row.prompts &&
+      typeof row.prompts === 'object' &&
+      typeof (row.prompts as Record<string, unknown>).researchDirectionsPrompt === 'string'
+        ? toCleanString((row.prompts as Record<string, unknown>).researchDirectionsPrompt)
+        : '') || DEFAULT_RESEARCH_DIRECTIONS_PROMPT,
     paperOutlineFormats:
       mergePaperOutlineFormats(
         row.prompts && typeof row.prompts === 'object'
@@ -152,6 +165,7 @@ export type AgentSettingsInput = Partial<{
   openrouterBaseUrl: string;
   models: Partial<FeatureModels>;
   prompts: Partial<FeaturePrompts>;
+  researchDirectionsPrompt: string;
   paperOutlineFormats: string[];
 }>;
 
@@ -161,12 +175,15 @@ export async function saveAgentSettings(input: AgentSettingsInput): Promise<Agen
   const openrouterBaseUrl = toCleanString(input.openrouterBaseUrl) || previous.openrouterBaseUrl;
   const models = mergeModels({ ...previous.models, ...(input.models ?? {}) });
   const prompts = mergePrompts({ ...previous.prompts, ...(input.prompts ?? {}) });
+  const researchDirectionsPrompt =
+    toCleanString(input.researchDirectionsPrompt) || previous.researchDirectionsPrompt;
   const paperOutlineFormats = mergePaperOutlineFormats(
     Array.isArray(input.paperOutlineFormats) ? input.paperOutlineFormats : previous.paperOutlineFormats
   );
   const now = new Date();
   const storedPrompts = {
     ...prompts,
+    researchDirectionsPrompt,
     paperOutlineFormats,
   };
 

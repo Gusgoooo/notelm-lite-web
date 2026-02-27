@@ -8,14 +8,6 @@
   --border: 214 32% 91%;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --muted: 223 47% 11%;
-    --muted-foreground: 215 20% 65%;
-    --border: 217 33% 17%;
-  }
-}
-
 * {
   border-color: hsl(var(--border));
 }
@@ -25,6 +17,7 @@ body {
   background: radial-gradient(circle at top right, rgba(148, 163, 184, 0.12), transparent 40%),
     hsl(var(--background));
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  color-scheme: light;
 }
 
 @layer utilities {

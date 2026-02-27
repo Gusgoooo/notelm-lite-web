@@ -38,6 +38,7 @@ function parseInput(body: unknown): AgentSettingsInput {
       paper_outline: toCleanString(promptsRaw.paper_outline),
       report: toCleanString(promptsRaw.report),
     },
+    researchDirectionsPrompt: toCleanString(raw.researchDirectionsPrompt),
     paperOutlineFormats: Array.isArray(raw.paperOutlineFormats)
       ? raw.paperOutlineFormats
           .filter((item) => typeof item === 'string')

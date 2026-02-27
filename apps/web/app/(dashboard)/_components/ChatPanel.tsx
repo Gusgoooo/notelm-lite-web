@@ -133,6 +133,21 @@ function shouldShowRichAnswerActions(content: string): boolean {
   return plain.length >= 140;
 }
 
+function sortCitations(citations: Citation[] | undefined): Citation[] {
+  if (!Array.isArray(citations)) return [];
+  return [...citations].sort((a, b) => {
+    const ra = typeof a.refNumber === 'number' ? a.refNumber : Number.MAX_SAFE_INTEGER;
+    const rb = typeof b.refNumber === 'number' ? b.refNumber : Number.MAX_SAFE_INTEGER;
+    if (ra !== rb) return ra - rb;
+    return a.sourceTitle.localeCompare(b.sourceTitle, 'zh-CN');
+  });
+}
+
+const ACTION_PILL_CLASS =
+  'inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 transition hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700';
+const SAVE_ACTION_PILL_CLASS =
+  'inline-flex h-7 items-center rounded-full border border-blue-200 bg-blue-50 px-3 text-[11px] text-blue-700 transition hover:bg-blue-100 disabled:opacity-50';
+
 function MarkdownContent({ content }: { content: string }) {
   return (
     <ReactMarkdown
@@ -145,21 +160,29 @@ function MarkdownContent({ content }: { content: string }) {
         h1: ({ children }) => <h1 className="mb-1 mt-2 text-base font-semibold">{children}</h1>,
         h2: ({ children }) => <h2 className="mb-1 mt-2 text-sm font-semibold">{children}</h2>,
         h3: ({ children }) => <h3 className="mb-1 mt-2 text-sm font-semibold">{children}</h3>,
+        table: ({ children }) => (
+          <div className="my-2 overflow-x-auto rounded-md border border-gray-200">
+            <table className="min-w-full border-collapse text-xs">{children}</table>
+          </div>
+        ),
+        thead: ({ children }) => <thead className="bg-gray-50">{children}</thead>,
+        th: ({ children }) => (
+          <th className="border-b border-gray-200 px-2 py-1 text-left font-semibold text-gray-700">{children}</th>
+        ),
+        td: ({ children }) => <td className="border-b border-gray-100 px-2 py-1 align-top">{children}</td>,
         a: ({ children, href }) => (
           <a
             href={href}
             target="_blank"
             rel="noreferrer"
-            className="text-blue-600 underline dark:text-blue-400"
+            className="text-blue-600 underline"
           >
             {children}
           </a>
         ),
-        code: ({ children }) => (
-          <code className="rounded bg-gray-200 px-1 py-0.5 text-[12px] dark:bg-gray-700">{children}</code>
-        ),
+        code: ({ children }) => <code className="rounded bg-gray-100 px-1 py-0.5 text-[12px]">{children}</code>,
         pre: ({ children }) => (
-          <pre className="my-2 overflow-auto rounded bg-gray-200/70 p-2 text-xs dark:bg-gray-700/70">
+          <pre className="my-2 overflow-auto rounded bg-gray-100 p-2 text-xs">
             {children}
           </pre>
         ),
@@ -197,6 +220,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatContentRef = useRef<HTMLDivElement>(null);
   const selectionTimerRef = useRef<number | null>(null);
+  const selectionRangeRef = useRef<Range | null>(null);
 
   const fetchHistoryPage = useCallback(
     async (page: number, reset: boolean) => {
@@ -323,12 +347,12 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         return null;
       }
 
-      const text = selection.toString().replace(/\u00a0/g, ' ').trim();
+      const range = selection.getRangeAt(0);
+      const text = range.cloneContents().textContent?.replace(/\u00a0/g, ' ').trim() ?? '';
       if (!text) {
         return null;
       }
 
-      const range = selection.getRangeAt(0);
       const container = chatContentRef.current;
       const startElement =
         range.startContainer.nodeType === Node.ELEMENT_NODE
@@ -360,6 +384,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       const preferredY =
         tailRect.bottom + 38 <= window.innerHeight ? tailRect.bottom + 8 : tailRect.top - 40;
 
+      selectionRangeRef.current = range.cloneRange();
       return {
         text,
         x: Math.min(window.innerWidth - 148, Math.max(12, tailRect.right + 8)),
@@ -371,6 +396,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       clearTimer();
       const candidate = getSelectionCandidate();
       if (!candidate) {
+        selectionRangeRef.current = null;
         setSelectionToast((prev) => (prev ? null : prev));
         return;
       }
@@ -386,11 +412,13 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       setSelectionToast(null);
     };
 
-    document.addEventListener('selectionchange', updateSelectionToast);
+    document.addEventListener('mouseup', updateSelectionToast);
+    document.addEventListener('keyup', updateSelectionToast);
     window.addEventListener('scroll', clearSelectionToast, true);
     return () => {
       clearTimer();
-      document.removeEventListener('selectionchange', updateSelectionToast);
+      document.removeEventListener('mouseup', updateSelectionToast);
+      document.removeEventListener('keyup', updateSelectionToast);
       window.removeEventListener('scroll', clearSelectionToast, true);
     };
   }, []);
@@ -700,40 +728,85 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                     </div>
                     {m.role === 'assistant' && (
                       <>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          {!refineDone ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 px-0 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
-                              onClick={async () => {
-                                if (!notebookId) return;
-                                const content =
-                                  parsed.displayContent +
-                                  (m.citations && m.citations.length > 0
-                                    ? '\n\n## Sources\n\n' +
-                                      m.citations
-                                        .map(
-                                          (c) =>
-                                            `- **${c.sourceTitle}**${
-                                              c.pageStart != null
-                                                ? ` (p.${c.pageStart}${
-                                                    c.pageEnd != null && c.pageEnd !== c.pageStart
-                                                      ? `-${c.pageEnd}`
-                                                      : ''
-                                                  })`
-                                                : ''
-                                            }\n  ${c.snippet}`
-                                        )
-                                        .join('\n')
-                                    : '');
-                                await createNote(content, buildNoteTitleFromAnswer(parsed.displayContent));
-                              }}
-                            >
-                              保存到笔记
-                            </Button>
-                          ) : null}
-                        </div>
+                        {!refineDone || showRichActions || parsed.canConvertReport ? (
+                          <div className="mt-3 border-t pt-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {!refineDone ? (
+                                <button
+                                  type="button"
+                                  className={SAVE_ACTION_PILL_CLASS}
+                                  onClick={async () => {
+                                    if (!notebookId) return;
+                                    const content =
+                                      parsed.displayContent +
+                                      (m.citations && m.citations.length > 0
+                                        ? '\n\n## Sources\n\n' +
+                                          sortCitations(m.citations)
+                                            .map(
+                                              (c) =>
+                                                `- **${c.sourceTitle}**${
+                                                  c.pageStart != null
+                                                    ? ` (p.${c.pageStart}${
+                                                        c.pageEnd != null && c.pageEnd !== c.pageStart
+                                                          ? `-${c.pageEnd}`
+                                                          : ''
+                                                      })`
+                                                    : ''
+                                                }\n  ${c.snippet}`
+                                            )
+                                            .join('\n')
+                                        : '');
+                                    await createNote(content, buildNoteTitleFromAnswer(parsed.displayContent));
+                                  }}
+                                >
+                                  保存到笔记
+                                </button>
+                              ) : null}
+                              {showRichActions ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void send('请基于你上一条回答，延展更多相关论点、对比视角与可继续研究的方向。')
+                                  }
+                                  disabled={loading}
+                                  className={ACTION_PILL_CLASS}
+                                >
+                                  延展更多论点
+                                </button>
+                              ) : null}
+                              {showRichActions || parsed.canConvertReport ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void generateArtifactFromAnswer(m, 'report')}
+                                  disabled={
+                                    quickActionRunning?.messageId === m.id && quickActionRunning.mode === 'report'
+                                  }
+                                  className={ACTION_PILL_CLASS}
+                                >
+                                  {quickActionRunning?.messageId === m.id && quickActionRunning.mode === 'report'
+                                    ? '生成中…'
+                                    : '生成报告'}
+                                </button>
+                              ) : null}
+                              {showRichActions ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void generateArtifactFromAnswer(m, 'infographic')}
+                                  disabled={
+                                    quickActionRunning?.messageId === m.id &&
+                                    quickActionRunning.mode === 'infographic'
+                                  }
+                                  className={ACTION_PILL_CLASS}
+                                >
+                                  {quickActionRunning?.messageId === m.id &&
+                                  quickActionRunning.mode === 'infographic'
+                                    ? '生成中…'
+                                    : '生成信息图'}
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : null}
                         {refineDone &&
                         researchState?.phase === 'ready' &&
                         Array.isArray(researchState.starterQuestions) &&
@@ -758,57 +831,11 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                             </p>
                           </div>
                         ) : null}
-                        {showRichActions || parsed.canConvertReport ? (
-                          <div className="mt-3 border-t pt-3">
-                            <div className="flex flex-wrap items-center gap-2">
-                              {showRichActions ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    void send('请基于你上一条回答，延展更多相关论点、对比视角与可继续研究的方向。')
-                                  }
-                                  disabled={loading}
-                                  className="inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 transition hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-                                >
-                                  延展更多论点
-                                </button>
-                              ) : null}
-                              {(showRichActions || parsed.canConvertReport) ? (
-                                <button
-                                  type="button"
-                                  onClick={() => void generateArtifactFromAnswer(m, 'report')}
-                                  disabled={
-                                    (quickActionRunning?.messageId === m.id && quickActionRunning.mode === 'report')
-                                  }
-                                  className="inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 transition hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-                                >
-                                  {quickActionRunning?.messageId === m.id && quickActionRunning.mode === 'report' ? '生成中…' : '生成报告'}
-                                </button>
-                              ) : null}
-                              {showRichActions ? (
-                                <button
-                                  type="button"
-                                  onClick={() => void generateArtifactFromAnswer(m, 'infographic')}
-                                  disabled={
-                                    quickActionRunning?.messageId === m.id &&
-                                    quickActionRunning.mode === 'infographic'
-                                  }
-                                  className="inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 transition hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-                                >
-                                  {quickActionRunning?.messageId === m.id &&
-                                  quickActionRunning.mode === 'infographic'
-                                    ? '生成中…'
-                                    : '生成信息图帮助理解'}
-                                </button>
-                              ) : null}
-                            </div>
-                          </div>
-                        ) : null}
                         {m.citations && m.citations.length > 0 && (
                           <div className="mt-3 border-t pt-3">
                             <span className="text-xs font-medium text-gray-500 dark:text-gray-400">引用来源</span>
                             <ul className="mt-2 space-y-1">
-                              {m.citations.map((c, i) => (
+                              {sortCitations(m.citations).map((c, i) => (
                                 <li key={i} className="text-xs">
                                   <details className="group">
                                     <summary className="flex cursor-pointer list-none items-center gap-1.5 text-gray-600 hover:underline dark:text-gray-300">
@@ -865,10 +892,10 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
             if (savingSelection) return;
             setSavingSelection(true);
             try {
-              const content = selectionToast.text.trim();
+              const content =
+                (selectionRangeRef.current?.cloneContents().textContent ?? selectionToast.text).trim();
               if (!content) return;
               await createNote(content, buildNoteTitleFromAnswer(content));
-              window.getSelection()?.removeAllRanges();
               setSelectionToast(null);
             } catch (error) {
               alert(error instanceof Error ? error.message : '保存到笔记失败');

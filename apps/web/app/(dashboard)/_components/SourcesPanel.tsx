@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -18,6 +18,7 @@ type Source = {
   errorMessage: string | null;
   chunkCount?: number;
   preview?: string | null;
+  originalUrl?: string | null;
   sourceType?: 'pdf' | 'word' | '复制文本' | 'python脚本' | 'skills技能包' | '联网检索' | string;
   createdAt: string;
 };
@@ -35,6 +36,11 @@ type ResearchState = {
     totalBefore: number;
     totalAfter: number;
   };
+};
+
+type SourceToast = {
+  type: 'success' | 'error';
+  message: string;
 };
 
 const MAX_WEB_SOURCES = 20;
@@ -87,20 +93,12 @@ function TrashIcon() {
   );
 }
 
-function RefreshIcon() {
+function MoreIcon() {
   return (
-    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-      <path d="M21 3v6h-6" />
-    </svg>
-  );
-}
-
-function InfoIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 8h.01M11 12h2v5h-2z" />
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor">
+      <circle cx="5" cy="12" r="1.8" />
+      <circle cx="12" cy="12" r="1.8" />
+      <circle cx="19" cy="12" r="1.8" />
     </svg>
   );
 }
@@ -118,31 +116,39 @@ function getSourceDotClass(input: {
   return 'bg-gray-400';
 }
 
-function DownloadIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 4v11" />
-      <path d="m7 10 5 5 5-5" />
-      <path d="M5 20h14" />
-    </svg>
-  );
-}
-
-function extractHostname(urlValue: string): string {
-  try {
-    return new URL(urlValue).hostname;
-  } catch {
-    return '';
-  }
-}
-
 function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
 }
 
 function compactPreview(value: string | null | undefined): string {
   if (!value) return '';
-  return value.replace(/\s+/g, ' ').trim();
+  return value
+    .replace(/【联网检索来源】/g, '')
+    .replace(/主题：.*?(?:\n|$)/g, '')
+    .replace(/标题：.*?(?:\n|$)/g, '')
+    .replace(/URL：.*?(?:\n|$)/g, '')
+    .replace(/^摘要：/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isPdfSource(source: Pick<Source, 'filename' | 'mime' | 'sourceType'>): boolean {
+  if (source.sourceType === '联网检索') return false;
+  const mime = (source.mime ?? '').toLowerCase();
+  const filename = source.filename.toLowerCase();
+  return mime.includes('application/pdf') || filename.endsWith('.pdf');
+}
+
+function isWordSource(source: Pick<Source, 'filename' | 'mime' | 'sourceType'>): boolean {
+  if (source.sourceType === '联网检索') return false;
+  const mime = (source.mime ?? '').toLowerCase();
+  const filename = source.filename.toLowerCase();
+  return (
+    mime.includes('application/msword') ||
+    mime.includes('application/vnd.openxmlformats-officedocument.wordprocessingml.document') ||
+    filename.endsWith('.doc') ||
+    filename.endsWith('.docx')
+  );
 }
 
 export function SourcesPanel({
@@ -169,9 +175,10 @@ export function SourcesPanel({
   const [webSearchStatus, setWebSearchStatus] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [researchState, setResearchState] = useState<ResearchState | null>(null);
+  const [loadingOriginalSourceId, setLoadingOriginalSourceId] = useState<string | null>(null);
   const [hydratingSourceId, setHydratingSourceId] = useState<string | null>(null);
-  const [hydrateStatus, setHydrateStatus] = useState('');
-  const [expandedWebSourceIds, setExpandedWebSourceIds] = useState<string[]>([]);
+  const [sourceToast, setSourceToast] = useState<SourceToast | null>(null);
+  const [openMenuSourceId, setOpenMenuSourceId] = useState<string | null>(null);
 
   const fetchSources = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -223,10 +230,34 @@ export function SourcesPanel({
   }, [fetchSources, fetchResearchState]);
 
   useEffect(() => {
-    setExpandedWebSourceIds((prev) =>
-      prev.filter((id) => sources.some((source) => source.id === id))
-    );
-  }, [sources]);
+    if (!sourceToast) return;
+    const timer = window.setTimeout(() => setSourceToast(null), 3200);
+    return () => window.clearTimeout(timer);
+  }, [sourceToast]);
+
+  useEffect(() => {
+    const closeMenu = () => setOpenMenuSourceId(null);
+    window.addEventListener('click', closeMenu);
+    return () => window.removeEventListener('click', closeMenu);
+  }, []);
+
+  useEffect(() => {
+    if (!hydratingSourceId) return;
+    const current = sources.find((item) => item.id === hydratingSourceId);
+    if (!current) return;
+    if (current.status !== 'PENDING' && current.status !== 'PROCESSING') {
+      setHydratingSourceId(null);
+    }
+  }, [hydratingSourceId, sources]);
+
+  const displayedSources = useMemo(() => {
+    if (!hydratingSourceId) return sources;
+    return [...sources].sort((a, b) => {
+      if (a.id === hydratingSourceId) return -1;
+      if (b.id === hydratingSourceId) return 1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [hydratingSourceId, sources]);
 
   const uploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (readOnly) return;
@@ -437,19 +468,30 @@ export function SourcesPanel({
   };
 
   const loadOriginalSource = async (sourceId: string) => {
-    if (readOnly || hydratingSourceId) return;
-    setHydratingSourceId(sourceId);
-    setHydrateStatus('正在加载原文并写入知识库…');
+    if (readOnly || loadingOriginalSourceId || hydratingSourceId) return;
+    setLoadingOriginalSourceId(sourceId);
+    setSourceToast(null);
     try {
       const res = await fetch(`/api/sources/${sourceId}/load-original`, { method: 'POST' });
       if (!res.ok) {
-        setHydrateStatus('加载失败，请前往下载后再上传，可支持全文分析。');
+        const data = await res.json().catch(() => ({}));
+        setSourceToast({
+          type: 'error',
+          message: data?.error || '加载失败，请前往下载后再上传，可支持全文分析。',
+        });
         return;
       }
-      setHydrateStatus('原文已开始处理，完成后会显示为普通文档来源。');
+      const data = await res.json().catch(() => ({}));
+      if (typeof data?.source?.id === 'string') {
+        setHydratingSourceId(data.source.id);
+      }
+      setSourceToast({
+        type: 'success',
+        message: '原文已开始处理，完成后会显示为普通文档来源。',
+      });
       await fetchSources(false);
     } finally {
-      setHydratingSourceId(null);
+      setLoadingOriginalSourceId(null);
     }
   };
 
@@ -518,36 +560,27 @@ export function SourcesPanel({
     );
   };
 
-  const toggleWebSourceDetails = (sourceId: string) => {
-    setExpandedWebSourceIds((prev) =>
-      prev.includes(sourceId) ? prev.filter((id) => id !== sourceId) : [...prev, sourceId]
-    );
-  };
-
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center justify-between border-b px-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500">
           知识库
         </h2>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center">
           <button
             type="button"
             onClick={askPaperInsight}
-            className="h-7 rounded-full border border-gray-300 px-2 text-[11px] text-gray-700 transition hover:bg-gray-100 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+            className="h-7 rounded-full border border-gray-300 px-2 text-[11px] text-gray-700 transition hover:bg-gray-100"
             title="论文对比洞察"
           >
             论文对比洞察
           </button>
-          <Button variant="ghost" size="icon" onClick={() => void fetchSources(false)} aria-label="Refresh">
-            <RefreshIcon />
-          </Button>
         </div>
       </div>
 
       <div className="space-y-2 p-3">
         {readOnly && (
-          <div className="rounded-md border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-[11px] text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          <div className="rounded-md border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-[11px] text-amber-800">
             <div className="flex items-center justify-between gap-2">
               <span>当前为共享知识库，保存为我的 notebook 后可修改 sources。</span>
               {onSaveAsMine && (
@@ -592,7 +625,7 @@ export function SourcesPanel({
                     }
                   }}
                   placeholder="联网检索，请输入你想要进一步拓展的内容"
-                  className="h-9 w-full rounded-md border border-black bg-white px-3 pr-16 text-xs outline-none transition focus:border-black dark:border-black dark:bg-gray-900"
+                  className="h-9 w-full rounded-md border border-black bg-white px-3 pr-16 text-xs outline-none transition focus:border-black"
                   disabled={webSearching}
                 />
                 <button
@@ -641,20 +674,20 @@ export function SourcesPanel({
                   {pasteStatus}
                 </p>
               ) : null}
-              {hydrateStatus ? (
-                <p
-                  className={`text-[11px] ${
-                    /失败/i.test(hydrateStatus) ? 'text-red-600' : 'text-gray-500 dark:text-gray-400'
+              {sourceToast ? (
+                <div
+                  className={`rounded-md px-2 py-1.5 text-[11px] ${
+                    sourceToast.type === 'error'
+                      ? 'border border-red-200 bg-red-50 text-red-600'
+                      : 'border border-blue-200 bg-blue-50 text-blue-600'
                   }`}
                 >
-                  {hydrateStatus}
-                </p>
+                  {sourceToast.message}
+                </div>
               ) : null}
-              <div className="pt-1">
-                <p className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                  来源
-                </p>
-                <p className="text-[11px] text-gray-500 dark:text-gray-400">
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <p className="text-sm font-semibold uppercase tracking-wider text-gray-500">来源</p>
+                <p className="text-[11px] text-gray-500 text-right">
                   {researchState?.sourceStats
                     ? `数量：${sources.length}（初始 ${researchState.sourceStats.totalBefore} -> 清洗后 ${researchState.sourceStats.totalAfter}）`
                     : `数量：${sources.length}`}
@@ -668,17 +701,17 @@ export function SourcesPanel({
       <ScrollArea className="flex-1 p-2">
         {loading ? (
           <div className="p-2">
-            <ShinyText text="Loading..." className="text-xs text-gray-500 dark:text-gray-400" />
+            <ShinyText text="Loading..." className="text-xs text-gray-500" />
           </div>
         ) : sources.length === 0 && !pendingUpload ? (
-          <p className="p-2 text-xs text-gray-500 dark:text-gray-400">
+          <p className="p-2 text-xs text-gray-500">
             {readOnly ? '该共享 notebook 暂无可用来源。' : '还没有来源文件，先上传一个。'}
           </p>
         ) : (
           <ul className="space-y-2">
             {pendingUpload ? (
               <li key={pendingUpload.id}>
-                <Card className="group border-gray-200/80 bg-white/70 p-2 dark:border-gray-800 dark:bg-gray-900/60">
+                <Card className="group border-gray-200/80 bg-white/70 p-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-1.5">
                       <span className="h-2 w-2 shrink-0 rounded-full bg-gray-400" />
@@ -690,38 +723,52 @@ export function SourcesPanel({
                       上传中
                     </Badge>
                   </div>
-                  <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+                  <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-gray-200">
                     <div
                       className="h-full rounded-full bg-blue-500 transition-all duration-200"
                       style={{ width: `${pendingUpload.progress}%` }}
                     />
                   </div>
-                  <div className="mt-1 flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400">
+                  <div className="mt-1 flex items-center justify-between text-[11px] text-gray-500">
                     <span>正在上传文件…</span>
                     <span>{pendingUpload.progress}%</span>
                   </div>
                 </Card>
               </li>
             ) : null}
-            {sources.map((s) => (
+            {displayedSources.map((s) => (
               <li key={s.id}>
-                <Card className="border-gray-200/80 bg-white/70 p-2 dark:border-gray-800 dark:bg-gray-900/60">
+                <Card
+                  className={`group border-gray-200/80 bg-white/70 p-2 ${
+                    hydratingSourceId === s.id ? 'border-blue-200 bg-blue-50/40' : ''
+                  }`}
+                >
                   {(() => {
                     const statusMeta = getSourceStatusMeta(s.status);
                     const isWebSource = s.sourceType === '联网检索';
-                    const hostname = isWebSource ? extractHostname(s.fileUrl) : '';
+                    const sourceLink = isWebSource ? s.fileUrl : s.originalUrl ?? '';
                     const preview = compactPreview(s.preview);
-                    const detailsExpanded = expandedWebSourceIds.includes(s.id);
+                    const isHydrating = hydratingSourceId === s.id;
+                    const isRequestingOriginal = loadingOriginalSourceId === s.id;
                     const isRunning = s.status === 'PENDING' || s.status === 'PROCESSING';
-                    const showStatus = isRunning || s.status === 'FAILED';
+                    const showStatus = isHydrating || isRunning || s.status === 'FAILED';
                     const shouldShowLoadOriginal = isWebSource && (s.chunkCount ?? 0) <= 1;
-                    const dotClass = getSourceDotClass({
-                      status: s.status,
-                      sourceType: s.sourceType,
-                      chunkCount: s.chunkCount,
-                    });
+                    const canViewSource = Boolean(sourceLink);
+                    const canPreviewFile = isPdfSource(s);
+                    const canDownloadFile = canPreviewFile || isWordSource(s);
+                    const menuOpen = openMenuSourceId === s.id;
+                    const previewHref = canPreviewFile ? `/api/sources/${encodeURIComponent(s.id)}?mode=inline` : '';
+                    const downloadHref = canDownloadFile ? `/api/sources/${encodeURIComponent(s.id)}?mode=download` : '';
+                    const dotClass = isHydrating
+                      ? 'bg-blue-500'
+                      : getSourceDotClass({
+                          status: s.status,
+                          sourceType: s.sourceType,
+                          chunkCount: s.chunkCount,
+                        });
                     return (
                       <>
+                        <div className="mb-2 border-t border-gray-200/80" />
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex min-w-0 items-center gap-1.5">
                             <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
@@ -729,85 +776,100 @@ export function SourcesPanel({
                               {s.filename}
                             </p>
                           </div>
-                          {!readOnly && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 opacity-0 transition group-hover:opacity-100"
-                              onClick={() => void deleteSource(s.id)}
-                              disabled={deletingId === s.id}
-                              aria-label="删除来源"
+                          {(canPreviewFile || canDownloadFile || !readOnly) && (
+                            <div
+                              className="relative"
+                              onClick={(event) => event.stopPropagation()}
                             >
-                              <TrashIcon />
-                            </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-gray-400 transition hover:text-gray-700"
+                                onClick={() =>
+                                  setOpenMenuSourceId((current) => (current === s.id ? null : s.id))
+                                }
+                                aria-label="更多操作"
+                              >
+                                <MoreIcon />
+                              </Button>
+                              {menuOpen ? (
+                                <div className="absolute right-0 top-7 z-20 min-w-28 rounded-md border border-gray-200 bg-white py-1 shadow-lg">
+                                  {canPreviewFile ? (
+                                    <a
+                                      href={previewHref}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="block px-3 py-1.5 text-[11px] text-gray-700 transition hover:bg-gray-50"
+                                      onClick={() => setOpenMenuSourceId(null)}
+                                    >
+                                      浏览器预览
+                                    </a>
+                                  ) : null}
+                                  {canDownloadFile ? (
+                                    <a
+                                      href={downloadHref}
+                                      className="block px-3 py-1.5 text-[11px] text-gray-700 transition hover:bg-gray-50"
+                                      onClick={() => setOpenMenuSourceId(null)}
+                                    >
+                                      下载
+                                    </a>
+                                  ) : null}
+                                  {!readOnly ? (
+                                    <button
+                                      type="button"
+                                      className="flex w-full items-center gap-1.5 px-3 py-1.5 text-[11px] text-red-600 transition hover:bg-red-50"
+                                      onClick={() => {
+                                        setOpenMenuSourceId(null);
+                                        void deleteSource(s.id);
+                                      }}
+                                      disabled={deletingId === s.id}
+                                    >
+                                      <TrashIcon />
+                                      删除
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
                           )}
                         </div>
-                        <div className="mt-1 flex items-center gap-1.5">
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
                           <Badge variant="secondary" className="uppercase">
                             {s.sourceType ?? 'unknown'}
                           </Badge>
-                          {isWebSource ? (
-                            <button
-                              type="button"
-                              onClick={() => toggleWebSourceDetails(s.id)}
-                              className="inline-flex h-6 items-center gap-1 rounded border border-gray-200 bg-white px-2 text-[11px] font-normal text-gray-600 transition hover:bg-gray-100 hover:text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                          {canViewSource ? (
+                            <a
+                              href={sourceLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[11px] text-gray-600 transition hover:text-blue-600 hover:underline"
                             >
-                              <InfoIcon />
-                              <span>{detailsExpanded ? '收起来源' : '查看来源'}</span>
-                            </button>
+                              查看来源
+                            </a>
                           ) : null}
                           {shouldShowLoadOriginal ? (
                             <button
                               type="button"
                               onClick={() => void loadOriginalSource(s.id)}
-                              disabled={Boolean(hydratingSourceId)}
-                              className="inline-flex h-6 items-center gap-1 rounded border border-gray-200 bg-gray-50 px-2 text-[11px] font-normal text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-800/70 dark:text-gray-300 dark:hover:bg-gray-800"
+                              disabled={Boolean(loadingOriginalSourceId) || Boolean(hydratingSourceId)}
+                              className="text-[11px] text-gray-500 transition hover:text-blue-600 hover:underline disabled:opacity-60"
                             >
-                              <DownloadIcon />
-                              <span>{hydratingSourceId === s.id ? '处理中…' : '加载原文'}</span>
+                              {isRequestingOriginal ? '加载原文中…' : '加载原文'}
                             </button>
                           ) : (
                             <Badge variant="outline">{s.chunkCount ?? 0} chunks</Badge>
                           )}
                         </div>
-                        {showStatus ? (
-                          <p className={`mt-1 text-[11px] ${statusMeta.colorClass}`}>
-                            {statusMeta.label}
-                            {s.errorMessage ? ` — ${s.errorMessage}` : ''}
+                        {preview && isWebSource ? (
+                          <p className="mt-1 line-clamp-4 text-[11px] leading-5 text-gray-500">
+                            {preview}
                           </p>
                         ) : null}
-                        {isWebSource ? (
-                          <div
-                            className={`overflow-hidden transition-all duration-300 ease-out ${
-                              detailsExpanded ? 'mt-2 max-h-44 opacity-100' : 'max-h-0 opacity-0'
-                            }`}
-                          >
-                            <div className="rounded-md border border-gray-200 bg-gray-50/80 p-2 dark:border-gray-700 dark:bg-gray-800/50">
-                              <p className="text-[11px] font-medium text-gray-600 dark:text-gray-300">
-                                来源网站
-                              </p>
-                              <a
-                                href={s.fileUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="mt-1 block truncate text-[11px] text-blue-600 underline dark:text-blue-400"
-                                onClick={(event) => event.stopPropagation()}
-                                title={hostname || s.fileUrl}
-                              >
-                                {hostname || s.fileUrl}
-                              </a>
-                              {preview ? (
-                                <>
-                                  <p className="mt-2 text-[11px] font-medium text-gray-600 dark:text-gray-300">
-                                    摘要
-                                  </p>
-                                  <p className="mt-1 line-clamp-4 text-[11px] leading-5 text-gray-500 dark:text-gray-400">
-                                    {preview}
-                                  </p>
-                                </>
-                              ) : null}
-                            </div>
-                          </div>
+                        {showStatus ? (
+                          <p className={`mt-1 text-[11px] ${isHydrating ? 'text-blue-600' : statusMeta.colorClass}`}>
+                            {isHydrating ? '加载中' : statusMeta.label}
+                            {s.errorMessage ? ` — ${s.errorMessage}` : ''}
+                          </p>
                         ) : null}
                       </>
                     );
@@ -816,7 +878,7 @@ export function SourcesPanel({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="mt-1 h-6 px-0 text-[11px] text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                      className="mt-1 h-6 px-0 text-[11px] text-blue-600 hover:text-blue-700"
                       onClick={() => void requeue(s.id)}
                     >
                       重新处理

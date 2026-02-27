@@ -295,7 +295,7 @@ export function WorkspaceShell({
         </main>
 
         <aside
-          className="relative shrink-0 min-h-0 flex flex-col border-l border-gray-200 bg-white/50 dark:border-gray-800 dark:bg-gray-950/30"
+          className="relative shrink-0 min-h-0 flex flex-col bg-white/50 dark:bg-gray-950/30"
           style={{ width: notesWidth }}
         >
           <div

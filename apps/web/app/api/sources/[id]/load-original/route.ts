@@ -34,6 +34,25 @@ function isDocumentMime(mime: string): boolean {
   );
 }
 
+function detectMimeFromBuffer(buffer: Buffer, fallbackMime: string): string {
+  if (buffer.length >= 5 && buffer.subarray(0, 5).toString('utf8') === '%PDF-') {
+    return 'application/pdf';
+  }
+  return fallbackMime;
+}
+
+function getArxivPdfUrl(urlValue: string): string | null {
+  try {
+    const url = new URL(urlValue);
+    if (!/(^|\.)arxiv\.org$/i.test(url.hostname)) return null;
+    const match = url.pathname.match(/^\/(?:abs|html)\/([^/?#]+)/i);
+    if (!match?.[1]) return null;
+    return `https://arxiv.org/pdf/${match[1]}.pdf`;
+  } catch {
+    return null;
+  }
+}
+
 function toAbsoluteUrl(base: string, maybeRelative: string): string | null {
   try {
     const resolved = new URL(maybeRelative, base);
@@ -104,8 +123,31 @@ async function resolveOriginalFile(urlValue: string): Promise<{
   mime: string;
   filename: string;
 }> {
+  const arxivPdfUrl = getArxivPdfUrl(urlValue);
+  if (arxivPdfUrl) {
+    try {
+      const arxivDoc = await downloadBuffer(arxivPdfUrl);
+      const arxivMime = detectMimeFromBuffer(
+        arxivDoc.buffer,
+        normalizeMimeByFilename(arxivDoc.finalUrl, arxivDoc.mime)
+      );
+      if (isDocumentMime(arxivMime)) {
+        return {
+          buffer: arxivDoc.buffer,
+          mime: arxivMime,
+          filename: guessFilenameFromUrl(arxivDoc.finalUrl, extensionFromMime(arxivMime)),
+        };
+      }
+    } catch {
+      // fallback to generic flow
+    }
+  }
+
   const first = await downloadBuffer(urlValue);
-  const firstMime = normalizeMimeByFilename(first.finalUrl, first.mime);
+  const firstMime = detectMimeFromBuffer(
+    first.buffer,
+    normalizeMimeByFilename(first.finalUrl, first.mime)
+  );
   if (isDocumentMime(firstMime)) {
     const ext = extensionFromMime(firstMime);
     return {
@@ -120,7 +162,10 @@ async function resolveOriginalFile(urlValue: string): Promise<{
   for (const candidate of candidates) {
     try {
       const next = await downloadBuffer(candidate);
-      const nextMime = normalizeMimeByFilename(next.finalUrl, next.mime);
+      const nextMime = detectMimeFromBuffer(
+        next.buffer,
+        normalizeMimeByFilename(next.finalUrl, next.mime)
+      );
       if (!isDocumentMime(nextMime)) continue;
       const ext = extensionFromMime(nextMime);
       return {
