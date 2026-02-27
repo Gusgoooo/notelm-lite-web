@@ -37,14 +37,17 @@ async function generateStarterQuestions(input: {
   directionQuestion: string;
   sourceTitles: string[];
 }): Promise<string[]> {
-  const fixedQuestion =
-    '请做一次知识库论文对比洞察：哪些问题被频繁研究？哪些变量被反复验证？哪些研究空白？哪些方法争议最大？（请使用 Python tool 做统计）';
-
   const settings = await getAgentSettings();
   const apiKey = settings.openrouterApiKey.trim();
   const baseUrl = settings.openrouterBaseUrl.trim() || 'https://openrouter.ai/api/v1';
   const model = (settings.models.summary || process.env.OPENROUTER_CHAT_MODEL || 'openrouter/auto').trim();
-  if (!apiKey) return [fixedQuestion];
+  if (!apiKey) {
+    return [
+      `基于“${input.directionTitle}”，请给出一个可执行的研究设计（样本、变量、方法、评估指标）。`,
+      `围绕“${input.directionQuestion}”，请指出当前证据最薄弱的环节，并给出下一步补证方案。`,
+      `请基于现有来源列出3条可验证假设，并说明每条假设需要补充哪些数据。`,
+    ];
+  }
 
   const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
@@ -58,16 +61,16 @@ async function generateStarterQuestions(input: {
       messages: [
         {
           role: 'system',
-          content: '你是研究顾问，只输出 JSON：{"questions":["...","..."]}。',
+          content: '你是研究顾问，只输出 JSON：{"questions":["...","...","..."]}。',
         },
         {
           role: 'user',
-          content:
+            content:
             `主题：${input.topic}\n` +
             `已选方向：${input.directionTitle}\n` +
             `核心问题：${input.directionQuestion}\n` +
             `当前知识库来源标题：${input.sourceTitles.join('；')}\n\n` +
-            `请生成 2 个启发式研究问题，要求：\n` +
+            `请生成 3 个启发式研究问题，要求：\n` +
             `1) 可直接追问；\n` +
             `2) 不重复；\n` +
             `3) 面向下一步研究行动；\n` +
@@ -79,7 +82,13 @@ async function generateStarterQuestions(input: {
     }),
   });
   const raw = await response.text();
-  if (!response.ok) return [fixedQuestion];
+  if (!response.ok) {
+    return [
+      `基于“${input.directionTitle}”，请给出一个可执行的研究设计（样本、变量、方法、评估指标）。`,
+      `围绕“${input.directionQuestion}”，请指出当前证据最薄弱的环节，并给出下一步补证方案。`,
+      `请基于现有来源列出3条可验证假设，并说明每条假设需要补充哪些数据。`,
+    ];
+  }
   let payload: unknown;
   try {
     payload = JSON.parse(raw);
@@ -92,15 +101,25 @@ async function generateStarterQuestions(input: {
   const parsed = tryParseJson(content);
   const rawQuestions = parsed && typeof parsed === 'object' ? (parsed as { questions?: unknown }).questions : [];
   const generated = Array.isArray(rawQuestions)
-    ? rawQuestions.filter((q): q is string => typeof q === 'string' && q.trim().length > 0).slice(0, 2)
+    ? rawQuestions.filter((q): q is string => typeof q === 'string' && q.trim().length > 0).slice(0, 3)
     : [];
 
   const fallback = [
     `基于“${input.directionTitle}”，请给出一个可执行的研究设计（样本、变量、方法、评估指标）。`,
     `围绕“${input.directionQuestion}”，请指出当前证据最薄弱的环节，并给出下一步补证方案。`,
+    `请基于现有来源列出3条可验证假设，并说明每条假设需要补充哪些数据。`,
   ];
-  const rest = generated.length >= 2 ? generated : fallback;
-  return [fixedQuestion, ...rest.slice(0, 2)];
+  const merged = [...generated, ...fallback];
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const item of merged) {
+    const key = item.trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(key);
+    if (unique.length >= 3) break;
+  }
+  return unique.slice(0, 3);
 }
 
 export async function POST(
@@ -240,11 +259,7 @@ export async function POST(
       },
     });
 
-    const intro = [
-      `已完成资料重整，当前选题为：**${selectedDirection.title}**。`,
-      '您可以问我任何想要进一步研究的方向，或者我给你一些洞察：',
-      ...starterQuestions.map((q, idx) => `${idx + 1}. ${q}`),
-    ].join('\n\n');
+    const intro = `已完成资料重整，当前选题为：**${selectedDirection.title}**。`;
     await addAssistantMessage({
       conversationId: saved.conversationId,
       content: intro,

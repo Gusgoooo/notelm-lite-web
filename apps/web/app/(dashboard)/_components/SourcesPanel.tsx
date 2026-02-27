@@ -20,6 +20,14 @@ type Source = {
   createdAt: string;
 };
 
+type ResearchState = {
+  phase: 'collecting' | 'analyzing' | 'select_direction' | 'refining' | 'ready';
+  sourceStats?: {
+    totalBefore: number;
+    totalAfter: number;
+  };
+};
+
 const MAX_WEB_SOURCES = 20;
 const allowedMimes = [
   'application/pdf',
@@ -78,6 +86,36 @@ function RefreshIcon() {
   );
 }
 
+function ChevronDownIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={`h-3.5 w-3.5 transition-transform duration-300 ${open ? 'rotate-180' : ''}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function formatTime(value: string): string {
+  try {
+    return new Date(value).toLocaleString('zh-CN');
+  } catch {
+    return value;
+  }
+}
+
+function extractHostname(urlValue: string): string {
+  try {
+    return new URL(urlValue).hostname;
+  } catch {
+    return '';
+  }
+}
+
 export function SourcesPanel({
   notebookId,
   readOnly = false,
@@ -100,6 +138,8 @@ export function SourcesPanel({
   const [webSearching, setWebSearching] = useState(false);
   const [webSearchStatus, setWebSearchStatus] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [researchState, setResearchState] = useState<ResearchState | null>(null);
+  const [expandedWebSourceId, setExpandedWebSourceId] = useState<string | null>(null);
 
   const fetchSources = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -112,9 +152,26 @@ export function SourcesPanel({
     }
   }, [notebookId]);
 
+  const fetchResearchState = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/research/state`, {
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setResearchState(null);
+        return;
+      }
+      setResearchState((data?.state as ResearchState | null) ?? null);
+    } catch {
+      setResearchState(null);
+    }
+  }, [notebookId]);
+
   useEffect(() => {
     void fetchSources(true);
-  }, [fetchSources]);
+    void fetchResearchState();
+  }, [fetchSources, fetchResearchState]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -127,10 +184,18 @@ export function SourcesPanel({
   useEffect(() => {
     const onSourcesUpdated = () => {
       void fetchSources(false);
+      void fetchResearchState();
     };
     window.addEventListener('sources-updated', onSourcesUpdated);
     return () => window.removeEventListener('sources-updated', onSourcesUpdated);
-  }, [fetchSources]);
+  }, [fetchSources, fetchResearchState]);
+
+  useEffect(() => {
+    if (!expandedWebSourceId) return;
+    if (!sources.some((s) => s.id === expandedWebSourceId)) {
+      setExpandedWebSourceId(null);
+    }
+  }, [sources, expandedWebSourceId]);
 
   const uploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (readOnly) return;
@@ -267,15 +332,40 @@ export function SourcesPanel({
     }
   };
 
+  const askPaperInsight = () => {
+    window.dispatchEvent(
+      new CustomEvent('chat-send-message', {
+        detail: { message: '论文对比洞察' },
+      })
+    );
+  };
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center justify-between border-b px-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-          知识库
-        </h2>
-        <Button variant="ghost" size="icon" onClick={() => void fetchSources(false)} aria-label="Refresh">
-          <RefreshIcon />
-        </Button>
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            知识库
+          </h2>
+          <p className="text-[11px] text-gray-500 dark:text-gray-400">
+            {researchState?.sourceStats
+              ? `来源数量：${sources.length}（初始 ${researchState.sourceStats.totalBefore} -> 清洗后 ${researchState.sourceStats.totalAfter}）`
+              : `来源数量：${sources.length}`}
+          </p>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={askPaperInsight}
+            className="h-7 rounded-full border border-gray-300 px-2 text-[11px] text-gray-700 transition hover:bg-gray-100 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+            title="论文对比洞察"
+          >
+            论文对比洞察
+          </button>
+          <Button variant="ghost" size="icon" onClick={() => void fetchSources(false)} aria-label="Refresh">
+            <RefreshIcon />
+          </Button>
+        </div>
       </div>
 
       <div className="space-y-2 p-3">
@@ -324,7 +414,7 @@ export function SourcesPanel({
                       void addWebSources();
                     }
                   }}
-                  placeholder="联网检索，请输入你想了解的内容"
+                  placeholder="联网检索，请输入你想要进一步拓展的内容"
                   className="h-9 w-full rounded-md border border-black bg-white px-3 pr-16 text-xs outline-none transition focus:border-black dark:border-black dark:bg-gray-900"
                   disabled={webSearching}
                 />
@@ -395,6 +485,9 @@ export function SourcesPanel({
                 <Card className="group border-gray-200/80 bg-white/70 p-2 dark:border-gray-800 dark:bg-gray-900/60">
                   {(() => {
                     const statusMeta = getSourceStatusMeta(s.status);
+                    const isWebSource = s.sourceType === '联网检索';
+                    const isExpanded = isWebSource && expandedWebSourceId === s.id;
+                    const hostname = isWebSource ? extractHostname(s.fileUrl) : '';
                     return (
                       <>
                         <div className="flex items-center justify-between gap-2">
@@ -427,6 +520,49 @@ export function SourcesPanel({
                           {statusMeta.label}
                           {s.errorMessage ? ` — ${s.errorMessage}` : ''}
                         </p>
+                        {isWebSource && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedWebSourceId((prev) => (prev === s.id ? null : s.id))
+                              }
+                              className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-600 transition hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-100"
+                            >
+                              <span>{isExpanded ? '收起来源详情' : '查看来源详情'}</span>
+                              <ChevronDownIcon open={Boolean(isExpanded)} />
+                            </button>
+                            <div
+                              className={`overflow-hidden transition-all duration-300 ease-out ${
+                                isExpanded ? 'mt-2 max-h-44 opacity-100' : 'max-h-0 opacity-0'
+                              }`}
+                            >
+                              <div className="rounded-md border border-gray-200 bg-gray-50 p-2 text-[11px] text-gray-600 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-300">
+                                <p className="truncate">
+                                  域名：{hostname || '未知'}
+                                </p>
+                                <p className="mt-1 truncate">
+                                  时间：{formatTime(s.createdAt)}
+                                </p>
+                                <p className="mt-1 truncate">
+                                  状态：{statusMeta.label} · Chunks：{s.chunkCount ?? 0}
+                                </p>
+                                {s.fileUrl ? (
+                                  <a
+                                    href={s.fileUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="mt-1 block truncate text-blue-600 underline dark:text-blue-400"
+                                    onClick={(event) => event.stopPropagation()}
+                                    title={s.fileUrl}
+                                  >
+                                    来源链接：{s.fileUrl}
+                                  </a>
+                                ) : null}
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </>
                     );
                   })()}

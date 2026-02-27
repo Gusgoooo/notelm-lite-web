@@ -3,7 +3,7 @@ import { and, db, eq, inArray, notes } from 'db';
 import { getAgentSettings } from '@/lib/agent-settings';
 import { getNotebookAccess } from '@/lib/notebook-access';
 
-type GenerateMode = 'infographic' | 'summary' | 'mindmap' | 'webpage';
+type GenerateMode = 'infographic' | 'summary' | 'mindmap' | 'webpage' | 'paper_outline' | 'report';
 
 type NoteRow = {
   id: string;
@@ -363,6 +363,44 @@ async function generateWebpage(source: string, config: OpenRouterConfig, model: 
   return `\`\`\`html\n${html}\n\`\`\``;
 }
 
+async function generatePaperOutline(source: string, config: OpenRouterConfig, model: string, rolePrompt: string) {
+  return requestOpenRouterText({
+    config,
+    model,
+    systemPrompt: rolePrompt,
+    userPrompt:
+      `请根据以下资料撰写一份“可直接展开写作”的论文大纲（Markdown 格式）。\n` +
+      `要求：\n` +
+      `1) 包含：题目建议、摘要提纲、关键词、章节结构（至少5章）、每章段落目标；\n` +
+      `2) 每个章节下给出“段落撰写规范”（写作目标、证据要求、常见错误）；\n` +
+      `3) 全文使用简体中文；\n` +
+      `4) 输出为标准 Markdown（包含标题、列表、表格均可）；\n` +
+      `5) 仅基于输入内容，不要虚构事实。\n\n${source}`,
+  });
+}
+
+async function generateReport(source: string, config: OpenRouterConfig, model: string, rolePrompt: string) {
+  const generated = await requestOpenRouterText({
+    config,
+    model,
+    systemPrompt: rolePrompt,
+    userPrompt:
+      `请根据以下内容生成一个“研究报告”网页（HTML），用于可视化展示和阅读。\n` +
+      `要求：\n` +
+      `1) 输出一个完整 HTML（含内联 CSS/JS）；\n` +
+      `2) 报告结构至少含：摘要、关键发现、对比分析、方法与限制、行动建议；\n` +
+      `3) 使用多种展示方式（信息卡、时间线、表格、折叠块等）；\n` +
+      `4) 当涉及多组数据或多项指标时，必须包含图表可视化（可使用 Chart.js CDN）；\n` +
+      `5) 设计风格简洁专业，适合汇报；\n` +
+      `6) 严格基于输入，不编造。\n` +
+      `7) 仅输出一个 \`\`\`html 代码块。\n\n${source}`,
+  });
+
+  const html = extractHtmlBlock(generated);
+  if (!html) return generated.trim();
+  return `\`\`\`html\n${html}\n\`\`\``;
+}
+
 async function generateInfographic(input: {
   source: string;
   config: OpenRouterConfig;
@@ -427,6 +465,8 @@ function buildTitle(mode: GenerateMode, selected: NoteRow[]): string {
   const base = selected.length === 1 ? selected[0].title : `Merged ${selected.length} notes`;
   if (mode === 'infographic') return `${base} · 信息图`;
   if (mode === 'summary') return `${base} · 简化摘要`;
+  if (mode === 'paper_outline') return `${base} · 论文大纲`;
+  if (mode === 'report') return `${base} · 报告`;
   if (mode === 'webpage') return `${base} · 互动PPT`;
   return `${base} · 思维导图`;
 }
@@ -439,7 +479,9 @@ export async function POST(request: Request) {
       body?.mode === 'infographic' ||
       body?.mode === 'summary' ||
       body?.mode === 'mindmap' ||
-      body?.mode === 'webpage'
+      body?.mode === 'webpage' ||
+      body?.mode === 'paper_outline' ||
+      body?.mode === 'report'
         ? (body.mode as GenerateMode)
         : null;
     const noteIds = normalizeNoteIds(body?.noteIds);
@@ -501,6 +543,22 @@ export async function POST(request: Request) {
     }
     if (mode === 'webpage') {
       generatedContent = await generateWebpage(
+        source,
+        openrouterConfig,
+        settings.models.webpage,
+        settings.prompts.webpage
+      );
+    }
+    if (mode === 'paper_outline') {
+      generatedContent = await generatePaperOutline(
+        source,
+        openrouterConfig,
+        settings.models.summary,
+        settings.prompts.summary
+      );
+    }
+    if (mode === 'report') {
+      generatedContent = await generateReport(
         source,
         openrouterConfig,
         settings.models.webpage,

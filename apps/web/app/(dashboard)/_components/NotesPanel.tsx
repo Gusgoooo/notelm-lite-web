@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import ShinyText from '@/components/ShinyText';
 
 type Note = {
@@ -12,7 +14,7 @@ type Note = {
   createdAt: string;
 };
 
-type GenerateMode = 'infographic' | 'summary' | 'mindmap' | 'webpage';
+type GenerateMode = 'infographic' | 'summary' | 'mindmap' | 'webpage' | 'paper_outline' | 'report';
 
 function TrashIcon() {
   return (
@@ -81,6 +83,39 @@ function WebpageIcon() {
       <path d="M3 8h18" />
       <path d="M8 12h8M8 16h5" />
     </svg>
+  );
+}
+
+function OutlineIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M7 5h10M7 9h10M7 13h6M5 5h.01M5 9h.01M5 13h.01M7 17h10M5 17h.01" />
+    </svg>
+  );
+}
+
+function ReportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 4h16v16H4z" />
+      <path d="M8 14v3M12 10v7M16 12v5" />
+    </svg>
+  );
+}
+
+function LoadingIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5 animate-spin" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M21 12a9 9 0 1 1-3.2-6.9" />
+    </svg>
+  );
+}
+
+function MarkdownPreview({ content }: { content: string }) {
+  return (
+    <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-3 prose-headings:mb-2 prose-p:my-1 prose-li:my-0.5">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    </div>
   );
 }
 
@@ -172,7 +207,23 @@ function getDisplayTitle(note: Note): string {
   return t;
 }
 
-function getCardTypeLabel(input: { hasImage: boolean; hasMindmap: boolean; hasInteractivePpt: boolean }): string {
+function isPaperOutlineNote(note: Note): boolean {
+  return /论文大纲/.test(note.title);
+}
+
+function isReportNote(note: Note): boolean {
+  return /报告/.test(note.title);
+}
+
+function getCardTypeLabel(input: {
+  hasImage: boolean;
+  hasMindmap: boolean;
+  hasInteractivePpt: boolean;
+  hasReport: boolean;
+  hasPaperOutline: boolean;
+}): string {
+  if (input.hasReport) return '报告';
+  if (input.hasPaperOutline) return '论文大纲';
   if (input.hasInteractivePpt) return '互动PPT';
   if (input.hasMindmap) return '思维导图';
   if (input.hasImage) return '信息图';
@@ -187,6 +238,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
   const [expandedDraft, setExpandedDraft] = useState('');
   const [generating, setGenerating] = useState(false);
   const [generatingMode, setGeneratingMode] = useState<GenerateMode | null>(null);
+  const [generationProgress, setGenerationProgress] = useState(0);
   const [error, setError] = useState('');
   const [mermaidSvg, setMermaidSvg] = useState('');
   const [mermaidLoading, setMermaidLoading] = useState(false);
@@ -244,6 +296,14 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     () => getHtmlFromContent(expandedDraft),
     [expandedDraft]
   );
+  const expandedIsPaperOutline = useMemo(
+    () => (expandedNote ? isPaperOutlineNote(expandedNote) : false),
+    [expandedNote]
+  );
+  const expandedIsReport = useMemo(
+    () => (expandedNote ? isReportNote(expandedNote) : false),
+    [expandedNote]
+  );
 
   useEffect(() => {
     if (!expandedNote) return;
@@ -285,6 +345,21 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     };
   }, [expandedMermaid]);
 
+  useEffect(() => {
+    if (!generating) {
+      setGenerationProgress(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setGenerationProgress((prev) => {
+        if (prev >= 92) return 92;
+        const delta = Math.max(2, Math.round((100 - prev) / 14));
+        return Math.min(92, prev + delta);
+      });
+    }, 480);
+    return () => window.clearInterval(timer);
+  }, [generating]);
+
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
@@ -309,6 +384,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     if (!notebookId || selectedIds.length === 0 || generating) return;
     setGenerating(true);
     setGeneratingMode(mode);
+    setGenerationProgress(8);
     setError('');
     try {
       const res = await fetch('/api/notes/generate', {
@@ -320,12 +396,15 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
           mode,
         }),
       });
+      setGenerationProgress(52);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data?.error ?? '转换失败');
         return;
       }
       await fetchNotes();
+      setGenerationProgress(100);
+      await new Promise((resolve) => setTimeout(resolve, 260));
       if (typeof data?.note?.id === 'string') {
         setSelectedIds([data.note.id]);
         setExpandedId(data.note.id);
@@ -333,6 +412,8 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
         setSelectedIds([]);
       }
       window.dispatchEvent(new CustomEvent('notes-updated'));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '转换失败');
     } finally {
       setGenerating(false);
       setGeneratingMode(null);
@@ -343,7 +424,18 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     if (mode === 'infographic') return '信息图';
     if (mode === 'summary') return '摘要';
     if (mode === 'mindmap') return '思维导图';
+    if (mode === 'paper_outline') return '论文大纲';
+    if (mode === 'report') return '报告';
     return '互动PPT';
+  };
+
+  const modeDescription = (mode: GenerateMode) => {
+    if (mode === 'paper_outline') return '包含段落撰写规范，生成可直接展开写作的结构。';
+    if (mode === 'report') return '将内容组织为图文并茂的 HTML 报告，并优先加入图表展示。';
+    if (mode === 'infographic') return '正在归纳关键信息并生成信息图。';
+    if (mode === 'mindmap') return '正在抽取层级结构并生成思维导图。';
+    if (mode === 'summary') return '正在压缩信息并简化为短摘要。';
+    return '正在生成可交互的网页内容。';
   };
 
   if (!notebookId) {
@@ -401,6 +493,8 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
               const image = getImageFromContent(note.content);
               const cardMermaid = getMermaidFromContent(note.content);
               const cardHtml = getHtmlFromContent(note.content);
+              const isOutlineCard = isPaperOutlineNote(note);
+              const isReportCard = Boolean(cardHtml) && isReportNote(note);
               const isTextOnlyCard = !image && !cardMermaid && !cardHtml;
               const cardHeightClass = cardMermaid ? 'h-52' : isTextOnlyCard || cardHtml ? 'h-[126px]' : 'h-52';
               const previewText = toPreviewText(note.content);
@@ -427,6 +521,8 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
                           hasImage: Boolean(image),
                           hasMindmap: Boolean(cardMermaid),
                           hasInteractivePpt: Boolean(cardHtml),
+                          hasReport: isReportCard,
+                          hasPaperOutline: isOutlineCard,
                         })}
                       </p>
                     </div>
@@ -472,7 +568,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
                         <MindmapThumbnail code={cardMermaid} />
                       ) : cardHtml ? (
                         <p className="text-xs text-gray-500 dark:text-gray-400 h-full w-full flex items-center justify-center text-center px-0">
-                          互动PPT（可在展开后预览）
+                          {isReportCard ? '报告（可在展开后预览）' : '互动PPT（可在展开后预览）'}
                         </p>
                       ) : (
                         <p
@@ -553,12 +649,60 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
               <WebpageIcon />
               {generating && generatingMode === 'webpage' ? '正在生成互动PPT…' : '生成互动PPT'}
             </button>
+            <button
+              type="button"
+              onClick={() => void generateFromSelection('paper_outline')}
+              disabled={generating}
+              className="min-h-12 px-3 py-2 rounded bg-indigo-500/20 text-indigo-700 dark:bg-indigo-400/20 dark:text-indigo-300 disabled:opacity-50 inline-flex flex-col items-start justify-center"
+            >
+              <span className="text-sm font-medium inline-flex items-center gap-2">
+                <OutlineIcon />
+                {generating && generatingMode === 'paper_outline' ? '正在撰写论文大纲…' : '撰写论文大纲'}
+              </span>
+              <span className="pl-7 text-[11px] leading-4 opacity-80">包含段落撰写规范</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void generateFromSelection('report')}
+              disabled={generating}
+              className="min-h-12 px-3 py-2 rounded bg-cyan-500/20 text-cyan-700 dark:bg-cyan-400/20 dark:text-cyan-300 disabled:opacity-50 inline-flex flex-col items-start justify-center"
+            >
+              <span className="text-sm font-medium inline-flex items-center gap-2">
+                <ReportIcon />
+                {generating && generatingMode === 'report' ? '正在生成报告…' : '生成报告'}
+              </span>
+              <span className="pl-7 text-[11px] leading-4 opacity-80">HTML 报告 + 图表展示</span>
+            </button>
           </div>
           {generating && generatingMode && (
             <p className="text-xs text-gray-500 dark:text-gray-400">正在生成{modeLabel(generatingMode)}，请稍候…</p>
           )}
         </div>
       </div>
+
+      {generating && generatingMode && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-4 shadow-xl dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
+              <LoadingIcon />
+              <p className="text-sm font-semibold">正在生成{modeLabel(generatingMode)}</p>
+            </div>
+            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{modeDescription(generatingMode)}</p>
+            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+              <div
+                className="h-full rounded-full bg-blue-600 transition-all duration-300"
+                style={{ width: `${generationProgress}%` }}
+              />
+            </div>
+            <div className="mt-2 flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-600" />
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500 [animation-delay:150ms]" />
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400 [animation-delay:300ms]" />
+              <span className="ml-1">进度 {generationProgress}%</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {expandedNote && (
         <div className="fixed inset-0 z-50 bg-black/45 p-4 flex items-center justify-center">
@@ -633,7 +777,9 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
 
                   {expandedHtml && (
                     <div className="rounded border border-gray-200 dark:border-gray-800 p-2 bg-white dark:bg-gray-900 space-y-2">
-                      <p className="text-xs text-gray-500 dark:text-gray-400">互动PPT预览</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {expandedIsReport ? '报告预览' : '互动PPT预览'}
+                      </p>
                       <iframe
                         title="interactive-ppt-preview"
                         srcDoc={expandedHtml}
@@ -644,9 +790,13 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
                   )}
 
                   {!expandedImage && !expandedMermaid && !expandedHtml && (
-                    <pre className="w-full min-h-[55vh] text-sm whitespace-pre-wrap rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
-                      {expandedDraft}
-                    </pre>
+                    <div className="w-full min-h-[55vh] text-sm whitespace-pre-wrap rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+                      {expandedIsPaperOutline ? (
+                        <MarkdownPreview content={expandedDraft} />
+                      ) : (
+                        <pre className="whitespace-pre-wrap">{expandedDraft}</pre>
+                      )}
+                    </div>
                   )}
                 </>
               ) : (

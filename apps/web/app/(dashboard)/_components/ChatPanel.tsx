@@ -55,6 +55,7 @@ type ResearchState = {
 };
 
 const HISTORY_PAGE_SIZE = 20;
+const REPORT_ACTION_MARKER = '[[ACTION:REPORT]]';
 
 function toTimestamp(value: string | undefined): number | null {
   if (!value) return null;
@@ -89,6 +90,20 @@ function buildNoteTitleFromAnswer(content: string): string {
     .replace(/[*_`~]/g, '')
     .trim();
   return cleaned ? cleaned.slice(0, 28) : '聊天摘录';
+}
+
+function parseMessageActions(content: string): {
+  displayContent: string;
+  canConvertReport: boolean;
+} {
+  const canConvertReport = content.includes(REPORT_ACTION_MARKER);
+  if (!canConvertReport) {
+    return { displayContent: content, canConvertReport: false };
+  }
+  return {
+    displayContent: content.replaceAll(REPORT_ACTION_MARKER, '').trim(),
+    canConvertReport: true,
+  };
 }
 
 function MarkdownContent({ content }: { content: string }) {
@@ -147,6 +162,11 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [refineStep, setRefineStep] = useState<0 | 1 | 2>(0);
   const [refineHint, setRefineHint] = useState('');
   const [refineError, setRefineError] = useState('');
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportStep, setReportStep] = useState<0 | 1 | 2 | 3>(0);
+  const [reportHint, setReportHint] = useState('');
+  const [reportError, setReportError] = useState('');
+  const [reportRunningMessageId, setReportRunningMessageId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -226,44 +246,58 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [tailVersion]);
 
-  const send = async (overrideText?: string) => {
-    const text = (overrideText ?? input).trim();
-    if (!text || !notebookId || loading) return;
-    setInput('');
-    setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: 'user', content: text }]);
-    setTailVersion((v) => v + 1);
-    setLoading(true);
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notebookId, conversationId, userMessage: text }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
+  const send = useCallback(
+    async (overrideText?: string) => {
+      const text = (overrideText ?? input).trim();
+      if (!text || !notebookId || loading) return;
+      setInput('');
+      setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: 'user', content: text }]);
+      setTailVersion((v) => v + 1);
+      setLoading(true);
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notebookId, conversationId, userMessage: text }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          setMessages((prev) => [
+            ...prev,
+            { id: `a-${Date.now()}`, role: 'assistant', content: `Error: ${err.error ?? res.statusText}` },
+          ]);
+          setTailVersion((v) => v + 1);
+          return;
+        }
+        const data = await res.json();
+        setConversationId(data.conversationId);
         setMessages((prev) => [
           ...prev,
-          { id: `a-${Date.now()}`, role: 'assistant', content: `Error: ${err.error ?? res.statusText}` },
+          {
+            id: `a-${Date.now()}`,
+            role: 'assistant',
+            content: data.answer,
+            citations: Array.isArray(data.citations) ? data.citations : [],
+          },
         ]);
         setTailVersion((v) => v + 1);
-        return;
+      } finally {
+        setLoading(false);
       }
-      const data = await res.json();
-      setConversationId(data.conversationId);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `a-${Date.now()}`,
-          role: 'assistant',
-          content: data.answer,
-          citations: Array.isArray(data.citations) ? data.citations : [],
-        },
-      ]);
-      setTailVersion((v) => v + 1);
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    [conversationId, input, loading, notebookId]
+  );
+
+  useEffect(() => {
+    const onChatSendMessage = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      const message = typeof detail?.message === 'string' ? detail.message.trim() : '';
+      if (!message) return;
+      void send(message);
+    };
+    window.addEventListener('chat-send-message', onChatSendMessage as EventListener);
+    return () => window.removeEventListener('chat-send-message', onChatSendMessage as EventListener);
+  }, [send]);
 
   const selectDirection = useCallback(
     async (direction: ResearchDirection) => {
@@ -317,6 +351,60 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       }
     },
     [notebookId, selectingDirectionId, researchState, fetchHistoryPage]
+  );
+
+  const convertInsightToReport = useCallback(
+    async (message: Message) => {
+      if (!notebookId || reportRunningMessageId) return;
+      const parsed = parseMessageActions(message.content);
+      const answerText = parsed.displayContent.trim();
+      if (!answerText) return;
+
+      setReportOpen(true);
+      setReportError('');
+      setReportStep(1);
+      setReportHint('正在保存洞察内容为笔记素材…');
+      setReportRunningMessageId(message.id);
+      try {
+        const createRes = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/notes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: '论文对比洞察',
+            content: answerText,
+          }),
+        });
+        const createData = await createRes.json().catch(() => ({}));
+        if (!createRes.ok || !createData?.id) {
+          throw new Error(createData?.error ?? '保存洞察素材失败');
+        }
+
+        setReportStep(2);
+        setReportHint('正在转换成互动PPT…');
+        const genRes = await fetch('/api/notes/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            notebookId,
+            noteIds: [String(createData.id)],
+            mode: 'report',
+          }),
+        });
+        const genData = await genRes.json().catch(() => ({}));
+        if (!genRes.ok) {
+          throw new Error(genData?.error ?? '转换报告失败');
+        }
+
+        setReportStep(3);
+        setReportHint('已完成，互动PPT已添加到我的笔记。');
+        window.dispatchEvent(new CustomEvent('notes-updated'));
+      } catch (e) {
+        setReportError(e instanceof Error ? e.message : '转换报告失败');
+      } finally {
+        setReportRunningMessageId(null);
+      }
+    },
+    [notebookId, reportRunningMessageId]
   );
 
   const renderResearchSection = () => {
@@ -390,7 +478,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     if (researchState.phase === 'ready' && Array.isArray(researchState.starterQuestions) && researchState.starterQuestions.length > 0) {
       return (
         <div className="space-y-2 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
-          <p className="text-xs text-gray-600 dark:text-gray-300">可以直接点下面问题继续深入：</p>
+          <p className="text-xs text-gray-600 dark:text-gray-300">可继续探索的启发问题：</p>
           <div className="flex flex-wrap gap-2">
             {researchState.starterQuestions.slice(0, 3).map((q, idx) => (
               <button
@@ -398,7 +486,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                 type="button"
                 onClick={() => void send(q)}
                 disabled={loading}
-                className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs text-gray-700 transition hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                className="rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-[11px] text-gray-700 transition hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
               >
                 {q}
               </button>
@@ -463,96 +551,109 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                 <p className="text-center text-xs text-red-600 dark:text-red-400">{historyError}</p>
               )}
 
-              {messages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`w-full max-w-[680px] rounded-xl border shadow-sm ${
-                    m.role === 'user' ? 'px-3 py-2' : 'p-3'
-                  } ${
-                    m.role === 'user'
-                      ? 'ml-auto mr-0 border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800'
-                      : 'ml-0 mr-auto border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900'
-                  }`}
-                >
-                  <div className="text-sm">
-                    <MarkdownContent content={m.content} />
-                  </div>
-                  {m.role === 'assistant' && (
-                    <>
-                      <div className="mt-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 px-0 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
-                          onClick={async () => {
-                            if (!notebookId) return;
-                            const title = buildNoteTitleFromAnswer(m.content);
-                            const content =
-                              m.content +
-                              (m.citations && m.citations.length > 0
-                                ? '\n\n## Sources\n\n' +
-                                  m.citations
-                                    .map(
-                                      (c) =>
-                                        `- **${c.sourceTitle}**${
-                                          c.pageStart != null
-                                            ? ` (p.${c.pageStart}${
-                                                c.pageEnd != null && c.pageEnd !== c.pageStart
-                                                  ? `-${c.pageEnd}`
-                                                  : ''
-                                              })`
-                                            : ''
-                                        }\n  ${c.snippet}`
-                                    )
-                                    .join('\n')
-                                : '');
-                            const res = await fetch(
-                              `/api/notebooks/${encodeURIComponent(notebookId)}/notes`,
-                              {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ title, content }),
-                              }
-                            );
-                            if (res.ok) window.dispatchEvent(new CustomEvent('notes-updated'));
-                          }}
-                        >
-                          保存到笔记
-                        </Button>
-                      </div>
-                      {m.citations && m.citations.length > 0 && (
-                        <div className="mt-3 border-t pt-3">
-                          <span className="text-xs font-medium text-gray-500 dark:text-gray-400">引用来源</span>
-                          <ul className="mt-2 space-y-1">
-                            {m.citations.map((c, i) => (
-                              <li key={i} className="text-xs">
-                                <details className="group">
-                                  <summary className="flex cursor-pointer list-none items-center gap-1.5 text-gray-600 hover:underline dark:text-gray-300">
-                                    <Badge variant="secondary" className="h-5 w-5 justify-center rounded-full px-0">
-                                      {c.refNumber ?? i + 1}
-                                    </Badge>
-                                    <span>{c.sourceTitle}</span>
-                                    {c.pageStart != null && (
-                                      <span className="text-gray-500">
-                                        {c.pageEnd != null && c.pageEnd !== c.pageStart
-                                          ? ` p.${c.pageStart}-${c.pageEnd}`
-                                          : ` p.${c.pageStart}`}
-                                      </span>
-                                    )}
-                                  </summary>
-                                  <p className="mt-1 whitespace-pre-wrap border-l-2 border-gray-200 pl-4 text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                                    {c.fullContent ?? c.snippet}
-                                  </p>
-                                </details>
-                              </li>
-                            ))}
-                          </ul>
+              {messages.map((m) => {
+                const parsed = parseMessageActions(m.content);
+                return (
+                  <div
+                    key={m.id}
+                    className={`w-full max-w-[680px] rounded-xl border shadow-sm ${
+                      m.role === 'user' ? 'px-3 py-2' : 'p-3'
+                    } ${
+                      m.role === 'user'
+                        ? 'ml-auto mr-0 border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800'
+                        : 'ml-0 mr-auto border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900'
+                    }`}
+                  >
+                    <div className="text-sm">
+                      <MarkdownContent content={parsed.displayContent} />
+                    </div>
+                    {m.role === 'assistant' && (
+                      <>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-0 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                            onClick={async () => {
+                              if (!notebookId) return;
+                              const title = buildNoteTitleFromAnswer(parsed.displayContent);
+                              const content =
+                                parsed.displayContent +
+                                (m.citations && m.citations.length > 0
+                                  ? '\n\n## Sources\n\n' +
+                                    m.citations
+                                      .map(
+                                        (c) =>
+                                          `- **${c.sourceTitle}**${
+                                            c.pageStart != null
+                                              ? ` (p.${c.pageStart}${
+                                                  c.pageEnd != null && c.pageEnd !== c.pageStart
+                                                    ? `-${c.pageEnd}`
+                                                    : ''
+                                                })`
+                                              : ''
+                                          }\n  ${c.snippet}`
+                                      )
+                                      .join('\n')
+                                  : '');
+                              const res = await fetch(
+                                `/api/notebooks/${encodeURIComponent(notebookId)}/notes`,
+                                {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ title, content }),
+                                }
+                              );
+                              if (res.ok) window.dispatchEvent(new CustomEvent('notes-updated'));
+                            }}
+                          >
+                            保存到笔记
+                          </Button>
+                          {parsed.canConvertReport ? (
+                            <button
+                              type="button"
+                              onClick={() => void convertInsightToReport(m)}
+                              disabled={reportRunningMessageId === m.id}
+                              className="inline-flex h-6 items-center rounded-full border border-gray-300 bg-gray-100 px-2 text-[11px] text-gray-700 transition hover:bg-gray-200 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                            >
+                              {reportRunningMessageId === m.id ? '转换中…' : '转换成报告'}
+                            </button>
+                          ) : null}
                         </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              ))}
+                        {m.citations && m.citations.length > 0 && (
+                          <div className="mt-3 border-t pt-3">
+                            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">引用来源</span>
+                            <ul className="mt-2 space-y-1">
+                              {m.citations.map((c, i) => (
+                                <li key={i} className="text-xs">
+                                  <details className="group">
+                                    <summary className="flex cursor-pointer list-none items-center gap-1.5 text-gray-600 hover:underline dark:text-gray-300">
+                                      <Badge variant="secondary" className="h-5 w-5 justify-center rounded-full px-0">
+                                        {c.refNumber ?? i + 1}
+                                      </Badge>
+                                      <span>{c.sourceTitle}</span>
+                                      {c.pageStart != null && (
+                                        <span className="text-gray-500">
+                                          {c.pageEnd != null && c.pageEnd !== c.pageStart
+                                            ? ` p.${c.pageStart}-${c.pageEnd}`
+                                            : ` p.${c.pageStart}`}
+                                        </span>
+                                      )}
+                                    </summary>
+                                    <p className="mt-1 whitespace-pre-wrap border-l-2 border-gray-200 pl-4 text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                                      {c.fullContent ?? c.snippet}
+                                    </p>
+                                  </details>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
             </>
           )}
           {loading && (
@@ -613,6 +714,12 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">正在整理研究资料</h3>
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{refineHint}</p>
+            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+              <div
+                className="h-full rounded-full bg-blue-600 transition-all duration-500"
+                style={{ width: `${refineStep === 1 ? 45 : refineStep === 2 ? 100 : 0}%` }}
+              />
+            </div>
             <div className="mt-4 space-y-2">
               {['开始重新整理资料', '完成'].map((label, idx) => {
                 const stepNumber = (idx + 1) as 1 | 2;
@@ -631,7 +738,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                   >
                     <span
                       className={`inline-block h-2 w-2 rounded-full ${
-                        done ? 'bg-green-600' : running ? 'bg-blue-600' : 'bg-gray-400'
+                        done ? 'bg-green-600' : running ? 'bg-blue-600 animate-pulse' : 'bg-gray-400'
                       }`}
                     />
                     <span>{label}</span>
@@ -652,6 +759,63 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                   }
                 }}
                 disabled={Boolean(selectingDirectionId)}
+              >
+                关闭
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {reportOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">正在生成报告</h3>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{reportHint}</p>
+            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+              <div
+                className="h-full rounded-full bg-blue-600 transition-all duration-500"
+                style={{ width: `${reportStep === 1 ? 35 : reportStep === 2 ? 75 : reportStep === 3 ? 100 : 0}%` }}
+              />
+            </div>
+            <div className="mt-4 space-y-2">
+              {['保存洞察素材', '转换报告', '完成'].map((label, idx) => {
+                const stepNumber = (idx + 1) as 1 | 2 | 3;
+                const done = reportStep > stepNumber;
+                const running = reportStep === stepNumber;
+                return (
+                  <div
+                    key={label}
+                    className={`flex items-center gap-2 rounded border px-2 py-2 text-xs ${
+                      done
+                        ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/20 dark:text-green-300'
+                        : running
+                          ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-300'
+                          : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-2 w-2 rounded-full ${
+                        done ? 'bg-green-600' : running ? 'bg-blue-600 animate-pulse' : 'bg-gray-400'
+                      }`}
+                    />
+                    <span>{label}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {reportError ? <p className="mt-3 text-xs text-red-600 dark:text-red-400">{reportError}</p> : null}
+            <div className="mt-4 flex justify-end">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  if (!reportRunningMessageId) {
+                    setReportOpen(false);
+                    setReportStep(0);
+                    setReportHint('');
+                    setReportError('');
+                  }
+                }}
+                disabled={Boolean(reportRunningMessageId)}
               >
                 关闭
               </Button>

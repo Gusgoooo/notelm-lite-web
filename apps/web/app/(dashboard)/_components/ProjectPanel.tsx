@@ -99,6 +99,7 @@ export function ProjectPanel() {
   const [bootstrapHint, setBootstrapHint] = useState('');
 
   const presetTopics = ['想研究AIGC和设计', '教育领域AI应用', '乡村振兴相关', '新媒体传播'];
+  const bootstrapProgress = bootstrapStep === 1 ? 35 : bootstrapStep === 2 ? 72 : bootstrapStep === 3 ? 100 : 0;
 
   const fetchMine = async () => {
     setLoadingMine(true);
@@ -274,9 +275,6 @@ export function ProjectPanel() {
         </div>
 
         <div className="mb-5 flex items-center gap-3">
-          <Button onClick={createNotebook} disabled={creating}>
-            {creating ? '创建中…' : '新建 Notebook'}
-          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -323,8 +321,11 @@ export function ProjectPanel() {
           </section>
 
           <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-4 dark:border-gray-800 dark:bg-gray-900/40">
-            <div className="mb-3">
+            <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">我的Notebook</h2>
+              <Button size="sm" onClick={createNotebook} disabled={creating}>
+                {creating ? '创建中…' : '新建空白notebook'}
+              </Button>
             </div>
 
             {loadingMine ? (
@@ -470,6 +471,12 @@ export function ProjectPanel() {
           <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">正在创建研究 Notebook</h3>
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{bootstrapHint}</p>
+            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+              <div
+                className="h-full rounded-full bg-blue-600 transition-all duration-500"
+                style={{ width: `${bootstrapProgress}%` }}
+              />
+            </div>
 
             <div className="mt-4 space-y-2">
               {[
@@ -493,7 +500,7 @@ export function ProjectPanel() {
                   >
                     <span
                       className={`inline-block h-2 w-2 rounded-full ${
-                        done ? 'bg-green-600' : running ? 'bg-blue-600' : 'bg-gray-400'
+                        done ? 'bg-green-600' : running ? 'bg-blue-600 animate-pulse' : 'bg-gray-400'
                       }`}
                     />
                     <span>{label}</span>
