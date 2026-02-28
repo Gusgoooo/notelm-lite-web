@@ -284,7 +284,7 @@ export function ProjectPanel() {
     setBootstrapError('');
     setBootstrapStep(1);
     bootstrapNotebookIdRef.current = null;
-    setBootstrapHint('开始联网检索相关来源（系统会自动扩展来源数量），稍后您也可以自己上传论文补充。');
+    setBootstrapHint('开始联网检索相关来源，稍后您也可以自己上传论文补充。');
 
     try {
       const firstController = new AbortController();
@@ -600,10 +600,13 @@ export function ProjectPanel() {
               <span>进行中 {bootstrapElapsed}s</span>
               <span>进度 {bootstrapProgress}%</span>
             </div>
+            <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+              若等待时间较久，请稍候，当前任务仍在持续运行中。
+            </p>
 
             <div className="mt-4 space-y-2">
               {[
-                '开始联网检索相关论文（最多20个来源）',
+                '开始联网检索相关来源',
                 '分析并延展研究方向',
                 '完成',
               ].map((label, idx) => {
