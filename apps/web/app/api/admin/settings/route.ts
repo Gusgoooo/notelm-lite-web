@@ -45,6 +45,11 @@ function parseInput(body: unknown): AgentSettingsInput {
           .map((item) => String(item).trim())
           .filter(Boolean)
       : [],
+    knowledgeUnitTemplates: Array.isArray(raw.knowledgeUnitTemplates)
+      ? raw.knowledgeUnitTemplates
+          .filter((item) => item && typeof item === 'object')
+          .map((item) => item as never)
+      : [],
   };
 }
 

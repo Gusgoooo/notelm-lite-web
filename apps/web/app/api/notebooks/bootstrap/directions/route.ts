@@ -113,25 +113,37 @@ function normalizeDirections(payload: unknown, topicKeywords: string[]): Researc
     if (!item || typeof item !== 'object') continue;
     const row = item as Record<string, unknown>;
     const title = String(row.title ?? row.topic ?? '').trim().slice(0, 80);
-    const researchQuestion = String(row.researchQuestion ?? row.question ?? '').trim().slice(0, 220);
-    const coreVariables = String(row.coreVariables ?? row.variables ?? '').trim().slice(0, 120);
-    const researchMethod = String(row.researchMethod ?? row.method ?? '').trim().slice(0, 120);
-    const dataSourceAccess = String(row.dataSourceAccess ?? row.dataSources ?? '').trim().slice(0, 120);
-    const trendHeat = String(row.trendHeat ?? row.trend ?? '').trim().slice(0, 80);
-    const sourceBasis = String(row.sourceBasis ?? row.evidence ?? row.basis ?? '')
+    const researchQuestion = String(
+      row.researchQuestion ?? row.summary ?? row.finding ?? row.question ?? ''
+    )
+      .trim()
+      .slice(0, 220);
+    const evidenceCountRaw = Number.parseInt(String(row.evidenceCount ?? row.mentions ?? row.count ?? ''), 10);
+    const evidenceCount = Number.isFinite(evidenceCountRaw) ? Math.max(1, evidenceCountRaw) : undefined;
+    const sourceBasis = String(row.sourceBasis ?? row.evidenceSummary ?? row.evidence ?? row.basis ?? '')
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, 220);
     if (!title || !researchQuestion) continue;
+    const evidenceSummary =
+      sourceBasis ||
+      (evidenceCount
+        ? `被 ${evidenceCount} 条来源反复提及`
+        : '来自多条来源的重复信息，值得继续深挖');
     const normalized: ResearchDirection = {
       id: `dir_${primary.length + secondary.length + 1}`,
       title,
       researchQuestion,
-      coreVariables: coreVariables || '自变量 / 因变量需进一步界定',
-      researchMethod: researchMethod || '混合方法（定量 + 定性）',
-      dataSourceAccess: dataSourceAccess || '可通过公开数据库和行业报告收集',
-      difficultyStars: normalizeStars(row.difficultyStars ?? row.difficulty ?? 3),
-      trendHeat: trendHeat || (sourceBasis ? '有一定研究热度，值得继续跟进' : '可进一步验证研究价值'),
+      evidenceCount,
+      evidenceSummary,
+      coreVariables: '后续深入时再细化关键变量',
+      researchMethod: '基于当前核心发现继续追问',
+      dataSourceAccess: '沿用当前已引入的来源继续扩展',
+      difficultyStars: normalizeStars(row.difficultyStars ?? row.difficulty ?? 2),
+      trendHeat:
+        evidenceCount != null
+          ? `被 ${evidenceCount} 条来源提及`
+          : '来自当前已收集来源的高频信息',
     };
     if (hasKeywordOverlap(`${title} ${researchQuestion}`, topicKeywords)) {
       primary.push(normalized);
@@ -139,7 +151,7 @@ function normalizeDirections(payload: unknown, topicKeywords: string[]): Researc
       secondary.push(normalized);
     }
   }
-  return [...primary, ...secondary].slice(0, 5).map((item, index) => ({
+  return [...primary, ...secondary].slice(0, 4).map((item, index) => ({
     ...item,
     id: `dir_${index + 1}`,
   }));
@@ -147,53 +159,58 @@ function normalizeDirections(payload: unknown, topicKeywords: string[]): Researc
 
 function buildFallbackDirections(topic: string, topicKeywords: string[]): ResearchDirection[] {
   const anchor = topicKeywords[0] || topic.replace(/\s+/g, '').slice(0, 18) || '该主题';
-  const templates: Array<Pick<ResearchDirection, 'title' | 'researchQuestion' | 'coreVariables' | 'researchMethod' | 'dataSourceAccess' | 'trendHeat'>> = [
+  const templates: Array<
+    Pick<
+      ResearchDirection,
+      'title' | 'researchQuestion' | 'evidenceCount' | 'evidenceSummary' | 'coreVariables' | 'researchMethod' | 'dataSourceAccess' | 'trendHeat'
+    >
+  > = [
     {
-      title: `${anchor}现状与需求`,
-      researchQuestion: `${anchor}当前最核心的需求、痛点与应用场景是什么？`,
-      coreVariables: `${anchor}需求强度 / 场景差异 / 用户类型`,
-      researchMethod: '案例分析 + 访谈',
-      dataSourceAccess: '公开案例、行业报告、用户反馈',
-      trendHeat: '适合作为入门方向，容易快速形成问题框架',
+      title: `${anchor}的高频核心问题`,
+      researchQuestion: `当前来源最集中提到的是哪些与${anchor}直接相关的问题与现象。`,
+      evidenceCount: 3,
+      evidenceSummary: `多条来源都把焦点放在${anchor}的核心问题上`,
+      coreVariables: '后续深入时再细化关键变量',
+      researchMethod: '基于当前核心发现继续追问',
+      dataSourceAccess: '沿用当前已引入的来源继续扩展',
+      trendHeat: '被 3 条来源提及',
     },
     {
-      title: `${anchor}关键影响因素`,
-      researchQuestion: `哪些关键变量会显著影响${anchor}的结果或效果？`,
-      coreVariables: `关键变量 / 结果指标 / 外部条件`,
-      researchMethod: '定量分析 + 对比研究',
-      dataSourceAccess: '公开数据、二手研究资料',
-      trendHeat: '适合做因果关系或相关性分析',
+      title: `${anchor}最常见的落地场景`,
+      researchQuestion: `当前资料里反复出现的应用场景或落地路径，能说明${anchor}最值得先看的切入口。`,
+      evidenceCount: 2,
+      evidenceSummary: `至少 2 条来源在讨论${anchor}的具体场景`,
+      coreVariables: '后续深入时再细化关键变量',
+      researchMethod: '基于当前核心发现继续追问',
+      dataSourceAccess: '沿用当前已引入的来源继续扩展',
+      trendHeat: '被 2 条来源提及',
     },
     {
-      title: `${anchor}落地路径`,
-      researchQuestion: `${anchor}从概念到落地的关键步骤与约束条件是什么？`,
-      coreVariables: `资源投入 / 执行路径 / 风险约束`,
-      researchMethod: '流程拆解 + 案例复盘',
-      dataSourceAccess: '公开方案、项目案例、政策文件',
-      trendHeat: '适合形成操作性较强的研究结论',
+      title: `${anchor}的关键判断依据`,
+      researchQuestion: `当前来源里能支撑${anchor}判断的关键依据，主要集中在哪几类证据。`,
+      evidenceCount: 2,
+      evidenceSummary: `围绕${anchor}的判断依据已经能抽出初步共识`,
+      coreVariables: '后续深入时再细化关键变量',
+      researchMethod: '基于当前核心发现继续追问',
+      dataSourceAccess: '沿用当前已引入的来源继续扩展',
+      trendHeat: '被 2 条来源提及',
     },
     {
-      title: `${anchor}效果评估`,
-      researchQuestion: `如何评估${anchor}的实际效果、收益与边界？`,
-      coreVariables: `效果指标 / 成本收益 / 适用边界`,
-      researchMethod: '指标设计 + 对比评估',
-      dataSourceAccess: '评测报告、案例数据、行业基准',
-      trendHeat: '适合延展为评估框架型研究',
-    },
-    {
-      title: `${anchor}风险与争议`,
-      researchQuestion: `${anchor}当前最值得关注的风险、争议与不确定性是什么？`,
-      coreVariables: `风险类型 / 争议点 / 影响范围`,
-      researchMethod: '文献梳理 + 争议比较',
-      dataSourceAccess: '评论文章、案例复盘、研究综述',
-      trendHeat: '适合补充反证与边界条件',
+      title: `${anchor}的争议与不确定点`,
+      researchQuestion: `当前资料里关于${anchor}仍然没有讲清楚、值得继续追问的部分是什么。`,
+      evidenceCount: 1,
+      evidenceSummary: `当前来源已经暴露出${anchor}的若干待验证问题`,
+      coreVariables: '后续深入时再细化关键变量',
+      researchMethod: '基于当前核心发现继续追问',
+      dataSourceAccess: '沿用当前已引入的来源继续扩展',
+      trendHeat: '被 1 条以上来源提及',
     },
   ];
 
-  return templates.slice(0, 5).map((item, index) => ({
+  return templates.slice(0, 4).map((item, index) => ({
     id: `dir_${index + 1}`,
     ...item,
-    difficultyStars: 3,
+    difficultyStars: 2,
   }));
 }
 
@@ -229,16 +246,17 @@ async function generateDirections(input: {
             `研究主题：${input.topic}\n\n` +
             `原问题关键词：${topicKeywords.join('、') || input.topic}\n\n` +
             `参考材料（来自联网检索来源摘要）：\n${input.context}\n\n` +
-            `请延展 3 到 5 个“可直接开题”的研究方向，每个方向包含字段：\n` +
-            `title, researchQuestion, coreVariables, researchMethod, dataSourceAccess, difficultyStars(1-5), trendHeat, sourceBasis。\n` +
+            `请先总结 3 到 4 个“核心发现卡片”，每个卡片都必须短、小、硬，不要做成长文摘要。每个卡片包含字段：\n` +
+            `title, summary, evidenceCount, evidenceSummary。\n` +
             `要求：\n` +
-            `0) 请优先基于来源归纳，但如果来源不够完整，也可以做谨慎延展；sourceBasis 可以简短，不必过长；\n` +
-            `1) 方向必须与用户原始问题明显相关，尽量保留原问题关键词；\n` +
-            `2) 研究问题尽量具体、可提问；\n` +
-            `3) 方法和数据来源可给出相对宽松但合理的建议；\n` +
-            `4) difficultyStars 必须为数字；\n` +
-            `5) 全部使用简体中文；\n` +
-            `6) 不要因为材料不完美就拒绝输出，优先给出可研究的方向。`,
+            `0) 请优先基于来源归纳，不要编造成果；\n` +
+            `1) 每张卡片必须和用户原始问题明显相关，尽量保留原问题关键词；\n` +
+            `2) summary 只写一句精简说明，强调为什么这条发现值得继续探索；\n` +
+            `3) evidenceCount 给出一个合理的整数，表示这条发现被多少条来源重复提及；\n` +
+            `4) evidenceSummary 只写一句非常短的依据说明；\n` +
+            `5) 按“被提及次数”和信息密度优先排序；\n` +
+            `6) 全部使用简体中文；\n` +
+            `7) 不要因为材料不完美就拒绝输出，优先给出可继续探索的核心发现。`,
         },
       ],
       stream: false,
@@ -268,15 +286,15 @@ async function generateDirections(input: {
     (payload as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content ?? ''
   );
   const parsed = tryParseJson(content);
-  const parsedDirections = normalizeDirections(parsed, topicKeywords);
+    const parsedDirections = normalizeDirections(parsed, topicKeywords);
   if (parsedDirections.length >= 3) {
-    return parsedDirections.slice(0, 5);
+    return parsedDirections.slice(0, 4);
   }
 
   const fallbackDirections = buildFallbackDirections(input.topic, topicKeywords);
   const combined = [...parsedDirections, ...fallbackDirections]
     .filter((item, index, arr) => arr.findIndex((entry) => entry.title === item.title) === index)
-    .slice(0, 5)
+    .slice(0, 4)
     .map((item, index) => ({ ...item, id: `dir_${index + 1}` }));
 
   if (combined.length >= 3) {
@@ -324,7 +342,7 @@ export async function POST(request: Request) {
 
     if (!context.trim()) {
       return NextResponse.json(
-        { error: '当前检索来源尚不足以生成研究议题，请先等待来源处理完成或补充全文来源' },
+        { error: '当前检索来源尚不足以总结核心发现，请先等待来源处理完成或补充全文来源' },
         { status: 409 }
       );
     }
@@ -355,7 +373,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error(error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to generate directions' },
+      { error: error instanceof Error ? error.message : 'Failed to generate findings' },
       { status: 500 }
     );
   }

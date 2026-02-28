@@ -7,6 +7,8 @@ export type ResearchDirection = {
   id: string;
   title: string;
   researchQuestion: string;
+  evidenceCount?: number;
+  evidenceSummary?: string;
   coreVariables: string;
   researchMethod: string;
   dataSourceAccess: string;
@@ -131,4 +133,3 @@ export async function addAssistantMessage(input: {
   });
   return messageId;
 }
-

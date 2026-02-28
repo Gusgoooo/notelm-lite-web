@@ -10,6 +10,16 @@ export type FeatureMode =
 
 export type FeatureModels = Record<FeatureMode, string>;
 export type FeaturePrompts = Record<FeatureMode, string>;
+export type KnowledgeUnitTemplate = {
+  id: string;
+  label: string;
+  role: string;
+  description: string;
+  dimensions: Array<{
+    name: string;
+    children: string[];
+  }>;
+};
 
 export type AgentSettings = {
   openrouterApiKey: string;
@@ -18,6 +28,7 @@ export type AgentSettings = {
   prompts: FeaturePrompts;
   researchDirectionsPrompt: string;
   paperOutlineFormats: string[];
+  knowledgeUnitTemplates: KnowledgeUnitTemplate[];
 };
 
 const SETTINGS_ID = 'global';
@@ -55,7 +66,49 @@ const DEFAULT_PROMPTS: FeaturePrompts = {
 
 const DEFAULT_PAPER_OUTLINE_FORMATS = ['默认格式', '硕士学位论文', '本科毕业论文', '期刊'];
 const DEFAULT_RESEARCH_DIRECTIONS_PROMPT =
-  '你是资深研究选题顾问。你只能基于用户提供的来源材料归纳并发散研究议题，不允许脱离来源虚构。所有方向都必须紧扣用户原始问题，并保留原问题中的关键关键词。请输出 JSON，格式为 {"directions":[...]}，不要输出 markdown，不要输出额外说明。';
+  '你是资深研究分析顾问。你只能基于用户提供的来源材料归纳核心发现，不允许脱离来源虚构。所有卡片都必须紧扣用户原始问题，并保留原问题中的关键关键词。请输出 JSON，格式为 {"directions":[...]}，不要输出 markdown，不要输出额外说明。';
+const DEFAULT_KNOWLEDGE_UNIT_TEMPLATES: KnowledgeUnitTemplate[] = [
+  {
+    id: 'market_analyst',
+    label: '市场研究顾问',
+    role: '面向市场趋势、竞争格局、需求信号与用户决策链进行结构化分析。',
+    description: '适合行业扫描、市场空间判断、需求变化跟踪。',
+    dimensions: [
+      { name: '市场机会', children: ['需求信号', '增长驱动', '进入门槛'] },
+      { name: '竞争格局', children: ['主要玩家', '差异化', '替代风险'] },
+    ],
+  },
+  {
+    id: 'product_strategist',
+    label: '产品策略顾问',
+    role: '聚焦产品场景、用户痛点、方案路径与验证指标。',
+    description: '适合产品探索、功能方向评估、场景优先级排序。',
+    dimensions: [
+      { name: '用户与场景', children: ['目标用户', '核心痛点', '使用场景'] },
+      { name: '方案策略', children: ['方案路径', '验证指标', '风险约束'] },
+    ],
+  },
+  {
+    id: 'academic_reviewer',
+    label: '学术综述顾问',
+    role: '围绕研究问题、定义、方法、证据冲突与理论边界进行收敛。',
+    description: '适合文献综述、学术研究设计、证据对齐。',
+    dimensions: [
+      { name: '研究框架', children: ['研究问题', '概念定义', '范围假设'] },
+      { name: '证据结构', children: ['支持证据', '冲突证据', '研究空白'] },
+    ],
+  },
+  {
+    id: 'due_diligence',
+    label: '投融资尽调顾问',
+    role: '聚焦商业可行性、风险点、关键指标与验证材料。',
+    description: '适合商业尽调、投资判断、项目风险盘点。',
+    dimensions: [
+      { name: '商业判断', children: ['收入逻辑', '成本结构', '增长约束'] },
+      { name: '风险盘点', children: ['关键风险', '待验证事项', '下一步核验'] },
+    ],
+  },
+];
 
 function toCleanString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -111,6 +164,42 @@ function mergePaperOutlineFormats(input: unknown): string[] {
   return out.length > 0 ? out.slice(0, 12) : [...DEFAULT_PAPER_OUTLINE_FORMATS];
 }
 
+function mergeKnowledgeUnitTemplates(input: unknown): KnowledgeUnitTemplate[] {
+  if (!Array.isArray(input)) return [...DEFAULT_KNOWLEDGE_UNIT_TEMPLATES];
+  const out: KnowledgeUnitTemplate[] = [];
+  const seen = new Set<string>();
+  for (const item of input) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    const id = toCleanString(row.id) || `ku_tpl_${out.length + 1}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const dimensions = Array.isArray(row.dimensions)
+      ? (row.dimensions as Array<Record<string, unknown>>)
+          .map((dim) => ({
+            name: toCleanString(dim?.name),
+            children: Array.isArray(dim?.children)
+              ? dim.children
+                  .filter((entry) => typeof entry === 'string')
+                  .map((entry) => String(entry).trim())
+                  .filter(Boolean)
+                  .slice(0, 8)
+              : [],
+          }))
+          .filter((dim) => dim.name)
+          .slice(0, 8)
+      : [];
+    out.push({
+      id,
+      label: toCleanString(row.label) || id,
+      role: toCleanString(row.role) || '基于当前主题进行结构化研究收敛。',
+      description: toCleanString(row.description) || '',
+      dimensions: dimensions.length > 0 ? dimensions : DEFAULT_KNOWLEDGE_UNIT_TEMPLATES[0].dimensions,
+    });
+  }
+  return out.length > 0 ? out.slice(0, 8) : [...DEFAULT_KNOWLEDGE_UNIT_TEMPLATES];
+}
+
 export function getDefaultAgentSettings(): AgentSettings {
   return {
     openrouterApiKey: process.env.OPENROUTER_API_KEY?.trim() ?? '',
@@ -119,6 +208,7 @@ export function getDefaultAgentSettings(): AgentSettings {
     prompts: { ...DEFAULT_PROMPTS },
     researchDirectionsPrompt: DEFAULT_RESEARCH_DIRECTIONS_PROMPT,
     paperOutlineFormats: [...DEFAULT_PAPER_OUTLINE_FORMATS],
+    knowledgeUnitTemplates: [...DEFAULT_KNOWLEDGE_UNIT_TEMPLATES],
   };
 }
 
@@ -146,6 +236,11 @@ function normalizeRow(row: {
           ? (row.prompts as Record<string, unknown>).paperOutlineFormats
           : undefined
       ) || [...DEFAULT_PAPER_OUTLINE_FORMATS],
+    knowledgeUnitTemplates: mergeKnowledgeUnitTemplates(
+      row.prompts && typeof row.prompts === 'object'
+        ? (row.prompts as Record<string, unknown>).knowledgeUnitTemplates
+        : undefined
+    ),
   };
 }
 
@@ -167,6 +262,7 @@ export type AgentSettingsInput = Partial<{
   prompts: Partial<FeaturePrompts>;
   researchDirectionsPrompt: string;
   paperOutlineFormats: string[];
+  knowledgeUnitTemplates: KnowledgeUnitTemplate[];
 }>;
 
 export async function saveAgentSettings(input: AgentSettingsInput): Promise<AgentSettings> {
@@ -180,11 +276,15 @@ export async function saveAgentSettings(input: AgentSettingsInput): Promise<Agen
   const paperOutlineFormats = mergePaperOutlineFormats(
     Array.isArray(input.paperOutlineFormats) ? input.paperOutlineFormats : previous.paperOutlineFormats
   );
+  const knowledgeUnitTemplates = mergeKnowledgeUnitTemplates(
+    Array.isArray(input.knowledgeUnitTemplates) ? input.knowledgeUnitTemplates : previous.knowledgeUnitTemplates
+  );
   const now = new Date();
   const storedPrompts = {
     ...prompts,
     researchDirectionsPrompt,
     paperOutlineFormats,
+    knowledgeUnitTemplates,
   };
 
   await db

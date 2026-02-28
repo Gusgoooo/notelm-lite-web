@@ -275,7 +275,7 @@ export function ProjectPanel() {
   const createNotebookFromTopic = async () => {
     const topic = researchTopic.trim();
     if (!topic) {
-      setError('请先输入研究方向');
+      setError('请先输入你想分析的主题');
       return;
     }
 
@@ -306,7 +306,7 @@ export function ProjectPanel() {
       const notebookId = String(createData.notebookId);
       bootstrapNotebookIdRef.current = notebookId;
       setBootstrapStep(2);
-      setBootstrapHint('分析并延展研究方向中…');
+      setBootstrapHint('分析并总结资料里的核心发现中…');
 
       const secondController = new AbortController();
       const secondTimeoutId = window.setTimeout(() => secondController.abort(), 45_000);
@@ -320,7 +320,7 @@ export function ProjectPanel() {
       window.clearTimeout(secondTimeoutId);
       const dirData = await dirRes.json().catch(() => ({}));
       if (!dirRes.ok) {
-        throw new Error(dirData?.error ?? '研究方向生成失败');
+        throw new Error(dirData?.error ?? '核心发现生成失败');
       }
       if (!bootstrapRunningRef.current) return;
 
@@ -390,7 +390,7 @@ export function ProjectPanel() {
               <textarea
                 value={researchTopic}
                 onChange={(event) => setResearchTopic(event.target.value)}
-                placeholder="请简单输入你感兴趣的研究方向"
+                placeholder="请简单输入你想分析的主题"
                 className="h-[128px] w-full resize-none rounded-[20px] border border-gray-200 bg-gray-50 px-4 pb-12 pt-4 text-sm text-gray-900 shadow-sm outline-none transition focus:border-gray-300 focus:bg-white dark:border-gray-700 dark:bg-gray-900/80 dark:text-gray-100 dark:focus:border-gray-600 dark:focus:bg-gray-900"
               />
               <button
@@ -408,7 +408,7 @@ export function ProjectPanel() {
               </form>
               <div className="mt-3 flex flex-wrap justify-center gap-2">
                 {loadingSuggestedTopics ? (
-                  <ShinyText text="正在生成推荐研究方向..." className="text-xs text-gray-500 dark:text-gray-400" />
+                  <ShinyText text="正在生成推荐主题..." className="text-xs text-gray-500 dark:text-gray-400" />
                 ) : (
                   suggestedTopics.map((preset) => (
                   <button
@@ -607,7 +607,7 @@ export function ProjectPanel() {
             <div className="mt-4 space-y-2">
               {[
                 '开始联网检索相关来源',
-                '分析并延展研究方向',
+                '分析并总结核心发现',
                 '完成',
               ].map((label, idx) => {
                 const stepNumber = (idx + 1) as 1 | 2 | 3;

@@ -72,10 +72,22 @@ export type KnowledgeUnitMetric = {
   sources: string[];
 };
 
+export type KnowledgeUnitDimension = {
+  id: string;
+  name: string;
+  children: Array<{
+    id: string;
+    name: string;
+    items: string[];
+  }>;
+};
+
 export type KnowledgeUnit = {
   id: string;
   session_id: string;
   title: string;
+  template_id: string | null;
+  template_label: string | null;
   stability_score: number;
   updated_at: string;
   problem_frame: {
@@ -120,6 +132,7 @@ export type KnowledgeUnit = {
     summary: string;
     diff: KnowledgeUnitDiffSummary;
   }>;
+  custom_dimensions: KnowledgeUnitDimension[];
 };
 
 export type KnowledgeUnitDiffSummary = {
@@ -235,12 +248,76 @@ function summarizeDiff(diff: KnowledgeUnitDiffSummary): string {
   return `新增结论${diff.added_assertions.length}条 / 更新结论${diff.updated_assertions.length}条 / 新增争议${diff.added_conflicts.length}条 / 新增来源${diff.added_citations.length}条`;
 }
 
+function createDefaultDimensions(): KnowledgeUnitDimension[] {
+  return [
+    {
+      id: createId('dim'),
+      name: '研究主线',
+      children: [
+        { id: createId('sub'), name: '核心对象', items: [] },
+        { id: createId('sub'), name: '关键判断', items: [] },
+      ],
+    },
+    {
+      id: createId('dim'),
+      name: '证据关注点',
+      children: [
+        { id: createId('sub'), name: '高频证据', items: [] },
+        { id: createId('sub'), name: '待验证点', items: [] },
+      ],
+    },
+  ];
+}
+
+function normalizeDimensions(input: unknown): KnowledgeUnitDimension[] {
+  if (!Array.isArray(input)) return createDefaultDimensions();
+  const out: KnowledgeUnitDimension[] = [];
+  for (const item of input) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    const name = typeof row.name === 'string' ? row.name.trim().slice(0, 24) : '';
+    if (!name) continue;
+    const id = typeof row.id === 'string' && row.id ? row.id : createId('dim');
+    const childrenRaw = Array.isArray(row.children) ? row.children : [];
+    const children = childrenRaw
+      .map((child) => {
+        if (!child || typeof child !== 'object') return null;
+        const sub = child as Record<string, unknown>;
+        const subName = typeof sub.name === 'string' ? sub.name.trim().slice(0, 24) : '';
+        if (!subName) return null;
+        return {
+          id: typeof sub.id === 'string' && sub.id ? sub.id : createId('sub'),
+          name: subName,
+          items: Array.isArray(sub.items)
+            ? sub.items
+                .filter((entry) => typeof entry === 'string')
+                .map((entry) => String(entry).trim())
+                .filter(Boolean)
+                .slice(0, 6)
+            : [],
+        };
+      })
+      .filter(Boolean) as KnowledgeUnitDimension['children'];
+    out.push({
+      id,
+      name,
+      children:
+        children.length > 0
+          ? children
+          : [{ id: createId('sub'), name: '待补充', items: [] }],
+    });
+  }
+  return out.length > 0 ? out.slice(0, 8) : createDefaultDimensions();
+}
+
 export function createDefaultKnowledgeUnit(sessionId: string, titleHint?: string): KnowledgeUnit {
   const now = nowIso();
   return {
     id: `ku_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     session_id: sessionId,
     title: titleHint?.trim() || '未命名研究对象',
+    template_id: null,
+    template_label: null,
     stability_score: 18,
     updated_at: now,
     problem_frame: {
@@ -270,6 +347,7 @@ export function createDefaultKnowledgeUnit(sessionId: string, titleHint?: string
       },
     },
     timeline: [],
+    custom_dimensions: createDefaultDimensions(),
   };
 }
 
@@ -302,6 +380,7 @@ export function parseKnowledgeUnit(raw: string | null | undefined, sessionId: st
       variables: Array.isArray(parsed.variables) ? parsed.variables : [],
       metrics: Array.isArray(parsed.metrics) ? parsed.metrics : [],
       timeline: Array.isArray(parsed.timeline) ? parsed.timeline : [],
+      custom_dimensions: normalizeDimensions(parsed.custom_dimensions),
     };
   } catch {
     return createDefaultKnowledgeUnit(sessionId, titleHint);
@@ -464,6 +543,37 @@ function recalcStability(ku: KnowledgeUnit): number {
       return sum + item.confidence * 100 * statusWeight;
     }, 0) / ku.assertions.length;
   return clamp(Math.round(weighted), 0, 100);
+}
+
+function updateCustomDimensions(ku: KnowledgeUnit, input: KnowledgeUnitTriggerInput): void {
+  const latestText = [
+    input.user_question ?? '',
+    input.assistant_answer ?? '',
+    ...(input.saved_notes ?? []).map((item) => `${item.title} ${item.content}`),
+  ]
+    .join('\n')
+    .trim();
+  if (!latestText || ku.custom_dimensions.length === 0) return;
+
+  const candidates = splitSentences(latestText).slice(0, 4);
+  if (candidates.length === 0) return;
+
+  for (const dimension of ku.custom_dimensions) {
+    for (const child of dimension.children) {
+      const keywords = toTokens(`${dimension.name} ${child.name}`);
+      const matched = candidates.find((line) =>
+        keywords.length > 0
+          ? keywords.some((keyword) => line.toLowerCase().includes(keyword.toLowerCase()))
+          : similarity(line, `${dimension.name} ${child.name}`) >= 0.2
+      );
+      if (!matched) continue;
+      const concise = matched.replace(/\s+/g, ' ').trim().slice(0, 120);
+      if (!concise) continue;
+      if (child.items.includes(concise)) continue;
+      child.items.unshift(concise);
+      child.items = child.items.slice(0, 5);
+    }
+  }
 }
 
 export function applyKnowledgeUnitUpdate(current: KnowledgeUnit, input: KnowledgeUnitTriggerInput): {
@@ -647,6 +757,8 @@ export function applyKnowledgeUnitUpdate(current: KnowledgeUnit, input: Knowledg
     }
   }
 
+  updateCustomDimensions(next, input);
+
   next.update_summary.last_turn = {
     trigger: input.trigger,
     added_assertions: diff.added_assertions.length,
@@ -715,6 +827,16 @@ export function exportKnowledgeUnitMarkdown(ku: KnowledgeUnit): string {
     lines.push('## Next Questions');
     lines.push(...ku.open_issues.next_questions.map((item) => `- ${item}`));
     lines.push('');
+  }
+  if (ku.custom_dimensions.length > 0) {
+    lines.push('## Custom Dimensions');
+    for (const dimension of ku.custom_dimensions) {
+      lines.push(`### ${dimension.name}`);
+      for (const child of dimension.children) {
+        lines.push(`- ${child.name}: ${child.items.length > 0 ? child.items.join(' / ') : '暂无'}`);
+      }
+      lines.push('');
+    }
   }
   if (ku.citations.length > 0) {
     lines.push('## Citations');

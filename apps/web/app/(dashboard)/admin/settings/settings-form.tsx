@@ -11,6 +11,13 @@ type AgentSettings = {
   prompts: Record<FeatureMode, string>;
   researchDirectionsPrompt: string;
   paperOutlineFormats: string[];
+  knowledgeUnitTemplates: Array<{
+    id: string;
+    label: string;
+    role: string;
+    description: string;
+    dimensions: Array<{ name: string; children: string[] }>;
+  }>;
 };
 
 const MODE_LABELS: Array<{ mode: FeatureMode; label: string }> = [
@@ -24,11 +31,16 @@ const MODE_LABELS: Array<{ mode: FeatureMode; label: string }> = [
 
 export function AdminSettingsForm({ initialSettings }: { initialSettings: AgentSettings }) {
   const [form, setForm] = useState<AgentSettings>(initialSettings);
+  const [kuTemplatesText, setKuTemplatesText] = useState(() =>
+    JSON.stringify(initialSettings.knowledgeUnitTemplates, null, 2)
+  );
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState('');
   const dirty = useMemo(
-    () => JSON.stringify(form) !== JSON.stringify(initialSettings),
-    [form, initialSettings]
+    () =>
+      JSON.stringify(form) !== JSON.stringify(initialSettings) ||
+      kuTemplatesText !== JSON.stringify(initialSettings.knowledgeUnitTemplates, null, 2),
+    [form, initialSettings, kuTemplatesText]
   );
 
   const save = async () => {
@@ -36,10 +48,22 @@ export function AdminSettingsForm({ initialSettings }: { initialSettings: AgentS
     setSaving(true);
     setStatus('');
     try {
+      let parsedTemplates = form.knowledgeUnitTemplates;
+      try {
+        const parsed = JSON.parse(kuTemplatesText);
+        if (!Array.isArray(parsed)) throw new Error('知识单元模板必须是数组 JSON');
+        parsedTemplates = parsed as AgentSettings['knowledgeUnitTemplates'];
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : '知识单元模板 JSON 无效');
+        return;
+      }
       const res = await fetch('/api/admin/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          knowledgeUnitTemplates: parsedTemplates,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -47,6 +71,7 @@ export function AdminSettingsForm({ initialSettings }: { initialSettings: AgentS
         return;
       }
       setForm(data);
+      setKuTemplatesText(JSON.stringify(data.knowledgeUnitTemplates, null, 2));
       setStatus('保存成功');
     } catch (e) {
       setStatus(e instanceof Error ? e.message : '保存失败');
@@ -109,9 +134,9 @@ export function AdminSettingsForm({ initialSettings }: { initialSettings: AgentS
       </div>
 
       <div className="rounded border border-gray-200 dark:border-gray-700 p-3 space-y-2">
-        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">研究思路生成 Prompt</h3>
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">核心发现生成 Prompt</h3>
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          用于“研究思路/研究方向”生成阶段的 system role prompt。
+          用于首页启动后“核心发现卡片”生成阶段的 system role prompt。
         </p>
         <textarea
           value={form.researchDirectionsPrompt}
@@ -145,6 +170,19 @@ export function AdminSettingsForm({ initialSettings }: { initialSettings: AgentS
           }
           rows={5}
           className="w-full rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm resize-y"
+        />
+      </div>
+
+      <div className="rounded border border-gray-200 dark:border-gray-700 p-3 space-y-2">
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200">知识单元模板（JSON）</h3>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          管理员可在这里预置知识单元模板，普通用户会在知识单元配置窗口里直接选用。
+        </p>
+        <textarea
+          value={kuTemplatesText}
+          onChange={(e) => setKuTemplatesText(e.target.value)}
+          rows={12}
+          className="w-full rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 font-mono text-xs resize-y"
         />
       </div>
 

@@ -33,6 +33,8 @@ type ResearchDirection = {
   id: string;
   title: string;
   researchQuestion: string;
+  evidenceCount?: number;
+  evidenceSummary?: string;
   coreVariables: string;
   researchMethod: string;
   dataSourceAccess: string;
@@ -214,7 +216,6 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [refineHint, setRefineHint] = useState('');
   const [refineError, setRefineError] = useState('');
   const [quickActionRunning, setQuickActionRunning] = useState<{ messageId: string; mode: 'report' | 'infographic' } | null>(null);
-  const [cleaningSources, setCleaningSources] = useState(false);
   const [starterQuestionLoading, setStarterQuestionLoading] = useState<string | null>(null);
   const [selectionToast, setSelectionToast] = useState<SelectionToastState | null>(null);
   const [savingSelection, setSavingSelection] = useState(false);
@@ -439,7 +440,13 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   }, []);
 
   const send = useCallback(
-    async (overrideText?: string) => {
+    async (
+      overrideText?: string,
+      options?: {
+        skipSourceMaintenance?: boolean;
+        postSourceNotice?: string;
+      }
+    ) => {
       const text = (overrideText ?? input).trim();
       if (!text || !notebookId || loading) return;
       setInput('');
@@ -483,6 +490,46 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
             },
           })
         );
+        const appendSourceNotice = (message: string) => {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `a-maintain-${Date.now()}`,
+              role: 'assistant',
+              content: message,
+            },
+          ]);
+          setTailVersion((v) => v + 1);
+        };
+        if (options?.postSourceNotice) {
+          appendSourceNotice(options.postSourceNotice);
+        } else if (!options?.skipSourceMaintenance) {
+          void (async () => {
+            try {
+              const maintainRes = await fetch('/api/sources/maintain', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  notebookId,
+                  topic: text,
+                }),
+              });
+              const maintainData = await maintainRes.json().catch(() => ({}));
+              if (!maintainRes.ok) return;
+              const added = Number(maintainData?.added ?? 0);
+              const removed = Number(maintainData?.removed ?? 0);
+              if (added > 0 || removed > 0) {
+                window.dispatchEvent(new CustomEvent('sources-updated'));
+                appendSourceNotice(
+                  `已补充 ${added} 条强相关来源` +
+                    (removed > 0 ? `，并自动移除了 ${removed} 条低相关来源。` : '。')
+                );
+              }
+            } catch {
+              // Ignore best-effort source maintenance errors.
+            }
+          })();
+        }
         setTailVersion((v) => v + 1);
       } finally {
         setLoading(false);
@@ -614,50 +661,42 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     [createNote, notebookId, quickActionRunning]
   );
 
-  const cleanNotebookSources = useCallback(async () => {
-    if (!notebookId || cleaningSources) return;
-    setCleaningSources(true);
-    try {
-      const res = await fetch('/api/sources/clean', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notebookId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error ?? '来源清洗失败');
-      }
-      window.dispatchEvent(new CustomEvent('sources-updated'));
-    } catch (error) {
-      alert(error instanceof Error ? error.message : '来源清洗失败');
-    } finally {
-      setCleaningSources(false);
-    }
-  }, [cleaningSources, notebookId]);
-
   const askStarterQuestion = useCallback(
     async (question: string) => {
       const text = question.trim();
       if (!text || !notebookId || loading || starterQuestionLoading) return;
       setStarterQuestionLoading(text);
+      let sourceNotice = '';
       try {
-        const res = await fetch('/api/sources/web-search', {
+        const res = await fetch('/api/sources/maintain', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             notebookId,
             topic: text,
+            addLimit: 6,
           }),
         });
+        const data = await res.json().catch(() => ({}));
         if (res.ok) {
           window.dispatchEvent(new CustomEvent('sources-updated'));
+          const added = Number(data?.added ?? 0);
+          const removed = Number(data?.removed ?? 0);
+          if (added > 0 || removed > 0) {
+            sourceNotice =
+              `已补充 ${added} 条强相关来源` +
+              (removed > 0 ? `，并自动移除了 ${removed} 条低相关来源。` : '。');
+          }
         }
       } catch {
         // Ignore source enrichment failure and continue with the question itself.
       } finally {
         setStarterQuestionLoading(null);
       }
-      await send(text);
+      await send(text, {
+        skipSourceMaintenance: true,
+        postSourceNotice: sourceNotice || undefined,
+      });
     },
     [loading, notebookId, send, starterQuestionLoading]
   );
@@ -684,7 +723,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-300">
           {researchState.phase === 'collecting'
             ? '正在联网检索并整理论文来源…'
-            : '正在分析来源并延展研究方向…'}
+            : '正在分析并总结资料里的核心发现…'}
         </div>
       );
     }
@@ -693,9 +732,9 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       return (
         <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
           <div className="space-y-1">
-            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">请选择一个研究方向开始深入探索</p>
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">请选择一个核心发现继续深入探索</p>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              主题：{researchState.topic}。选中后会自动重整知识库来源并生成下一步研究建议。
+              主题：{researchState.topic}。这些卡片来自当前来源的高频信息总结，点击后会基于该发现继续整理来源并给出下一步研究问题。
             </p>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
@@ -714,14 +753,15 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                 <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{dir.title}</p>
                 <p className="mt-1 line-clamp-2 text-xs text-gray-600 dark:text-gray-300">{dir.researchQuestion}</p>
                 <div className="mt-2 space-y-1 text-[11px] text-gray-500 dark:text-gray-400">
-                  <p>核心变量：{dir.coreVariables}</p>
-                  <p>研究方法：{dir.researchMethod}</p>
-                  <p>数据可得性：{dir.dataSourceAccess}</p>
-                  <p>研究难度：{'⭐'.repeat(Math.max(1, Math.min(5, dir.difficultyStars || 3)))}</p>
-                  <p>趋势热度：{dir.trendHeat}</p>
+                  <p>{dir.evidenceSummary || dir.trendHeat}</p>
+                  <p>
+                    {dir.evidenceCount != null
+                      ? `被 ${dir.evidenceCount} 条来源提及`
+                      : dir.trendHeat}
+                  </p>
                 </div>
                 <p className="mt-2 text-xs font-medium text-blue-600 dark:text-blue-400">
-                  {selectingDirectionId === dir.id ? '正在确认…' : '选择此方向'}
+                  {selectingDirectionId === dir.id ? '正在确认…' : '基于此继续探索'}
                 </p>
               </button>
             ))}
@@ -834,16 +874,6 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                   }}
                                 >
                                   保存到笔记
-                                </button>
-                              ) : null}
-                              {notebookId ? (
-                                <button
-                                  type="button"
-                                  className={ACTION_PILL_CLASS}
-                                  onClick={() => void cleanNotebookSources()}
-                                  disabled={cleaningSources}
-                                >
-                                  {cleaningSources ? '清洗中…' : '来源清洗'}
                                 </button>
                               ) : null}
                               {showRichActions ? (

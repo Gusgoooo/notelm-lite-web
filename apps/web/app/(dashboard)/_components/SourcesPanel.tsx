@@ -30,20 +30,11 @@ type PendingUpload = {
   createdAt: string;
 };
 
-type ResearchState = {
-  phase: 'collecting' | 'analyzing' | 'select_direction' | 'refining' | 'ready';
-  sourceStats?: {
-    totalBefore: number;
-    totalAfter: number;
-  };
-};
-
 type SourceToast = {
   type: 'success' | 'error';
   message: string;
 };
 
-const MAX_WEB_SOURCES = 20;
 const LARGE_FILE_DIRECT_UPLOAD_THRESHOLD = 4.5 * 1024 * 1024;
 const allowedMimes = [
   'application/pdf',
@@ -99,6 +90,20 @@ function MoreIcon() {
       <circle cx="5" cy="12" r="1.8" />
       <circle cx="12" cy="12" r="1.8" />
       <circle cx="19" cy="12" r="1.8" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="m6 9 6 6 6-6" />
     </svg>
   );
 }
@@ -174,12 +179,11 @@ export function SourcesPanel({
   const [webSearching, setWebSearching] = useState(false);
   const [webSearchStatus, setWebSearchStatus] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [researchState, setResearchState] = useState<ResearchState | null>(null);
   const [loadingOriginalSourceId, setLoadingOriginalSourceId] = useState<string | null>(null);
   const [hydratingSourceId, setHydratingSourceId] = useState<string | null>(null);
   const [sourceToast, setSourceToast] = useState<SourceToast | null>(null);
   const [openMenuSourceId, setOpenMenuSourceId] = useState<string | null>(null);
-  const [cleaningSources, setCleaningSources] = useState(false);
+  const [expandedSourceIds, setExpandedSourceIds] = useState<string[]>([]);
 
   const fetchSources = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -192,26 +196,9 @@ export function SourcesPanel({
     }
   }, [notebookId]);
 
-  const fetchResearchState = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/research/state`, {
-        cache: 'no-store',
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setResearchState(null);
-        return;
-      }
-      setResearchState((data?.state as ResearchState | null) ?? null);
-    } catch {
-      setResearchState(null);
-    }
-  }, [notebookId]);
-
   useEffect(() => {
     void fetchSources(true);
-    void fetchResearchState();
-  }, [fetchSources, fetchResearchState]);
+  }, [fetchSources]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -224,11 +211,10 @@ export function SourcesPanel({
   useEffect(() => {
     const onSourcesUpdated = () => {
       void fetchSources(false);
-      void fetchResearchState();
     };
     window.addEventListener('sources-updated', onSourcesUpdated);
     return () => window.removeEventListener('sources-updated', onSourcesUpdated);
-  }, [fetchSources, fetchResearchState]);
+  }, [fetchSources]);
 
   useEffect(() => {
     if (!sourceToast) return;
@@ -252,10 +238,16 @@ export function SourcesPanel({
   }, [hydratingSourceId, sources]);
 
   const displayedSources = useMemo(() => {
-    if (!hydratingSourceId) return sources;
     return [...sources].sort((a, b) => {
       if (a.id === hydratingSourceId) return -1;
       if (b.id === hydratingSourceId) return 1;
+      const trustRank = (source: Source) => {
+        if (source.status === 'PROCESSING') return 0;
+        if (source.sourceType === '联网检索') return 2;
+        return 1;
+      };
+      const trustDelta = trustRank(a) - trustRank(b);
+      if (trustDelta !== 0) return trustDelta;
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
   }, [hydratingSourceId, sources]);
@@ -534,7 +526,6 @@ export function SourcesPanel({
         body: JSON.stringify({
           notebookId,
           topic,
-          limit: MAX_WEB_SOURCES,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -561,37 +552,6 @@ export function SourcesPanel({
     );
   };
 
-  const cleanSources = async () => {
-    if (readOnly || cleaningSources) return;
-    setCleaningSources(true);
-    setSourceToast(null);
-    try {
-      const res = await fetch('/api/sources/clean', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notebookId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setSourceToast({
-          type: 'error',
-          message: data?.error ?? '来源清洗失败',
-        });
-        return;
-      }
-      setSourceToast({
-        type: 'success',
-        message:
-          Number(data?.removed ?? 0) > 0
-            ? `来源清洗完成，移除了 ${Number(data.removed)} 条重复来源。`
-            : '来源清洗完成，当前没有发现可移除的重复来源。',
-      });
-      await fetchSources(false);
-    } finally {
-      setCleaningSources(false);
-    }
-  };
-
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center justify-between border-b px-4">
@@ -599,17 +559,6 @@ export function SourcesPanel({
           知识库
         </h2>
         <div className="flex items-center gap-2">
-          {!readOnly ? (
-            <button
-              type="button"
-              onClick={() => void cleanSources()}
-              disabled={cleaningSources}
-              className="h-7 rounded-full border border-gray-300 px-2 text-[11px] text-gray-700 transition hover:bg-gray-100 disabled:opacity-60"
-              title="来源清洗"
-            >
-              {cleaningSources ? '清洗中…' : '来源清洗'}
-            </button>
-          ) : null}
           <button
             type="button"
             onClick={askPaperInsight}
@@ -730,11 +679,7 @@ export function SourcesPanel({
               ) : null}
               <div className="flex items-center justify-between gap-3 pt-1">
                 <p className="text-sm font-semibold uppercase tracking-wider text-gray-500">来源</p>
-                <p className="text-[11px] text-gray-500 text-right">
-                  {researchState?.sourceStats
-                    ? `数量：${sources.length}（初始 ${researchState.sourceStats.totalBefore} -> 清洗后 ${researchState.sourceStats.totalAfter}）`
-                    : `数量：${sources.length}`}
-                </p>
+                <p className="text-[11px] text-gray-500 text-right">{`数量：${sources.length}`}</p>
               </div>
             </div>
           </>
@@ -800,6 +745,7 @@ export function SourcesPanel({
                     const canPreviewFile = isPdfSource(s);
                     const canDownloadFile = canPreviewFile || isWordSource(s);
                     const menuOpen = openMenuSourceId === s.id;
+                    const expanded = expandedSourceIds.includes(s.id);
                     const previewHref = canPreviewFile ? `/api/sources/${encodeURIComponent(s.id)}?mode=inline` : '';
                     const downloadHref = canDownloadFile ? `/api/sources/${encodeURIComponent(s.id)}?mode=download` : '';
                     const dotClass = isHydrating
@@ -812,12 +758,23 @@ export function SourcesPanel({
                     return (
                       <>
                         <div className="flex items-center justify-between gap-2">
-                          <div className="flex min-w-0 items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedSourceIds((prev) =>
+                                prev.includes(s.id) ? prev.filter((id) => id !== s.id) : [...prev, s.id]
+                              )
+                            }
+                            className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                          >
                             <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
                             <p className="truncate text-xs font-medium" title={s.filename}>
                               {s.filename}
                             </p>
-                          </div>
+                            <span className="shrink-0 text-gray-400">
+                              <ChevronIcon open={expanded} />
+                            </span>
+                          </button>
                           {(canPreviewFile || canDownloadFile || !readOnly) && (
                             <div
                               className="relative"
@@ -875,37 +832,41 @@ export function SourcesPanel({
                             </div>
                           )}
                         </div>
-                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <Badge variant="secondary" className="uppercase">
-                            {s.sourceType ?? 'unknown'}
-                          </Badge>
-                          {canViewSource ? (
-                            <a
-                              href={sourceLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[11px] text-gray-600 transition hover:text-blue-600 hover:underline"
-                            >
-                              查看来源
-                            </a>
-                          ) : null}
-                          {shouldShowLoadOriginal ? (
-                            <button
-                              type="button"
-                              onClick={() => void loadOriginalSource(s.id)}
-                              disabled={Boolean(loadingOriginalSourceId) || Boolean(hydratingSourceId)}
-                              className="text-[11px] text-gray-500 transition hover:text-blue-600 hover:underline disabled:opacity-60"
-                            >
-                              {isRequestingOriginal ? '加载原文中…' : '加载原文'}
-                            </button>
-                          ) : (
-                            <Badge variant="outline">{s.chunkCount ?? 0} chunks</Badge>
-                          )}
-                        </div>
-                        {preview && isWebSource ? (
-                          <p className="mt-1 line-clamp-4 text-[11px] leading-5 text-gray-500">
-                            {preview}
-                          </p>
+                        {expanded ? (
+                          <>
+                            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <Badge variant="secondary" className="uppercase">
+                                {s.sourceType ?? 'unknown'}
+                              </Badge>
+                              {canViewSource ? (
+                                <a
+                                  href={sourceLink}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[11px] text-gray-600 transition hover:text-blue-600 hover:underline"
+                                >
+                                  查看来源
+                                </a>
+                              ) : null}
+                              {shouldShowLoadOriginal ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void loadOriginalSource(s.id)}
+                                  disabled={Boolean(loadingOriginalSourceId) || Boolean(hydratingSourceId)}
+                                  className="text-[11px] text-gray-500 transition hover:text-blue-600 hover:underline disabled:opacity-60"
+                                >
+                                  {isRequestingOriginal ? '加载原文中…' : '加载原文'}
+                                </button>
+                              ) : (
+                                <Badge variant="outline">{s.chunkCount ?? 0} chunks</Badge>
+                              )}
+                            </div>
+                            {preview && isWebSource ? (
+                              <p className="mt-1 line-clamp-4 text-[11px] leading-5 text-gray-500">
+                                {preview}
+                              </p>
+                            ) : null}
+                          </>
                         ) : null}
                         {showStatus ? (
                           <p className={`mt-1 text-[11px] ${isHydrating ? 'text-blue-600' : statusMeta.colorClass}`}>

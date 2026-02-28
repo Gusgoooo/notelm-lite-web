@@ -160,8 +160,8 @@ async function generateStarterQuestions(input: {
           role: 'user',
           content:
             `主题：${input.topic}\n` +
-            `已选方向：${input.directionTitle}\n` +
-            `核心问题：${input.directionQuestion}\n` +
+            `已选核心发现：${input.directionTitle}\n` +
+            `发现摘要：${input.directionQuestion}\n` +
             `选题关键词：${anchorKeywords.join('、') || anchorLabel}\n` +
             `当前知识库来源标题：${input.sourceTitles.join('；')}\n\n` +
             `当前来源摘要与证据：\n${input.sourceEvidence}\n\n` +
@@ -234,7 +234,7 @@ export async function POST(
     }
     const selectedDirection = stateRow.state.directions.find((item) => item.id === directionId);
     if (!selectedDirection) {
-      return NextResponse.json({ error: 'Selected direction not found' }, { status: 404 });
+      return NextResponse.json({ error: 'Selected finding not found' }, { status: 404 });
     }
 
     const totalBefore = await db

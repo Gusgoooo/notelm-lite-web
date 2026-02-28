@@ -8,8 +8,10 @@ import {
   parseKnowledgeUnit,
   serializeKnowledgeUnit,
   type KnowledgeUnit,
+  type KnowledgeUnitDimension,
   type KnowledgeUnitTriggerInput,
 } from '@/lib/knowledge-unit';
+import { getAgentSettings } from '@/lib/agent-settings';
 
 async function getKuNote(notebookId: string) {
   const list = await db.select().from(notes).where(eq(notes.notebookId, notebookId));
@@ -56,7 +58,8 @@ export async function GET(
     }
     const row = await getKuNote(notebookId);
     const ku = parseKnowledgeUnit(row?.content, notebookId, access.notebook.title);
-    return NextResponse.json({ ku, exists: Boolean(row) });
+    const settings = await getAgentSettings();
+    return NextResponse.json({ ku, exists: Boolean(row), templates: settings.knowledgeUnitTemplates });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to load knowledge unit' }, { status: 500 });
@@ -91,6 +94,7 @@ export async function POST(
     const current = row
       ? parseKnowledgeUnit(row.content, notebookId, access.notebook.title)
       : createDefaultKnowledgeUnit(notebookId, access.notebook.title);
+    const settings = await getAgentSettings();
     const { next, diff } = applyKnowledgeUnitUpdate(current, {
       trigger,
       titleHint: access.notebook.title,
@@ -101,7 +105,7 @@ export async function POST(
       source_snapshot: Array.isArray(body.source_snapshot) ? body.source_snapshot.filter(Boolean) : [],
     });
     await saveKuNote(notebookId, next, row?.id ?? null);
-    return NextResponse.json({ ku: next, diff });
+    return NextResponse.json({ ku: next, diff, templates: settings.knowledgeUnitTemplates });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to update knowledge unit' }, { status: 500 });
@@ -129,6 +133,38 @@ export async function PATCH(
     if (typeof body?.title === 'string' && body.title.trim()) {
       ku.title = body.title.trim().slice(0, 120);
     }
+    if (typeof body?.templateId === 'string') {
+      ku.template_id = body.templateId.trim() || null;
+    }
+    if (typeof body?.templateLabel === 'string') {
+      ku.template_label = body.templateLabel.trim() || null;
+    }
+    if (Array.isArray(body?.dimensions)) {
+      ku.custom_dimensions = (body.dimensions as KnowledgeUnitDimension[])
+        .filter((item) => item && typeof item === 'object')
+        .map((item) => ({
+          id: typeof item.id === 'string' && item.id ? item.id : `dim_${Date.now()}`,
+          name: typeof item.name === 'string' ? item.name.trim().slice(0, 24) : '未命名维度',
+          children: Array.isArray(item.children)
+            ? item.children
+                .filter((child) => child && typeof child === 'object')
+                .map((child) => ({
+                  id: typeof child.id === 'string' && child.id ? child.id : `sub_${Date.now()}`,
+                  name:
+                    typeof child.name === 'string' ? child.name.trim().slice(0, 24) : '待补充',
+                  items: Array.isArray(child.items)
+                    ? child.items
+                        .filter((entry) => typeof entry === 'string')
+                        .map((entry) => String(entry).trim())
+                        .filter(Boolean)
+                        .slice(0, 6)
+                    : [],
+                }))
+                .slice(0, 8)
+            : [],
+        }))
+        .slice(0, 8);
+    }
     if (typeof body?.assertionId === 'string' && typeof body?.locked === 'boolean') {
       const target = ku.assertions.find((item) => item.assertion_id === body.assertionId);
       if (target) {
@@ -142,7 +178,8 @@ export async function PATCH(
       }
     }
     await saveKuNote(notebookId, ku, row?.id ?? null);
-    return NextResponse.json({ ku });
+    const settings = await getAgentSettings();
+    return NextResponse.json({ ku, templates: settings.knowledgeUnitTemplates });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to edit knowledge unit' }, { status: 500 });
