@@ -179,6 +179,7 @@ export function SourcesPanel({
   const [hydratingSourceId, setHydratingSourceId] = useState<string | null>(null);
   const [sourceToast, setSourceToast] = useState<SourceToast | null>(null);
   const [openMenuSourceId, setOpenMenuSourceId] = useState<string | null>(null);
+  const [cleaningSources, setCleaningSources] = useState(false);
 
   const fetchSources = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -560,13 +561,55 @@ export function SourcesPanel({
     );
   };
 
+  const cleanSources = async () => {
+    if (readOnly || cleaningSources) return;
+    setCleaningSources(true);
+    setSourceToast(null);
+    try {
+      const res = await fetch('/api/sources/clean', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notebookId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSourceToast({
+          type: 'error',
+          message: data?.error ?? '来源清洗失败',
+        });
+        return;
+      }
+      setSourceToast({
+        type: 'success',
+        message:
+          Number(data?.removed ?? 0) > 0
+            ? `来源清洗完成，移除了 ${Number(data.removed)} 条重复来源。`
+            : '来源清洗完成，当前没有发现可移除的重复来源。',
+      });
+      await fetchSources(false);
+    } finally {
+      setCleaningSources(false);
+    }
+  };
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 items-center justify-between border-b px-4">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500">
           知识库
         </h2>
-        <div className="flex items-center">
+        <div className="flex items-center gap-2">
+          {!readOnly ? (
+            <button
+              type="button"
+              onClick={() => void cleanSources()}
+              disabled={cleaningSources}
+              className="h-7 rounded-full border border-gray-300 px-2 text-[11px] text-gray-700 transition hover:bg-gray-100 disabled:opacity-60"
+              title="来源清洗"
+            >
+              {cleaningSources ? '清洗中…' : '来源清洗'}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={askPaperInsight}

@@ -214,6 +214,8 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [refineHint, setRefineHint] = useState('');
   const [refineError, setRefineError] = useState('');
   const [quickActionRunning, setQuickActionRunning] = useState<{ messageId: string; mode: 'report' | 'infographic' } | null>(null);
+  const [cleaningSources, setCleaningSources] = useState(false);
+  const [starterQuestionLoading, setStarterQuestionLoading] = useState<string | null>(null);
   const [selectionToast, setSelectionToast] = useState<SelectionToastState | null>(null);
   const [savingSelection, setSavingSelection] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -612,6 +614,54 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     [createNote, notebookId, quickActionRunning]
   );
 
+  const cleanNotebookSources = useCallback(async () => {
+    if (!notebookId || cleaningSources) return;
+    setCleaningSources(true);
+    try {
+      const res = await fetch('/api/sources/clean', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notebookId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error ?? '来源清洗失败');
+      }
+      window.dispatchEvent(new CustomEvent('sources-updated'));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '来源清洗失败');
+    } finally {
+      setCleaningSources(false);
+    }
+  }, [cleaningSources, notebookId]);
+
+  const askStarterQuestion = useCallback(
+    async (question: string) => {
+      const text = question.trim();
+      if (!text || !notebookId || loading || starterQuestionLoading) return;
+      setStarterQuestionLoading(text);
+      try {
+        const res = await fetch('/api/sources/web-search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            notebookId,
+            topic: text,
+          }),
+        });
+        if (res.ok) {
+          window.dispatchEvent(new CustomEvent('sources-updated'));
+        }
+      } catch {
+        // Ignore source enrichment failure and continue with the question itself.
+      } finally {
+        setStarterQuestionLoading(null);
+      }
+      await send(text);
+    },
+    [loading, notebookId, send, starterQuestionLoading]
+  );
+
   const renderResearchSection = () => {
     if (loadingResearchState) {
       return (
@@ -786,6 +836,16 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                   保存到笔记
                                 </button>
                               ) : null}
+                              {notebookId ? (
+                                <button
+                                  type="button"
+                                  className={ACTION_PILL_CLASS}
+                                  onClick={() => void cleanNotebookSources()}
+                                  disabled={cleaningSources}
+                                >
+                                  {cleaningSources ? '清洗中…' : '来源清洗'}
+                                </button>
+                              ) : null}
                               {showRichActions ? (
                                 <button
                                   type="button"
@@ -842,11 +902,11 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                 <button
                                   key={`${idx}-${q}`}
                                   type="button"
-                                  onClick={() => void send(q)}
-                                  disabled={loading}
+                                  onClick={() => void askStarterQuestion(q)}
+                                  disabled={loading || starterQuestionLoading === q}
                                   className="rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-left text-[11px] text-gray-700 transition hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
                                 >
-                                  {q}
+                                  {starterQuestionLoading === q ? '正在补充来源并提问…' : q}
                                 </button>
                               ))}
                             </div>
