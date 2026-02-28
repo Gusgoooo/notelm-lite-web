@@ -108,6 +108,7 @@ export function ProjectPanel() {
 
   const bootstrapControllerRef = useRef<AbortController | null>(null);
   const bootstrapRunningRef = useRef(false);
+  const bootstrapNotebookIdRef = useRef<string | null>(null);
 
   const fetchMine = async () => {
     setLoadingMine(true);
@@ -213,6 +214,13 @@ export function ProjectPanel() {
     if (abort) {
       bootstrapRunningRef.current = false;
       bootstrapControllerRef.current?.abort();
+      const notebookId = bootstrapNotebookIdRef.current;
+      if (notebookId) {
+        bootstrapNotebookIdRef.current = null;
+        void fetch(`/api/notebooks/${encodeURIComponent(notebookId)}`, {
+          method: 'DELETE',
+        }).catch(() => null);
+      }
     }
     setBootstrapOpen(false);
     setBootstrapError('');
@@ -275,10 +283,12 @@ export function ProjectPanel() {
     setBootstrapOpen(true);
     setBootstrapError('');
     setBootstrapStep(1);
-    setBootstrapHint('开始联网检索相关论文（最多 20 个来源），稍后您也可以自己上传论文补充。');
+    bootstrapNotebookIdRef.current = null;
+    setBootstrapHint('开始联网检索相关来源（系统会自动扩展来源数量），稍后您也可以自己上传论文补充。');
 
     try {
       const firstController = new AbortController();
+      const firstTimeoutId = window.setTimeout(() => firstController.abort(), 70_000);
       bootstrapControllerRef.current = firstController;
       const createRes = await fetch('/api/notebooks/bootstrap/create', {
         method: 'POST',
@@ -286,6 +296,7 @@ export function ProjectPanel() {
         body: JSON.stringify({ topic }),
         signal: firstController.signal,
       });
+      window.clearTimeout(firstTimeoutId);
       const createData = await createRes.json().catch(() => ({}));
       if (!createRes.ok || !createData?.notebookId) {
         throw new Error(createData?.error ?? '创建并检索来源失败');
@@ -293,10 +304,12 @@ export function ProjectPanel() {
       if (!bootstrapRunningRef.current) return;
 
       const notebookId = String(createData.notebookId);
+      bootstrapNotebookIdRef.current = notebookId;
       setBootstrapStep(2);
       setBootstrapHint('分析并延展研究方向中…');
 
       const secondController = new AbortController();
+      const secondTimeoutId = window.setTimeout(() => secondController.abort(), 45_000);
       bootstrapControllerRef.current = secondController;
       const dirRes = await fetch('/api/notebooks/bootstrap/directions', {
         method: 'POST',
@@ -304,6 +317,7 @@ export function ProjectPanel() {
         body: JSON.stringify({ notebookId, topic }),
         signal: secondController.signal,
       });
+      window.clearTimeout(secondTimeoutId);
       const dirData = await dirRes.json().catch(() => ({}));
       if (!dirRes.ok) {
         throw new Error(dirData?.error ?? '研究方向生成失败');
@@ -313,10 +327,14 @@ export function ProjectPanel() {
       setBootstrapStep(3);
       setBootstrapHint('已完成，正在进入研究空间…');
       setBootstrapProgress(100);
+      bootstrapNotebookIdRef.current = null;
       closeBootstrapModal(false);
       router.push(`/?notebookId=${encodeURIComponent(notebookId)}`);
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') {
+        if (bootstrapRunningRef.current) {
+          setBootstrapError('处理超时，请重试。系统已放宽分析约束，但当前请求仍未在预期时间内完成。');
+        }
         return;
       }
       setBootstrapError(e instanceof Error ? e.message : '初始化失败，请稍后重试');

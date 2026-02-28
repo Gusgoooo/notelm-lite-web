@@ -919,7 +919,11 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
               const isOutlineCard = isPaperOutlineNote(note);
               const isReportCard = Boolean(cardHtml) && isReportNote(note);
               const isTextOnlyCard = !image && !cardMermaid && !cardHtml;
-              const cardHeightClass = cardMermaid ? 'h-52' : isTextOnlyCard || cardHtml ? 'h-[126px]' : 'h-52';
+              const cardHeightClass = cardMermaid || isReportCard
+                ? 'h-52'
+                : isTextOnlyCard || cardHtml
+                  ? 'h-[126px]'
+                  : 'h-52';
               const previewText = toPreviewText(note.content);
               return (
                 <li

@@ -18,6 +18,18 @@ const DEFAULT_SEARCH_MODELS = [
 ] as const;
 const DEFAULT_TRANSLATE_MODEL = 'openai/gpt-4o-mini';
 
+export function getAdaptiveWebSourceCount(topic: string, requestedLimit?: number): number {
+  const clean = topic.replace(/\s+/g, '').trim();
+  let target = 36;
+  if (clean.length <= 8) target = 48;
+  else if (clean.length <= 16) target = 42;
+  else if (clean.length >= 40) target = 30;
+  if (Number.isFinite(requestedLimit) && (requestedLimit ?? 0) > 0) {
+    target = Math.max(target, Math.floor(requestedLimit as number));
+  }
+  return Math.max(12, target);
+}
+
 function extractTextFromContent(content: unknown): string {
   if (typeof content === 'string') return content.trim();
   if (!Array.isArray(content)) return '';

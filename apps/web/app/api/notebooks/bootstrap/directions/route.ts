@@ -107,7 +107,8 @@ function normalizeDirections(payload: unknown, topicKeywords: string[]): Researc
   if (!payload || typeof payload !== 'object') return [];
   const raw = (payload as { directions?: unknown }).directions;
   if (!Array.isArray(raw)) return [];
-  const out: ResearchDirection[] = [];
+  const primary: ResearchDirection[] = [];
+  const secondary: ResearchDirection[] = [];
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
     const row = item as Record<string, unknown>;
@@ -121,21 +122,79 @@ function normalizeDirections(payload: unknown, topicKeywords: string[]): Researc
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, 220);
-    if (!title || !researchQuestion || sourceBasis.length < 6) continue;
-    if (!hasKeywordOverlap(`${title} ${researchQuestion}`, topicKeywords)) continue;
-    out.push({
-      id: `dir_${out.length + 1}`,
+    if (!title || !researchQuestion) continue;
+    const normalized: ResearchDirection = {
+      id: `dir_${primary.length + secondary.length + 1}`,
       title,
       researchQuestion,
       coreVariables: coreVariables || '自变量 / 因变量需进一步界定',
       researchMethod: researchMethod || '混合方法（定量 + 定性）',
       dataSourceAccess: dataSourceAccess || '可通过公开数据库和行业报告收集',
       difficultyStars: normalizeStars(row.difficultyStars ?? row.difficulty ?? 3),
-      trendHeat: trendHeat || '中高热度，近三年持续增长',
-    });
-    if (out.length >= 6) break;
+      trendHeat: trendHeat || (sourceBasis ? '有一定研究热度，值得继续跟进' : '可进一步验证研究价值'),
+    };
+    if (hasKeywordOverlap(`${title} ${researchQuestion}`, topicKeywords)) {
+      primary.push(normalized);
+    } else {
+      secondary.push(normalized);
+    }
   }
-  return out;
+  return [...primary, ...secondary].slice(0, 5).map((item, index) => ({
+    ...item,
+    id: `dir_${index + 1}`,
+  }));
+}
+
+function buildFallbackDirections(topic: string, topicKeywords: string[]): ResearchDirection[] {
+  const anchor = topicKeywords[0] || topic.replace(/\s+/g, '').slice(0, 18) || '该主题';
+  const templates: Array<Pick<ResearchDirection, 'title' | 'researchQuestion' | 'coreVariables' | 'researchMethod' | 'dataSourceAccess' | 'trendHeat'>> = [
+    {
+      title: `${anchor}现状与需求`,
+      researchQuestion: `${anchor}当前最核心的需求、痛点与应用场景是什么？`,
+      coreVariables: `${anchor}需求强度 / 场景差异 / 用户类型`,
+      researchMethod: '案例分析 + 访谈',
+      dataSourceAccess: '公开案例、行业报告、用户反馈',
+      trendHeat: '适合作为入门方向，容易快速形成问题框架',
+    },
+    {
+      title: `${anchor}关键影响因素`,
+      researchQuestion: `哪些关键变量会显著影响${anchor}的结果或效果？`,
+      coreVariables: `关键变量 / 结果指标 / 外部条件`,
+      researchMethod: '定量分析 + 对比研究',
+      dataSourceAccess: '公开数据、二手研究资料',
+      trendHeat: '适合做因果关系或相关性分析',
+    },
+    {
+      title: `${anchor}落地路径`,
+      researchQuestion: `${anchor}从概念到落地的关键步骤与约束条件是什么？`,
+      coreVariables: `资源投入 / 执行路径 / 风险约束`,
+      researchMethod: '流程拆解 + 案例复盘',
+      dataSourceAccess: '公开方案、项目案例、政策文件',
+      trendHeat: '适合形成操作性较强的研究结论',
+    },
+    {
+      title: `${anchor}效果评估`,
+      researchQuestion: `如何评估${anchor}的实际效果、收益与边界？`,
+      coreVariables: `效果指标 / 成本收益 / 适用边界`,
+      researchMethod: '指标设计 + 对比评估',
+      dataSourceAccess: '评测报告、案例数据、行业基准',
+      trendHeat: '适合延展为评估框架型研究',
+    },
+    {
+      title: `${anchor}风险与争议`,
+      researchQuestion: `${anchor}当前最值得关注的风险、争议与不确定性是什么？`,
+      coreVariables: `风险类型 / 争议点 / 影响范围`,
+      researchMethod: '文献梳理 + 争议比较',
+      dataSourceAccess: '评论文章、案例复盘、研究综述',
+      trendHeat: '适合补充反证与边界条件',
+    },
+  ];
+
+  return templates.slice(0, 5).map((item, index) => ({
+    id: `dir_${index + 1}`,
+    ...item,
+    difficultyStars: 3,
+  }));
 }
 
 async function generateDirections(input: {
@@ -170,17 +229,16 @@ async function generateDirections(input: {
             `研究主题：${input.topic}\n\n` +
             `原问题关键词：${topicKeywords.join('、') || input.topic}\n\n` +
             `参考材料（来自联网检索来源摘要）：\n${input.context}\n\n` +
-            `请延展 6 个“可直接开题”的研究方向，每个方向包含字段：\n` +
+            `请延展 3 到 5 个“可直接开题”的研究方向，每个方向包含字段：\n` +
             `title, researchQuestion, coreVariables, researchMethod, dataSourceAccess, difficultyStars(1-5), trendHeat, sourceBasis。\n` +
             `要求：\n` +
-            `0) 每个方向都必须明确说明它是基于哪些来源现象/结论归纳出来的，写入 sourceBasis；若材料不足，不要编造，直接少给或返回空数组；\n` +
-            `1) 每个方向都必须与用户原始问题紧密相关，且 title 或 researchQuestion 至少包含一个原问题关键词；\n` +
-            `2) 研究问题必须可提问且可验证；\n` +
-            `3) 方法要具体（定量/定性/实验/混合）；\n` +
-            `4) 数据可得性要给出现实判断；\n` +
-            `5) difficultyStars 必须为数字；\n` +
-            `6) 全部使用简体中文；\n` +
-            `7) 禁止输出与参考材料无直接关联的泛泛选题。`,
+            `0) 请优先基于来源归纳，但如果来源不够完整，也可以做谨慎延展；sourceBasis 可以简短，不必过长；\n` +
+            `1) 方向必须与用户原始问题明显相关，尽量保留原问题关键词；\n` +
+            `2) 研究问题尽量具体、可提问；\n` +
+            `3) 方法和数据来源可给出相对宽松但合理的建议；\n` +
+            `4) difficultyStars 必须为数字；\n` +
+            `5) 全部使用简体中文；\n` +
+            `6) 不要因为材料不完美就拒绝输出，优先给出可研究的方向。`,
         },
       ],
       stream: false,
@@ -210,11 +268,21 @@ async function generateDirections(input: {
     (payload as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content ?? ''
   );
   const parsed = tryParseJson(content);
-  const directions = normalizeDirections(parsed, topicKeywords);
-  if (directions.length < 3) {
-    throw new Error('检索来源不足以稳定归纳研究议题，请补充更相关的全文来源或提供更明确的关键词后重试');
+  const parsedDirections = normalizeDirections(parsed, topicKeywords);
+  if (parsedDirections.length >= 3) {
+    return parsedDirections.slice(0, 5);
   }
-  return directions;
+
+  const fallbackDirections = buildFallbackDirections(input.topic, topicKeywords);
+  const combined = [...parsedDirections, ...fallbackDirections]
+    .filter((item, index, arr) => arr.findIndex((entry) => entry.title === item.title) === index)
+    .slice(0, 5)
+    .map((item, index) => ({ ...item, id: `dir_${index + 1}` }));
+
+  if (combined.length >= 3) {
+    return combined;
+  }
+  return buildFallbackDirections(input.topic, topicKeywords).slice(0, 3);
 }
 
 export async function POST(request: Request) {
@@ -248,11 +316,11 @@ export async function POST(request: Request) {
       .from(sourceChunks)
       .innerJoin(sources, eq(sourceChunks.sourceId, sources.id))
       .where(and(eq(sources.notebookId, notebookId), eq(sources.status, 'READY')))
-      .limit(80);
+      .limit(180);
     const context = chunks
       .map((row, index) => `[来源${index + 1}] ${row.sourceTitle}\n${row.content}`)
       .join('\n\n')
-      .slice(0, 36_000);
+      .slice(0, 72_000);
 
     if (!context.trim()) {
       return NextResponse.json(
