@@ -327,6 +327,19 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       }
       if (emitUpdate) {
         window.dispatchEvent(new CustomEvent('notes-updated'));
+        window.dispatchEvent(
+          new CustomEvent('knowledge-unit-trigger', {
+            detail: {
+              trigger: 'ON_NOTE_SAVED',
+              saved_notes: [
+                {
+                  title: title?.trim() || buildNoteTitleFromAnswer(content),
+                  content,
+                },
+              ],
+            },
+          })
+        );
       }
       return data;
     },
@@ -448,15 +461,26 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         }
         const data = await res.json();
         setConversationId(data.conversationId);
+        const normalizedCitations = Array.isArray(data.citations) ? data.citations : [];
         setMessages((prev) => [
           ...prev,
           {
             id: `a-${Date.now()}`,
             role: 'assistant',
             content: data.answer,
-            citations: Array.isArray(data.citations) ? data.citations : [],
+            citations: normalizedCitations,
           },
         ]);
+        window.dispatchEvent(
+          new CustomEvent('knowledge-unit-trigger', {
+            detail: {
+              trigger: 'ON_ANSWER_GENERATED',
+              user_question: text,
+              assistant_answer: data.answer,
+              citations: normalizedCitations,
+            },
+          })
+        );
         setTailVersion((v) => v + 1);
       } finally {
         setLoading(false);

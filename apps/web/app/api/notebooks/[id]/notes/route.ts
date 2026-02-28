@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db, notes, eq, desc } from 'db';
 import { getNotebookAccess } from '@/lib/notebook-access';
+import { KNOWLEDGE_UNIT_NOTE_TITLE, KNOWLEDGE_UNIT_TEMP_NOTE_PREFIX } from '@/lib/knowledge-unit';
 
 export async function GET(
   _request: Request,
@@ -20,7 +21,13 @@ export async function GET(
       .from(notes)
       .where(eq(notes.notebookId, notebookId))
       .orderBy(desc(notes.updatedAt));
-    return NextResponse.json(list);
+    return NextResponse.json(
+      list.filter(
+        (item) =>
+          item.title !== KNOWLEDGE_UNIT_NOTE_TITLE &&
+          !item.title.startsWith(KNOWLEDGE_UNIT_TEMP_NOTE_PREFIX)
+      )
+    );
   } catch (e) {
     console.error(e);
     return NextResponse.json(

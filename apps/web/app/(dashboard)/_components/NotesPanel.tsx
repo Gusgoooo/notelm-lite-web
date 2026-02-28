@@ -4,6 +4,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ShinyText from '@/components/ShinyText';
+import {
+  KNOWLEDGE_UNIT_TEMP_NOTE_PREFIX,
+  exportKnowledgeUnitMarkdown,
+  type KnowledgeUnit,
+  type KnowledgeUnitTriggerInput,
+} from '@/lib/knowledge-unit';
 
 type Note = {
   id: string;
@@ -98,6 +104,33 @@ function ReportIcon() {
     <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M4 4h16v16H4z" />
       <path d="M8 14v3M12 10v7M16 12v5" />
+    </svg>
+  );
+}
+
+function TimelineIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 6v6l4 2" />
+      <circle cx="12" cy="12" r="8" />
+    </svg>
+  );
+}
+
+function LockIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+      <path d="M8 11V8a4 4 0 1 1 8 0v3" />
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="9" y="9" width="10" height="10" rx="2" />
+      <path d="M5 15V7a2 2 0 0 1 2-2h8" />
     </svg>
   );
 }
@@ -263,6 +296,7 @@ function formatElapsedSeconds(createdAt: string, nowMs: number): string {
 }
 
 export function NotesPanel({ notebookId }: { notebookId: string | null }) {
+  const [activePane, setActivePane] = useState<'notes' | 'knowledge_unit'>('notes');
   const [notes, setNotes] = useState<Note[]>([]);
   const [pendingGenerations, setPendingGenerations] = useState<PendingGeneratedNote[]>([]);
   const [pendingClock, setPendingClock] = useState(() => Date.now());
@@ -285,6 +319,21 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
   ]);
   const [selectedOutlineFormat, setSelectedOutlineFormat] = useState('默认格式');
   const [paperOutlinePickerOpen, setPaperOutlinePickerOpen] = useState(false);
+  const [knowledgeUnit, setKnowledgeUnit] = useState<KnowledgeUnit | null>(null);
+  const [kuLoading, setKuLoading] = useState(true);
+  const [kuError, setKuError] = useState('');
+  const [kuUpdating, setKuUpdating] = useState(false);
+  const [kuProgress, setKuProgress] = useState(0);
+  const [kuTimelineOpen, setKuTimelineOpen] = useState(false);
+  const [kuChangedAssertionIds, setKuChangedAssertionIds] = useState<string[]>([]);
+  const [kuArtifactRunning, setKuArtifactRunning] = useState<GenerateMode | null>(null);
+  const [kuSections, setKuSections] = useState({
+    problem: true,
+    assertions: true,
+    variables: true,
+    openIssues: true,
+    citations: true,
+  });
 
   const addPendingGeneration = useCallback((mode: GenerateMode, id?: string, title?: string) => {
     const pendingId = id ?? `pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -324,9 +373,84 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     }
   }, [notebookId]);
 
+  const fetchKnowledgeUnit = useCallback(async () => {
+    if (!notebookId) return;
+    setKuLoading(true);
+    try {
+      const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-unit`, {
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setKuError(data?.error ?? '加载知识单元失败');
+        return;
+      }
+      setKuError('');
+      setKnowledgeUnit((data?.ku as KnowledgeUnit) ?? null);
+    } finally {
+      setKuLoading(false);
+    }
+  }, [notebookId]);
+
+  const runKnowledgeUnitUpdate = useCallback(
+    async (payload: KnowledgeUnitTriggerInput) => {
+      if (!notebookId) return;
+      setKuUpdating(true);
+      setKuProgress(8);
+      try {
+        const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-unit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (res.status !== 403) {
+            setKuError(data?.error ?? '知识单元更新失败');
+          }
+          return;
+        }
+        setKuProgress(100);
+        setKuError('');
+        setKnowledgeUnit((data?.ku as KnowledgeUnit) ?? null);
+        const changedIds =
+          Array.isArray(data?.ku?.update_summary?.last_turn?.updated_assertion_ids)
+            ? data.ku.update_summary.last_turn.updated_assertion_ids.filter((item: unknown) => typeof item === 'string')
+            : [];
+        setKuChangedAssertionIds(changedIds);
+      } catch (e) {
+        setKuError(e instanceof Error ? e.message : '知识单元更新失败');
+      } finally {
+        window.setTimeout(() => {
+          setKuUpdating(false);
+          setKuProgress(0);
+        }, 220);
+      }
+    },
+    [notebookId]
+  );
+
+  const patchKnowledgeUnit = useCallback(
+    async (body: Record<string, unknown>) => {
+      if (!notebookId) return;
+      const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-unit`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error ?? '更新知识单元失败');
+      }
+      setKnowledgeUnit((data?.ku as KnowledgeUnit) ?? null);
+    },
+    [notebookId]
+  );
+
   useEffect(() => {
     void fetchNotes();
-  }, [fetchNotes]);
+    void fetchKnowledgeUnit();
+  }, [fetchKnowledgeUnit, fetchNotes]);
 
   useEffect(() => {
     let canceled = false;
@@ -370,15 +494,66 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
       if (!detail?.id) return;
       removePendingGeneration(detail.id);
     };
+    const onKnowledgeUnitTrigger = (event: Event) => {
+      const detail = (event as CustomEvent<KnowledgeUnitTriggerInput>).detail;
+      if (!detail?.trigger) return;
+      void runKnowledgeUnitUpdate(detail);
+    };
+    const onSourcesUpdated = async () => {
+      if (!notebookId) return;
+      try {
+        const res = await fetch(`/api/sources?notebookId=${encodeURIComponent(notebookId)}`, {
+          cache: 'no-store',
+        });
+        const data = await res.json().catch(() => []);
+        const snapshot = Array.isArray(data)
+          ? data
+              .filter((item) => item && typeof item === 'object')
+              .slice(0, 6)
+              .map((item) => {
+                const row = item as {
+                  id?: unknown;
+                  filename?: unknown;
+                  fileUrl?: unknown;
+                  preview?: unknown;
+                };
+                return {
+                  sourceId: typeof row.id === 'string' ? row.id : '',
+                  title: typeof row.filename === 'string' ? row.filename : '来源',
+                  url: typeof row.fileUrl === 'string' ? row.fileUrl : null,
+                  snippet: typeof row.preview === 'string' ? row.preview : null,
+                  page: null,
+                };
+              })
+              .filter((item) => item.sourceId)
+          : [];
+        void runKnowledgeUnitUpdate({
+          trigger: 'ON_SOURCE_ADDED',
+          source_snapshot: snapshot,
+        });
+      } catch {
+        // ignore
+      }
+    };
     window.addEventListener('notes-updated', onUpdate);
     window.addEventListener('notes-pending-add', onPendingAdd as EventListener);
     window.addEventListener('notes-pending-remove', onPendingRemove as EventListener);
+    window.addEventListener('knowledge-unit-trigger', onKnowledgeUnitTrigger as EventListener);
+    window.addEventListener('sources-updated', onSourcesUpdated);
     return () => {
       window.removeEventListener('notes-updated', onUpdate);
       window.removeEventListener('notes-pending-add', onPendingAdd as EventListener);
       window.removeEventListener('notes-pending-remove', onPendingRemove as EventListener);
+      window.removeEventListener('knowledge-unit-trigger', onKnowledgeUnitTrigger as EventListener);
+      window.removeEventListener('sources-updated', onSourcesUpdated);
     };
-  }, [addPendingGeneration, fetchNotes, removePendingGeneration]);
+  }, [
+    addPendingGeneration,
+    fetchNotes,
+    notebookId,
+    removePendingGeneration,
+    runKnowledgeUnitUpdate,
+  ]);
 
   useEffect(() => {
     setSelectedIds([]);
@@ -389,6 +564,11 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     setMermaidSvg('');
     setMermaidError('');
     setPendingGenerations([]);
+    setKnowledgeUnit(null);
+    setKuError('');
+    setKuUpdating(false);
+    setKuProgress(0);
+    setKuChangedAssertionIds([]);
   }, [notebookId]);
 
   const expandedNote = useMemo(
@@ -479,6 +659,20 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     return () => window.clearInterval(timer);
   }, [pendingGenerations.length]);
 
+  useEffect(() => {
+    if (!kuUpdating) return;
+    const timer = window.setInterval(() => {
+      setKuProgress((prev) => (prev >= 92 ? prev : Math.min(92, prev + Math.max(3, Math.round((100 - prev) / 10)))));
+    }, 260);
+    return () => window.clearInterval(timer);
+  }, [kuUpdating]);
+
+  useEffect(() => {
+    if (kuChangedAssertionIds.length === 0) return;
+    const timer = window.setTimeout(() => setKuChangedAssertionIds([]), 3000);
+    return () => window.clearTimeout(timer);
+  }, [kuChangedAssertionIds]);
+
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
@@ -550,6 +744,59 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
     }
   };
 
+  const generateFromKnowledgeUnit = async (mode: Extract<GenerateMode, 'infographic' | 'report' | 'summary'>) => {
+    if (!notebookId || !knowledgeUnit || kuArtifactRunning) return;
+    setKuArtifactRunning(mode);
+    setError('');
+    let tempNoteId: string | null = null;
+    try {
+      const createRes = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: `${KNOWLEDGE_UNIT_TEMP_NOTE_PREFIX}_${mode}`,
+          content: exportKnowledgeUnitMarkdown(knowledgeUnit),
+        }),
+      });
+      const createData = await createRes.json().catch(() => ({}));
+      if (!createRes.ok || !createData?.id) {
+        throw new Error(createData?.error ?? '创建知识单元素材失败');
+      }
+      tempNoteId = String(createData.id);
+
+      const pendingId = addPendingGeneration(mode, undefined, `知识单元${modeLabel(mode)}`);
+      const res = await fetch('/api/notes/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notebookId,
+          noteIds: [tempNoteId],
+          mode,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        removePendingGeneration(pendingId);
+        throw new Error(data?.error ?? `生成${modeLabel(mode)}失败`);
+      }
+      updatePendingGeneration(pendingId, (item) => ({ ...item, progress: 100 }));
+      await fetchNotes();
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      if (typeof data?.note?.id === 'string') {
+        setExpandedId(data.note.id);
+      }
+      removePendingGeneration(pendingId);
+      window.dispatchEvent(new CustomEvent('notes-updated'));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `生成${modeLabel(mode)}失败`);
+    } finally {
+      if (tempNoteId) {
+        await fetch(`/api/notes/${encodeURIComponent(tempNoteId)}`, { method: 'DELETE' }).catch(() => null);
+      }
+      setKuArtifactRunning(null);
+    }
+  };
+
   const modeLabel = (mode: GenerateMode) => {
     if (mode === 'infographic') return '信息图';
     if (mode === 'summary') return '摘要';
@@ -577,9 +824,38 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
   return (
     <div className="flex-1 flex flex-col min-h-0 relative">
       <div className="h-14 px-3 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
-          我的笔记
-        </h2>
+        <div className="inline-flex rounded-full border border-gray-200 bg-white p-1">
+          <button
+            type="button"
+            onClick={() => setActivePane('notes')}
+            className={`rounded-full px-3 py-1 text-xs font-medium ${
+              activePane === 'notes' ? 'bg-gray-900 text-white' : 'text-gray-600'
+            }`}
+          >
+            笔记
+          </button>
+          <button
+            type="button"
+            onClick={() => setActivePane('knowledge_unit')}
+            className={`rounded-full px-3 py-1 text-xs font-medium ${
+              activePane === 'knowledge_unit' ? 'bg-gray-900 text-white' : 'text-gray-600'
+            }`}
+          >
+            知识单元
+          </button>
+        </div>
+        {activePane === 'knowledge_unit' ? (
+          <button
+            type="button"
+            onClick={() => setKuTimelineOpen(true)}
+            className="inline-flex items-center gap-1 rounded-full border border-gray-200 px-2.5 py-1 text-[11px] text-gray-600"
+          >
+            <TimelineIcon />
+            时间线
+          </button>
+        ) : (
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">我的笔记</h2>
+        )}
       </div>
 
       {error && (
@@ -589,7 +865,8 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
       )}
 
       <div className="flex-1 min-h-0 overflow-auto p-2 pb-44">
-        {loading ? (
+        {activePane === 'notes' ? (
+        loading ? (
           <div className="p-2">
             <ShinyText text="Loading notes..." className="text-xs text-gray-500 dark:text-gray-400" />
           </div>
@@ -745,12 +1022,322 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
               );
             })}
           </ul>
+        )
+        ) : kuLoading ? (
+          <div className="p-2">
+            <ShinyText text="Loading knowledge unit..." className="text-xs text-gray-500" />
+          </div>
+        ) : !knowledgeUnit ? (
+          <p className="p-2 text-xs text-gray-500">知识单元尚未初始化，本轮问答或收藏笔记后会自动生成。</p>
+        ) : (
+          <div className="space-y-3">
+            {kuError ? <p className="text-xs text-red-600">{kuError}</p> : null}
+            <div className="rounded-lg border border-gray-200 bg-white p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <input
+                    value={knowledgeUnit.title}
+                    onChange={(event) =>
+                      setKnowledgeUnit((prev) => (prev ? { ...prev, title: event.target.value } : prev))
+                    }
+                    onBlur={() => void patchKnowledgeUnit({ title: knowledgeUnit.title })}
+                    className="w-full rounded-md border border-gray-200 px-2 py-1 text-sm font-semibold"
+                  />
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+                    <span>稳定度 {knowledgeUnit.stability_score}</span>
+                    <span>本轮更新：新增{knowledgeUnit.update_summary.last_turn.added_assertions} / 更新{knowledgeUnit.update_summary.last_turn.updated_assertions} / 冲突{knowledgeUnit.update_summary.last_turn.added_conflicts}</span>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const blob = new Blob([JSON.stringify(knowledgeUnit, null, 2)], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const link = document.createElement('a');
+                      link.href = url;
+                      link.download = `${knowledgeUnit.title || 'knowledge-unit'}.json`;
+                      link.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="rounded-full border border-gray-200 px-2.5 py-1 text-[11px] text-gray-600"
+                  >
+                    导出
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const text = knowledgeUnit.citations
+                        .map((item) => `${item.title}${item.doc_pointer.page != null ? ` p.${item.doc_pointer.page}` : ''}`)
+                        .join('\n');
+                      await navigator.clipboard.writeText(text || '暂无引用');
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full border border-gray-200 px-2.5 py-1 text-[11px] text-gray-600"
+                  >
+                    <CopyIcon />
+                    复制引用
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void generateFromKnowledgeUnit('report')}
+                  disabled={Boolean(kuArtifactRunning)}
+                  className="inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 disabled:opacity-50"
+                >
+                  {kuArtifactRunning === 'report' ? '生成中…' : '生成报告'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void generateFromKnowledgeUnit('infographic')}
+                  disabled={Boolean(kuArtifactRunning)}
+                  className="inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 disabled:opacity-50"
+                >
+                  {kuArtifactRunning === 'infographic' ? '生成中…' : '生成信息图'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void generateFromKnowledgeUnit('summary')}
+                  disabled={Boolean(kuArtifactRunning)}
+                  className="inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 disabled:opacity-50"
+                >
+                  {kuArtifactRunning === 'summary' ? '生成中…' : '生成摘要'}
+                </button>
+              </div>
+              {kuUpdating ? (
+                <div className="mt-3">
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
+                    <div className="h-full rounded-full bg-blue-500 transition-all duration-300" style={{ width: `${kuProgress}%` }} />
+                  </div>
+                  <p className="mt-1 text-[11px] text-blue-600">知识单元更新中 {kuProgress}%</p>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-lg border border-gray-200 bg-white">
+              <button
+                type="button"
+                onClick={() => setKuSections((prev) => ({ ...prev, problem: !prev.problem }))}
+                className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold text-gray-700"
+              >
+                <span>B. Problem Frame</span>
+                <span>{kuSections.problem ? '收起' : '展开'}</span>
+              </button>
+              {kuSections.problem ? (
+                <div className="border-t border-gray-100 px-3 py-3 text-xs text-gray-600 space-y-3">
+                  <div>
+                    <p className="font-medium text-gray-700">研究问题</p>
+                    <ul className="mt-1 list-disc pl-4">
+                      {knowledgeUnit.problem_frame.research_questions.length > 0 ? knowledgeUnit.problem_frame.research_questions.map((item) => <li key={item}>{item}</li>) : <li>暂无</li>}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-700">范围 / 假设</p>
+                    <ul className="mt-1 list-disc pl-4">
+                      {knowledgeUnit.problem_frame.scope_assumptions.length > 0 ? knowledgeUnit.problem_frame.scope_assumptions.map((item) => <li key={item}>{item}</li>) : <li>暂无</li>}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-700">不在范围</p>
+                    <ul className="mt-1 list-disc pl-4">
+                      {knowledgeUnit.problem_frame.out_of_scope.length > 0 ? knowledgeUnit.problem_frame.out_of_scope.map((item) => <li key={item}>{item}</li>) : <li>暂无</li>}
+                    </ul>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-lg border border-gray-200 bg-white">
+              <button
+                type="button"
+                onClick={() => setKuSections((prev) => ({ ...prev, assertions: !prev.assertions }))}
+                className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold text-gray-700"
+              >
+                <span>C. Core Assertions</span>
+                <span>{kuSections.assertions ? '收起' : '展开'}</span>
+              </button>
+              {kuSections.assertions ? (
+                <div className="border-t border-gray-100 px-2 py-2 space-y-2">
+                  {knowledgeUnit.assertions.length > 0 ? knowledgeUnit.assertions.map((assertion) => (
+                    <details
+                      key={assertion.assertion_id}
+                      className={`rounded-md border p-2 ${kuChangedAssertionIds.includes(assertion.assertion_id) ? 'border-blue-300 bg-blue-50/60' : 'border-gray-200 bg-white'}`}
+                    >
+                      <summary className="cursor-pointer list-none">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-medium text-gray-800">{assertion.statement}</p>
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+                              <span>{Math.round(assertion.confidence * 100)}%</span>
+                              <span>{assertion.status}</span>
+                              <span>{assertion.evidence_for.length + assertion.evidence_against.length} 条证据</span>
+                              <span>{formatTime(assertion.updated_at)}</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              void patchKnowledgeUnit({
+                                assertionId: assertion.assertion_id,
+                                locked: !assertion.locked_by_user,
+                              });
+                            }}
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] ${assertion.locked_by_user ? 'border-amber-300 text-amber-700 bg-amber-50' : 'border-gray-200 text-gray-500'}`}
+                          >
+                            <LockIcon />
+                            {assertion.locked_by_user ? '已锁定' : '锁定'}
+                          </button>
+                        </div>
+                      </summary>
+                      <div className="mt-2 space-y-2 border-t border-gray-100 pt-2 text-[11px] text-gray-600">
+                        <div>
+                          <p className="font-medium text-gray-700">Supporting evidence</p>
+                          <ul className="mt-1 space-y-1">
+                            {assertion.evidence_for.length > 0 ? assertion.evidence_for.map((item) => {
+                              const citation = knowledgeUnit.citations.find((entry) => entry.citation_id === item.citation_id);
+                              return (
+                                <li key={`${assertion.assertion_id}-${item.citation_id}`} className="rounded bg-gray-50 px-2 py-1">
+                                  [{citation?.title ?? item.citation_id}]
+                                  {item.doc_pointer.page != null ? ` p.${item.doc_pointer.page}` : ''} {item.snippet}
+                                </li>
+                              );
+                            }) : <li>暂无</li>}
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-700">Counter evidence</p>
+                          <ul className="mt-1 space-y-1">
+                            {assertion.evidence_against.length > 0 ? assertion.evidence_against.map((item) => {
+                              const citation = knowledgeUnit.citations.find((entry) => entry.citation_id === item.citation_id);
+                              return (
+                                <li key={`${assertion.assertion_id}-against-${item.citation_id}`} className="rounded bg-red-50 px-2 py-1 text-red-700">
+                                  [{citation?.title ?? item.citation_id}] {item.snippet}
+                                </li>
+                              );
+                            }) : <li>暂无</li>}
+                          </ul>
+                        </div>
+                      </div>
+                    </details>
+                  )) : <p className="px-1 py-2 text-xs text-gray-500">暂无核心结论。</p>}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-lg border border-gray-200 bg-white">
+              <button
+                type="button"
+                onClick={() => setKuSections((prev) => ({ ...prev, variables: !prev.variables }))}
+                className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold text-gray-700"
+              >
+                <span>D. Key Variables</span>
+                <span>{kuSections.variables ? '收起' : '展开'}</span>
+              </button>
+              {kuSections.variables ? (
+                <div className="border-t border-gray-100 px-3 py-3 text-xs text-gray-600 space-y-3">
+                  <div>
+                    <p className="font-medium text-gray-700">Variables</p>
+                    <ul className="mt-1 space-y-1">
+                      {knowledgeUnit.variables.length > 0 ? knowledgeUnit.variables.map((item) => (
+                        <li key={item.key} className="rounded bg-gray-50 px-2 py-1">
+                          <span className="font-medium text-gray-700">{item.name}</span> · {item.definition || '待补充定义'}
+                          {item.unit ? ` · ${item.unit}` : ''}
+                        </li>
+                      )) : <li>暂无</li>}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-700">Metrics</p>
+                    <ul className="mt-1 space-y-1">
+                      {knowledgeUnit.metrics.length > 0 ? knowledgeUnit.metrics.map((item) => (
+                        <li key={item.key} className="rounded bg-gray-50 px-2 py-1">
+                          <span className="font-medium text-gray-700">{item.name}</span> · {item.definition}
+                        </li>
+                      )) : <li>暂无</li>}
+                    </ul>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-lg border border-gray-200 bg-white">
+              <button
+                type="button"
+                onClick={() => setKuSections((prev) => ({ ...prev, openIssues: !prev.openIssues }))}
+                className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold text-gray-700"
+              >
+                <span>E. Open Issues</span>
+                <span>{kuSections.openIssues ? '收起' : '展开'}</span>
+              </button>
+              {kuSections.openIssues ? (
+                <div className="border-t border-gray-100 px-3 py-3 text-xs text-gray-600 space-y-3">
+                  <div>
+                    <p className="font-medium text-gray-700">Conflicts</p>
+                    <ul className="mt-1 list-disc pl-4">
+                      {knowledgeUnit.open_issues.conflicts.length > 0 ? knowledgeUnit.open_issues.conflicts.map((item) => <li key={item.conflict_id}>{item.topic}：{item.note}</li>) : <li>暂无</li>}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-700">Unknowns</p>
+                    <ul className="mt-1 list-disc pl-4">
+                      {knowledgeUnit.open_issues.unknowns.length > 0 ? knowledgeUnit.open_issues.unknowns.map((item) => <li key={item.unknown_id}>{item.question}</li>) : <li>暂无</li>}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-700">Next Questions</p>
+                    <div className="mt-1 flex flex-col items-start gap-1">
+                      {knowledgeUnit.open_issues.next_questions.length > 0 ? knowledgeUnit.open_issues.next_questions.map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => window.dispatchEvent(new CustomEvent('chat-send-message', { detail: { message: item } }))}
+                          className="rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-left text-[11px] text-gray-700"
+                        >
+                          {item}
+                        </button>
+                      )) : <p>暂无</p>}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-lg border border-gray-200 bg-white">
+              <button
+                type="button"
+                onClick={() => setKuSections((prev) => ({ ...prev, citations: !prev.citations }))}
+                className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold text-gray-700"
+              >
+                <span>F. Citations</span>
+                <span>{kuSections.citations ? '收起' : '展开'}</span>
+              </button>
+              {kuSections.citations ? (
+                <div className="border-t border-gray-100 px-3 py-3 text-xs text-gray-600 space-y-1">
+                  {knowledgeUnit.citations.length > 0 ? knowledgeUnit.citations.map((item) => (
+                    <div key={item.citation_id} className="rounded bg-gray-50 px-2 py-1">
+                      <span className="font-medium text-gray-700">{item.title}</span>
+                      {item.doc_pointer.page != null ? ` · p.${item.doc_pointer.page}` : ''}
+                      {item.url ? (
+                        <a href={item.url} target="_blank" rel="noreferrer" className="ml-1 text-blue-600 underline">
+                          打开
+                        </a>
+                      ) : null}
+                    </div>
+                  )) : <p>暂无来源。</p>}
+                </div>
+              ) : null}
+            </div>
+          </div>
         )}
       </div>
 
       <div
         className={`absolute inset-x-3 bottom-3 z-20 transition-all duration-200 ease-out ${
-          selectedIds.length > 0 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'
+          activePane === 'notes' && selectedIds.length > 0
+            ? 'opacity-100 translate-y-0'
+            : 'opacity-0 translate-y-2 pointer-events-none'
         }`}
       >
         <div className="rounded border border-gray-200 dark:border-gray-700 p-2 space-y-2 bg-white/90 dark:bg-gray-900/90 shadow-lg backdrop-blur-sm">
@@ -831,6 +1418,43 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
           )}
         </div>
       </div>
+
+      {kuTimelineOpen && knowledgeUnit && (
+        <div className="fixed inset-0 z-[68] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-2xl max-h-[80vh] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">知识单元更新历史</p>
+                <p className="text-xs text-gray-500">用户可见的本轮增量记录</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setKuTimelineOpen(false)}
+                className="rounded-md bg-gray-100 px-3 py-1 text-xs text-gray-700"
+              >
+                关闭
+              </button>
+            </div>
+            <div className="max-h-[65vh] overflow-auto p-4 space-y-3">
+              {knowledgeUnit.timeline.length > 0 ? knowledgeUnit.timeline.map((item) => (
+                <div key={item.id} className="rounded-lg border border-gray-200 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-gray-800">{item.summary}</p>
+                    <span className="text-[11px] text-gray-500">{formatTime(item.at)}</span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-500">{item.trigger}</p>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-gray-600">
+                    <div>新增结论：{item.diff.added_assertions.length}</div>
+                    <div>更新结论：{item.diff.updated_assertions.length}</div>
+                    <div>新增冲突：{item.diff.added_conflicts.length}</div>
+                    <div>新增未知：{item.diff.added_unknowns.length}</div>
+                  </div>
+                </div>
+              )) : <p className="text-xs text-gray-500">暂无更新时间线。</p>}
+            </div>
+          </div>
+        </div>
+      )}
 
       {paperOutlinePickerOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4">
