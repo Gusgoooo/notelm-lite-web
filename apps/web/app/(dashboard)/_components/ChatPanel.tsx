@@ -313,6 +313,43 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     return () => window.clearInterval(timer);
   }, [loading]);
 
+  const updateKnowledgeDocFromChat = useCallback(
+    async (lastUserMessage: string, lastAssistantMessage: string) => {
+      if (!notebookId) throw new Error('notebookId is required');
+      const docRes = await fetch(
+        `/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`,
+        { cache: 'no-store' }
+      );
+      const docData = await docRes.json().catch(() => ({}));
+      const currentContent =
+        typeof docData?.content === 'string'
+          ? docData.content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+          : '';
+      const updateRes = await fetch(
+        `/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc/update-from-chat`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            currentContent,
+            lastUserMessage,
+            lastAssistantMessage,
+          }),
+        }
+      );
+      const updateData = await updateRes.json().catch(() => ({}));
+      if (!updateRes.ok) {
+        throw new Error(updateData?.error ?? '更新知识文档失败');
+      }
+      window.dispatchEvent(
+        new CustomEvent('knowledge-doc-update-from-chat', {
+          detail: { suggestedContent: updateData?.suggestedContent ?? '', autoApply: false },
+        })
+      );
+    },
+    [notebookId]
+  );
+
   const createNote = useCallback(
     async (content: string, title?: string, emitUpdate = true) => {
       if (!notebookId) throw new Error('notebookId is required');
@@ -326,7 +363,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data?.error ?? '保存到笔记失败');
+        throw new Error(data?.error ?? '保存失败');
       }
       if (emitUpdate) {
         window.dispatchEvent(new CustomEvent('notes-updated'));
@@ -851,29 +888,32 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                   className={SAVE_ACTION_PILL_CLASS}
                                   onClick={async () => {
                                     if (!notebookId) return;
-                                    const content =
+                                    const idx = messages.findIndex((msg) => msg.id === m.id);
+                                    const prevUser = idx > 0 ? messages.slice(0, idx).reverse().find((msg) => msg.role === 'user') : null;
+                                    await updateKnowledgeDocFromChat(
+                                      prevUser?.content ?? '',
                                       parsed.displayContent +
-                                      (m.citations && m.citations.length > 0
-                                        ? '\n\n## Sources\n\n' +
-                                          sortCitations(m.citations)
-                                            .map(
-                                              (c) =>
-                                                `- **${c.sourceTitle}**${
-                                                  c.pageStart != null
-                                                    ? ` (p.${c.pageStart}${
-                                                        c.pageEnd != null && c.pageEnd !== c.pageStart
-                                                          ? `-${c.pageEnd}`
-                                                          : ''
-                                                      })`
-                                                    : ''
-                                                }\n  ${c.snippet}`
-                                            )
-                                            .join('\n')
-                                        : '');
-                                    await createNote(content, buildNoteTitleFromAnswer(parsed.displayContent));
+                                        (m.citations && m.citations.length > 0
+                                          ? '\n\n## Sources\n\n' +
+                                            sortCitations(m.citations)
+                                              .map(
+                                                (c) =>
+                                                  `- **${c.sourceTitle}**${
+                                                    c.pageStart != null
+                                                      ? ` (p.${c.pageStart}${
+                                                          c.pageEnd != null && c.pageEnd !== c.pageStart
+                                                            ? `-${c.pageEnd}`
+                                                            : ''
+                                                        })`
+                                                      : ''
+                                                  }\n  ${c.snippet}`
+                                              )
+                                              .join('\n')
+                                          : '')
+                                    );
                                   }}
                                 >
-                                  保存到笔记
+                                  更新知识文档
                                 </button>
                               ) : null}
                               {showRichActions ? (
@@ -1009,17 +1049,17 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               const content =
                 (selectionRangeRef.current?.cloneContents().textContent ?? selectionToast.text).trim();
               if (!content) return;
-              await createNote(content, buildNoteTitleFromAnswer(content));
+              await updateKnowledgeDocFromChat('', content);
               setSelectionToast(null);
             } catch (error) {
-              alert(error instanceof Error ? error.message : '保存到笔记失败');
+              alert(error instanceof Error ? error.message : '更新知识文档失败');
             } finally {
               setSavingSelection(false);
             }
           }}
           disabled={savingSelection}
         >
-          {savingSelection ? '添加中…' : '添加到笔记'}
+          {savingSelection ? '更新中…' : '更新知识文档'}
         </button>
       ) : null}
       <div className="px-4 pb-4">

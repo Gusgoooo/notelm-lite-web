@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { ChatPanel } from './ChatPanel';
-import { NotesPanel } from './NotesPanel';
+import { KnowledgeDocPanel } from './KnowledgeDocPanel';
 import { SourcesPanel } from './SourcesPanel';
 
 type WorkspaceShellProps = {
@@ -38,6 +38,10 @@ export function WorkspaceShell({
   const [titleInput, setTitleInput] = useState(initialTitle);
   const [descriptionInput, setDescriptionInput] = useState(initialDescription);
   const [publishedFlag, setPublishedFlag] = useState(isPublished);
+  const [creationOpen, setCreationOpen] = useState(false);
+  const [creationDocContent, setCreationDocContent] = useState('');
+  const [creationLoading, setCreationLoading] = useState(false);
+  const [creationGenerating, setCreationGenerating] = useState<string | null>(null);
 
   const resizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
@@ -92,6 +96,59 @@ export function WorkspaceShell({
     return () =>
       window.removeEventListener('notebook-title-updated', onNotebookTitleUpdated as EventListener);
   }, []);
+
+  useEffect(() => {
+    const onOpenCreation = () => setCreationOpen(true);
+    window.addEventListener('open-creation-panel', onOpenCreation);
+    return () => window.removeEventListener('open-creation-panel', onOpenCreation);
+  }, []);
+
+  useEffect(() => {
+    if (!creationOpen || !notebookId) return;
+    setCreationLoading(true);
+    fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`, { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data) => setCreationDocContent(typeof data?.content === 'string' ? data.content : ''))
+      .catch(() => setCreationDocContent(''))
+      .finally(() => setCreationLoading(false));
+  }, [creationOpen, notebookId]);
+
+  const runCreationGenerate = async (mode: 'infographic' | 'summary' | 'mindmap' | 'report' | 'webpage') => {
+    if (!notebookId || creationGenerating) return;
+    setCreationGenerating(mode);
+    let tempNoteId: string | null = null;
+    try {
+      const createRes = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: `创作_${mode}_${Date.now()}`,
+          content: creationDocContent.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || '（空文档）',
+        }),
+      });
+      const createData = await createRes.json().catch(() => ({}));
+      if (!createRes.ok || !createData?.id) {
+        throw new Error(createData?.error ?? '创建素材失败');
+      }
+      tempNoteId = String(createData.id);
+      const genRes = await fetch('/api/notes/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notebookId, noteIds: [tempNoteId], mode }),
+      });
+      const genData = await genRes.json().catch(() => ({}));
+      if (!genRes.ok) throw new Error(genData?.error ?? '生成失败');
+      setCreationOpen(false);
+      window.dispatchEvent(new CustomEvent('notes-updated'));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '生成失败');
+    } finally {
+      if (tempNoteId) {
+        await fetch(`/api/notes/${encodeURIComponent(tempNoteId)}`, { method: 'DELETE' }).catch(() => null);
+      }
+      setCreationGenerating(null);
+    }
+  };
 
   const readOnlySources = useMemo(() => !isOwner, [isOwner]);
 
@@ -306,7 +363,7 @@ export function WorkspaceShell({
               setResizing(true);
             }}
           />
-          <NotesPanel notebookId={notebookId} />
+          <KnowledgeDocPanel notebookId={notebookId} />
         </aside>
       </div>
 
@@ -358,6 +415,46 @@ export function WorkspaceShell({
                 {publishSaving ? '分享中…' : '确认分享'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {creationOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">基于知识文档去创作</h3>
+              <button
+                type="button"
+                onClick={() => setCreationOpen(false)}
+                className="rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                关闭
+              </button>
+            </div>
+            {creationLoading ? (
+              <p className="py-4 text-center text-xs text-gray-500">加载文档中…</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { mode: 'summary' as const, label: '简化成摘要' },
+                  { mode: 'infographic' as const, label: '信息图' },
+                  { mode: 'mindmap' as const, label: '思维导图' },
+                  { mode: 'report' as const, label: '生成报告' },
+                  { mode: 'webpage' as const, label: '互动PPT' },
+                ].map(({ mode, label }) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => void runCreationGenerate(mode)}
+                    disabled={!!creationGenerating}
+                    className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                  >
+                    {creationGenerating === mode ? '生成中…' : label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
