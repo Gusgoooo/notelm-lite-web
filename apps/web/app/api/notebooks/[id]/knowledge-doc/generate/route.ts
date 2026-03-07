@@ -6,6 +6,10 @@ import {
   normalizeKnowledgeDocScenarioState,
   resolveKnowledgeDocScenario,
 } from '@/lib/knowledge-doc-scenarios';
+import {
+  KNOWLEDGE_DOC_MARKDOWN_GUIDE,
+  normalizeKnowledgeDocMarkdown,
+} from '@/lib/knowledge-doc-markdown';
 import { getNotebookAccess } from '@/lib/notebook-access';
 import {
   KNOWLEDGE_DOC_NOTE_TITLE,
@@ -94,12 +98,15 @@ export async function POST(
 你的任务是基于来源内容，按照给定结构，生成一份结构清晰、可直接继续编辑的知识文档。
 
 输出要求：
-1. 严格输出 Markdown，可使用 #、##、### 标题、段落和列表。
-2. 不要输出代码块，不要使用表格。
-3. 优先沿用指定结构，不要随意改写栏目顺序。
-4. 如果信息不足，也要保留结构，并使用“待补充”占位，不要省略关键栏目。
-5. 内容必须来自当前知识文档、来源和上下文，不要编造。
-6. 风格要偏工作文档，便于后续继续编辑。`;
+1. 严格输出 Markdown。
+2. 优先沿用指定结构，不要随意改写栏目顺序。
+3. 如果信息不足，也要保留结构，并使用“待补充”占位，不要省略关键栏目。
+4. 内容必须来自当前知识文档、来源和上下文，不要编造。
+5. 风格要偏工作文档，便于后续继续编辑。
+6. 如需表达对比、状态、指标、计划，可使用 Markdown 表格。
+7. 不要输出代码块，不要输出任何额外解释。
+
+${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
 
     const userPrompt =
       `当前任务模式：${mode === 'update' ? '更新已有知识文档' : '生成新的知识文档初稿'}\n` +
@@ -116,7 +123,7 @@ export async function POST(
       { role: 'user', content: userPrompt },
     ]);
 
-    const suggestedContent = (content ?? '').trim();
+    const suggestedContent = normalizeKnowledgeDocMarkdown(content ?? '');
     if (!suggestedContent) {
       return NextResponse.json({ error: '知识文档生成失败，请稍后重试。' }, { status: 500 });
     }

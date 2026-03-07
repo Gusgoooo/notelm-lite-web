@@ -26,6 +26,12 @@ type WorkNote = {
   updatedAt: string;
 };
 
+type PendingWork = {
+  id: string;
+  title: string;
+  description: string;
+};
+
 function extractWorkImage(content: string): string | null {
   const markdownImage = content.match(/!\[[^\]]*]\((data:image\/[^)]+|https?:\/\/[^)\s]+)\)/i);
   if (markdownImage?.[1]) return markdownImage[1];
@@ -36,6 +42,10 @@ function extractWorkImage(content: string): string | null {
 
 function extractWorkHtml(content: string): string | null {
   return content.match(/```html\s*([\s\S]*?)```/i)?.[1]?.trim() ?? null;
+}
+
+function extractWorkMermaid(content: string): string | null {
+  return content.match(/```mermaid\s*([\s\S]*?)```/i)?.[1]?.trim() ?? null;
 }
 
 function inferWorkKind(note: WorkNote): '信息图' | '摘要' | '思维导图' | '互动PPT' | '论文大纲' | '报告' | null {
@@ -87,6 +97,65 @@ function buildWorkFilename(note: WorkNote, extension: string): string {
     .slice(0, 48)
     .trim();
   return `${normalized || '作品'}.${extension}`;
+}
+
+function SpinnerIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={`${className} animate-spin`} fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M21 12a9 9 0 1 1-6.22-8.56" />
+    </svg>
+  );
+}
+
+function MermaidPreview({ code }: { code: string }) {
+  const [svg, setSvg] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const renderDiagram = async () => {
+      try {
+        const mermaid = (await import('mermaid')).default;
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'loose',
+          theme: 'neutral',
+        });
+        const id = `work-mermaid-${Math.random().toString(36).slice(2, 9)}`;
+        const { svg: nextSvg } = await mermaid.render(id, code);
+        if (cancelled) return;
+        setSvg(nextSvg);
+        setError('');
+      } catch (renderError) {
+        if (cancelled) return;
+        setSvg('');
+        setError(renderError instanceof Error ? renderError.message : '思维导图渲染失败');
+      }
+    };
+
+    void renderDiagram();
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  if (error) {
+    return <p className="text-sm text-red-600 dark:text-red-400">{error}</p>;
+  }
+
+  if (!svg) {
+    return (
+      <div className="flex min-h-[320px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+        <span className="inline-flex items-center gap-2">
+          <SpinnerIcon />
+          正在渲染思维导图…
+        </span>
+      </div>
+    );
+  }
+
+  return <div className="mermaid-preview [&_svg]:h-auto [&_svg]:max-w-full" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
 type WorkspaceShellProps = {
@@ -270,12 +339,36 @@ export function WorkspaceShell({
     () => works.find((item) => item.id === selectedWorkId) ?? null,
     [selectedWorkId, works]
   );
+  const pendingWorks = useMemo<PendingWork[]>(
+    () =>
+      artifactNotices
+        .filter(
+          (notice) =>
+            notice.state === 'running' &&
+            /正在生成/.test(notice.title) &&
+            /作品列表/.test(notice.description)
+        )
+        .map((notice) => ({
+          id: `pending:${notice.id}`,
+          title: notice.title.replace(/^正在生成/, ''),
+          description: notice.description,
+        })),
+    [artifactNotices]
+  );
+  const selectedPendingWork = useMemo(
+    () => pendingWorks.find((item) => item.id === selectedWorkId) ?? null,
+    [pendingWorks, selectedWorkId]
+  );
   const selectedWorkImage = useMemo(
     () => (selectedWork ? extractWorkImage(selectedWork.content) : null),
     [selectedWork]
   );
   const selectedWorkHtml = useMemo(
     () => (selectedWork ? extractWorkHtml(selectedWork.content) : null),
+    [selectedWork]
+  );
+  const selectedWorkMermaid = useMemo(
+    () => (selectedWork ? extractWorkMermaid(selectedWork.content) : null),
     [selectedWork]
   );
 
@@ -436,6 +529,21 @@ export function WorkspaceShell({
     if (!worksOpen) return;
     void fetchWorks();
   }, [fetchWorks, worksOpen]);
+
+  useEffect(() => {
+    if (!worksOpen) return;
+    if (selectedWorkId) return;
+    if (pendingWorks.length > 0) {
+      setSelectedWorkId(pendingWorks[0].id);
+    }
+  }, [pendingWorks, selectedWorkId, worksOpen]);
+
+  useEffect(() => {
+    if (!worksOpen) return;
+    if (!selectedWorkId?.startsWith('pending:')) return;
+    if (pendingWorks.some((item) => item.id === selectedWorkId)) return;
+    setSelectedWorkId(works[0]?.id ?? null);
+  }, [pendingWorks, selectedWorkId, works, worksOpen]);
 
   const closeBootstrapModal = (abort = false) => {
     if (abort) {
@@ -854,11 +962,8 @@ export function WorkspaceShell({
         >
           <div className="flex h-[min(80vh,760px)] w-full max-w-6xl overflow-hidden rounded-[24px] bg-white shadow-xl dark:bg-gray-900">
             <div className="flex w-[280px] shrink-0 flex-col border-r border-black/6 bg-[#f7f7f7] dark:border-white/10 dark:bg-gray-950">
-              <div className="border-b border-black/6 px-5 py-4 dark:border-white/10">
+              <div className="px-5 py-4">
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">作品列表</h3>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  查看通过去创作生成的内容，并支持预览和下载。
-                </p>
               </div>
               <div className="min-h-0 flex-1 overflow-auto px-3 py-3">
                 {worksLoading ? (
@@ -869,8 +974,31 @@ export function WorkspaceShell({
                   <div className="flex min-h-[180px] items-center justify-center px-4 text-center text-sm text-red-600 dark:text-red-400">
                     {worksError}
                   </div>
-                ) : works.length > 0 ? (
+                ) : works.length > 0 || pendingWorks.length > 0 ? (
                   <div className="space-y-2">
+                    {pendingWorks.map((work) => {
+                      const active = work.id === selectedWorkId;
+                      return (
+                        <button
+                          key={work.id}
+                          type="button"
+                          onClick={() => setSelectedWorkId(work.id)}
+                          className={`w-full rounded-[16px] px-4 py-3 text-left transition ${
+                            active
+                              ? 'bg-white shadow-sm ring-1 ring-black/8 dark:bg-gray-900 dark:ring-white/10'
+                              : 'bg-transparent hover:bg-white/70 dark:hover:bg-gray-900/80'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                              {work.title}
+                            </p>
+                            <SpinnerIcon className="h-3.5 w-3.5 text-gray-500" />
+                          </div>
+                          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">正在生成中…</p>
+                        </button>
+                      );
+                    })}
                     {works.map((work) => {
                       const active = work.id === selectedWorkId;
                       const kind = inferWorkKind(work);
@@ -914,14 +1042,22 @@ export function WorkspaceShell({
               <div className="flex items-center justify-between gap-3 border-b border-black/6 px-5 py-4 dark:border-white/10">
                 <div className="min-w-0">
                   <h3 className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
-                    {selectedWork ? formatWorkTitle(selectedWork) : '作品预览'}
+                    {selectedPendingWork
+                      ? selectedPendingWork.title
+                      : selectedWork
+                        ? formatWorkTitle(selectedWork)
+                        : '作品预览'}
                   </h3>
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    {selectedWork ? `更新于 ${formatWorkUpdatedAt(selectedWork.updatedAt)}` : '选择左侧作品查看详情。'}
+                    {selectedPendingWork
+                      ? '正在生成中'
+                      : selectedWork
+                        ? `更新于 ${formatWorkUpdatedAt(selectedWork.updatedAt)}`
+                        : '选择左侧作品查看详情。'}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {selectedWork ? (
+                  {selectedWork && !selectedPendingWork ? (
                     <button
                       type="button"
                       onClick={() => downloadWork(selectedWork)}
@@ -941,7 +1077,21 @@ export function WorkspaceShell({
               </div>
 
               <div className="min-h-0 flex-1 overflow-auto bg-[#f4f4f5] p-5 dark:bg-gray-950">
-                {selectedWork ? (
+                {selectedPendingWork ? (
+                  <div className="flex min-h-full items-center justify-center rounded-[20px] bg-white p-8 shadow-sm dark:bg-gray-900">
+                    <div className="text-center">
+                      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-black/[0.04] text-gray-700 dark:bg-white/10 dark:text-gray-100">
+                        <SpinnerIcon className="h-6 w-6" />
+                      </div>
+                      <p className="mt-4 text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {selectedPendingWork.title} 正在生成中
+                      </p>
+                      <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                        结果返回后会自动出现在作品列表里。
+                      </p>
+                    </div>
+                  </div>
+                ) : selectedWork ? (
                   selectedWorkHtml ? (
                     <div className="h-full min-h-[480px] overflow-hidden rounded-[20px] bg-white shadow-sm dark:bg-gray-900">
                       <iframe
@@ -949,6 +1099,12 @@ export function WorkspaceShell({
                         srcDoc={selectedWorkHtml}
                         className="h-full w-full bg-white"
                       />
+                    </div>
+                  ) : selectedWorkMermaid ? (
+                    <div className="flex min-h-full items-start justify-center rounded-[20px] bg-white p-5 shadow-sm dark:bg-gray-900">
+                      <div className="w-full overflow-auto">
+                        <MermaidPreview code={selectedWorkMermaid} />
+                      </div>
                     </div>
                   ) : selectedWorkImage ? (
                     <div className="flex min-h-full items-start justify-center rounded-[20px] bg-white p-5 shadow-sm dark:bg-gray-900">
@@ -998,9 +1154,6 @@ export function WorkspaceShell({
             </div>
             <div className="mt-4 h-[3px] w-full overflow-hidden rounded-full bg-black/8 dark:bg-white/10">
               <div className="app-slow-loading-bar relative h-full w-full overflow-hidden" />
-            </div>
-            <div className="mt-4 rounded-[18px] bg-[#f5f5f5] px-4 py-3 text-xs leading-5 text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-              当前阶段只做联网检索和来源导入。推荐问题会在进入后再后台准备，不会阻塞你开始对话。
             </div>
             {bootstrapError ? <p className="mt-3 text-xs text-red-600 dark:text-red-400">{bootstrapError}</p> : null}
             <div className="mt-4 flex items-center justify-end">

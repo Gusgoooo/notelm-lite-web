@@ -6,6 +6,10 @@ import {
   normalizeKnowledgeDocScenarioState,
   resolveKnowledgeDocScenario,
 } from '@/lib/knowledge-doc-scenarios';
+import {
+  KNOWLEDGE_DOC_MARKDOWN_GUIDE,
+  normalizeKnowledgeDocMarkdown,
+} from '@/lib/knowledge-doc-markdown';
 import { getNotebookAccess } from '@/lib/notebook-access';
 import { KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE } from '@/lib/knowledge-unit';
 
@@ -64,7 +68,7 @@ export async function POST(
 要求：
 1. 将对话中的关键信息、结论、事实整合进文档，保持结构清晰（可分段、分条）。
 2. 不要编造对话中未出现的内容。
-3. 输出 Markdown，可使用 #、##、###、无序列表、加粗等结构化格式。
+3. 输出 Markdown，可使用 #、##、###、无序列表、加粗、表格等结构化格式。
 4. 如果当前知识文档是 HTML，请先理解其现有结构，再用等价的 Markdown 完整输出。
 5. 如果提供了“突出资料”，请将它与用户问题和助手回答一起吸收进文档，优先整理成可复用的结论、事实依据、要点列表。
 6. 当前文档中已有内容视为用户撰写或修改过的，请尽量保留并在其基础上补充或合并新信息，避免大段重写。
@@ -73,7 +77,9 @@ export async function POST(
   userEditedHint
     ? `\n9. 以下内容为用户明确标注的手动编辑，请务必保留不改动：\n${userEditedHint}`
     : ''
-}`;
+}
+
+${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
 
     const userPrompt =
       `【当前知识文档（可能是 HTML）】\n${currentContent || '(空)'}\n\n` +
@@ -89,7 +95,7 @@ export async function POST(
       { role: 'user', content: userPrompt },
     ]);
 
-    const trimmed = (suggestedContent ?? '').trim();
+    const trimmed = normalizeKnowledgeDocMarkdown(suggestedContent ?? '');
     return NextResponse.json({
       suggestedContent: trimmed || currentContent,
     });

@@ -102,8 +102,10 @@ body {
 .knowledge-doc-editor p,
 .knowledge-doc-editor ul,
 .knowledge-doc-editor ol,
+.knowledge-doc-editor table,
 .knowledge-doc-editor blockquote,
-.knowledge-doc-editor pre {
+.knowledge-doc-editor pre,
+.knowledge-doc-editor hr {
   margin: 0;
 }
 
@@ -123,6 +125,21 @@ body {
 .knowledge-doc-editor p + blockquote,
 .knowledge-doc-editor pre + p,
 .knowledge-doc-editor p + pre,
+.knowledge-doc-editor p + table,
+.knowledge-doc-editor ul + table,
+.knowledge-doc-editor ol + table,
+.knowledge-doc-editor table + p,
+.knowledge-doc-editor table + ul,
+.knowledge-doc-editor table + ol,
+.knowledge-doc-editor table + table,
+.knowledge-doc-editor table + h2,
+.knowledge-doc-editor table + h3,
+.knowledge-doc-editor h2 + table,
+.knowledge-doc-editor h3 + table,
+.knowledge-doc-editor hr + p,
+.knowledge-doc-editor p + hr,
+.knowledge-doc-editor hr + h2,
+.knowledge-doc-editor hr + h3,
 .knowledge-doc-editor p + h1,
 .knowledge-doc-editor p + h2,
 .knowledge-doc-editor p + h3,
@@ -153,6 +170,13 @@ body {
 .knowledge-doc-editor p {
   font-size: 0.95rem;
   color: rgb(17 24 39);
+}
+
+.knowledge-doc-editor a {
+  color: rgb(37 99 235);
+  text-decoration: underline;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.16em;
 }
 
 .knowledge-doc-editor ul,
@@ -192,6 +216,61 @@ body {
   color: rgb(75 85 99);
 }
 
+.knowledge-doc-editor table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid rgb(229 231 235);
+  border-radius: 0.9rem;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.88);
+  table-layout: fixed;
+}
+
+.knowledge-doc-editor th,
+.knowledge-doc-editor td {
+  border: 1px solid rgb(229 231 235);
+  padding: 0.7rem 0.8rem;
+  text-align: left;
+  vertical-align: top;
+  font-size: 0.92rem;
+  line-height: 1.65;
+  word-break: break-word;
+  position: relative;
+}
+
+.knowledge-doc-editor th {
+  background: rgb(249 250 251);
+  color: rgb(55 65 81);
+  font-weight: 600;
+}
+
+.knowledge-doc-editor td {
+  color: rgb(17 24 39);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.knowledge-doc-editor tr:nth-child(even) td {
+  background: rgba(249, 250, 251, 0.9);
+}
+
+.knowledge-doc-editor .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(148, 163, 184, 0.12);
+  pointer-events: none;
+}
+
+.knowledge-doc-editor .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -1px;
+  bottom: 0;
+  width: 2px;
+  background: rgba(17, 24, 39, 0.2);
+  pointer-events: none;
+}
+
 .knowledge-doc-editor pre {
   overflow-x: auto;
   border-radius: 0.75rem;
@@ -204,6 +283,11 @@ body {
   background: rgb(243 244 246);
   padding: 0.1rem 0.35rem;
   font-size: 0.85em;
+}
+
+.knowledge-doc-editor hr {
+  border: 0;
+  border-top: 1px solid rgb(229 231 235);
 }
 
 @keyframes knowledge-doc-flow {

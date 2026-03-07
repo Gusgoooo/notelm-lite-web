@@ -216,43 +216,43 @@ function buildGuidanceQuestion(
   activeScenario: KnowledgeDocScenario | null
 ): string {
   if (activeScenario?.presetKey === 'okr') {
-    return '为了把这份 OKR 补完整，你想先补充 O1 的目标描述、KR 的量化目标，还是负责人和时间周期？';
+    return '这个 OKR 的目标、KR 和负责人可以再补充一下吗？';
   }
   if (activeScenario?.presetKey === 'prd') {
-    return '为了把这份 PRD 写扎实，你想先补充目标用户、关键场景，还是成功指标和验证方式？';
+    return '这个 PRD 的用户、场景和指标可以再补充一下吗？';
   }
   if (activeScenario?.presetKey === 'prompt') {
-    return '为了把这份 Prompt 写完整，你想先补充输入信息、输出格式，还是必须遵守的约束条件？';
+    return '这个 Prompt 的输入、输出格式和约束可以再补充一下吗？';
   }
   if (activeScenario?.presetKey === 'analysis') {
-    return '为了把这份分析报告补充完整，你想先补充分析对象、关键证据，还是风险与建议动作？';
+    return '分析对象、关键证据和建议动作可以再补充一下吗？';
   }
   if (activeScenario?.presetKey === 'learning') {
-    return '为了把这份学习笔记更完整，你想先补充核心概念、知识脉络，还是后续值得继续追问的问题？';
+    return '核心概念、知识脉络或后续问题可以再补充一下吗？';
   }
   if (activeScenario?.presetKey === 'custom') {
     const anchors = extractScenarioPromptAnchors(activeScenario.structure, 3);
     if (anchors.length > 0) {
-      return `为了把「${activeScenario.label}」补完整，你想先补充「${anchors.join(' / ')}」中的哪一部分？`;
+      return `「${activeScenario.label}」里的 ${anchors.join('、')} 可以再补充一下吗？`;
     }
   }
   const scenario = inferGuidanceScenario(topic, userMessage);
   if (scenario === 'okr') {
-    return '你想先补充项目背景、时间周期，还是关键结果的目标值？';
+    return '项目背景、时间周期和关键结果目标值可以再补充一下吗？';
   }
   if (scenario === 'prd') {
-    return '你想先补充目标用户、核心场景，还是成功指标？';
+    return '目标用户、核心场景和成功指标可以再补充一下吗？';
   }
   if (scenario === 'prompt') {
-    return '你想先补充输入条件、输出格式，还是约束要求？';
+    return '输入条件、输出格式和约束要求可以再补充一下吗？';
   }
   if (scenario === 'analysis') {
-    return '你更想先补充分析对象、比较维度，还是最终要支撑的决策？';
+    return '分析对象、比较维度和决策目标可以再补充一下吗？';
   }
   if (scenario === 'learning') {
-    return '你想先补充当前基础、学习目标，还是希望采用的整理结构？';
+    return '当前基础、学习目标和整理方式可以再补充一下吗？';
   }
-  return '你想先补充背景目标、关键约束，还是希望产出的形式？';
+  return '背景、目标、关键约束和预期产出可以再补充一下吗？';
 }
 
 function appendGuidanceTail(input: {

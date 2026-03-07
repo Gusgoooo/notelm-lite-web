@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
+import Table from '@tiptap/extension-table';
+import TableCell from '@tiptap/extension-table-cell';
+import TableHeader from '@tiptap/extension-table-header';
+import TableRow from '@tiptap/extension-table-row';
 import DiffMatchPatch from 'diff-match-patch';
 import {
   extractScenarioPromptAnchors,
@@ -14,6 +18,7 @@ import {
   type KnowledgeDocScenarioId,
   type KnowledgeDocScenarioState,
 } from '@/lib/knowledge-doc-scenarios';
+import { markdownToKnowledgeDocHtml, normalizeKnowledgeDocMarkdown } from '@/lib/knowledge-doc-markdown';
 import { KnowledgeDocCreateButton } from './KnowledgeDocCreateButton';
 
 type KnowledgeDocPanelProps = {
@@ -47,6 +52,14 @@ type SaveDocOptions = {
   historyMode?: HistoryMode;
   summary?: string;
 };
+
+type DraftDialogState =
+  | {
+      kind: 'loading' | 'error';
+      title: string;
+      description: string;
+    }
+  | null;
 
 const HISTORY_STORAGE_LIMIT = 30;
 
@@ -228,160 +241,6 @@ function buildScenarioPreview(structure: string): string {
   return extractScenarioPromptAnchors(structure, 3).join(' / ') || summarizeScenarioStructure(structure);
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function renderInlineMarkdown(value: string): string {
-  const codeSegments: string[] = [];
-  const withPlaceholders = value.replace(/`([^`]+)`/g, (_match, code: string) => {
-    codeSegments.push(code);
-    return `@@CODE_${codeSegments.length - 1}@@`;
-  });
-
-  let html = escapeHtml(withPlaceholders);
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-  html = html.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
-  html = html.replace(/_([^_\n]+)_/g, '<em>$1</em>');
-  html = html.replace(/@@CODE_(\d+)@@/g, (_match, index: string) => {
-    const code = codeSegments[Number(index)] ?? '';
-    return `<code>${escapeHtml(code)}</code>`;
-  });
-  return html;
-}
-
-function markdownToHtml(raw: string): string {
-  const normalized = raw.replace(/\r/g, '\n').trim();
-  if (!normalized) return '<p></p>';
-
-  const lines = normalized.split('\n');
-  const html: string[] = [];
-  let paragraphLines: string[] = [];
-  let listType: 'ul' | 'ol' | null = null;
-  let listItems: string[] = [];
-  let quoteLines: string[] = [];
-  let inCodeBlock = false;
-  let codeLines: string[] = [];
-
-  const flushParagraph = () => {
-    if (paragraphLines.length === 0) return;
-    html.push(`<p>${paragraphLines.map((line) => renderInlineMarkdown(line)).join('<br>')}</p>`);
-    paragraphLines = [];
-  };
-
-  const flushList = () => {
-    if (!listType || listItems.length === 0) {
-      listType = null;
-      listItems = [];
-      return;
-    }
-    html.push(
-      `<${listType}>${listItems
-        .map((item) => `<li>${renderInlineMarkdown(item)}</li>`)
-        .join('')}</${listType}>`
-    );
-    listType = null;
-    listItems = [];
-  };
-
-  const flushQuotes = () => {
-    if (quoteLines.length === 0) return;
-    html.push(`<blockquote>${quoteLines.map((line) => `<p>${renderInlineMarkdown(line)}</p>`).join('')}</blockquote>`);
-    quoteLines = [];
-  };
-
-  const flushCodeBlock = () => {
-    if (codeLines.length === 0) return;
-    html.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
-    codeLines = [];
-  };
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    if (inCodeBlock) {
-      if (trimmed.startsWith('```')) {
-        flushCodeBlock();
-        inCodeBlock = false;
-      } else {
-        codeLines.push(line);
-      }
-      continue;
-    }
-
-    if (!trimmed) {
-      flushParagraph();
-      flushList();
-      flushQuotes();
-      continue;
-    }
-
-    if (trimmed.startsWith('```')) {
-      flushParagraph();
-      flushList();
-      flushQuotes();
-      inCodeBlock = true;
-      continue;
-    }
-
-    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
-    if (headingMatch) {
-      flushParagraph();
-      flushList();
-      flushQuotes();
-      const level = Math.min(3, headingMatch[1].length);
-      html.push(`<h${level}>${renderInlineMarkdown(headingMatch[2].trim())}</h${level}>`);
-      continue;
-    }
-
-    const unorderedMatch = trimmed.match(/^[-*+]\s*(.+)$/);
-    if (unorderedMatch) {
-      flushParagraph();
-      flushQuotes();
-      if (listType === 'ol') flushList();
-      listType = 'ul';
-      listItems.push(unorderedMatch[1].trim());
-      continue;
-    }
-
-    const orderedMatch = trimmed.match(/^\d+\.\s+(.+)$/);
-    if (orderedMatch) {
-      flushParagraph();
-      flushQuotes();
-      if (listType === 'ul') flushList();
-      listType = 'ol';
-      listItems.push(orderedMatch[1].trim());
-      continue;
-    }
-
-    const quoteMatch = trimmed.match(/^>\s?(.*)$/);
-    if (quoteMatch) {
-      flushParagraph();
-      flushList();
-      quoteLines.push(quoteMatch[1].trim());
-      continue;
-    }
-
-    flushList();
-    flushQuotes();
-    paragraphLines.push(trimmed);
-  }
-
-  if (inCodeBlock) flushCodeBlock();
-  flushParagraph();
-  flushList();
-  flushQuotes();
-
-  return html.join('') || '<p></p>';
-}
-
 function stripHtml(html: string): string {
   if (typeof document === 'undefined') {
     return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -445,8 +304,8 @@ function extractHistoryFocus(markdown: string): string {
 }
 
 function buildHistorySummary(previousHtml: string, nextHtml: string): string {
-  const previousMarkdown = htmlToMarkdownLike(previousHtml).trim();
-  const nextMarkdown = htmlToMarkdownLike(nextHtml).trim();
+  const previousMarkdown = normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(previousHtml));
+  const nextMarkdown = normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(nextHtml));
   if (!previousMarkdown && nextMarkdown) {
     const focus = extractHistoryFocus(nextMarkdown);
     return focus ? `创建初稿：${focus}` : '创建知识文档初稿';
@@ -536,6 +395,45 @@ function htmlToMarkdownLike(html: string): string {
 
   const container = document.createElement('div');
   container.innerHTML = html;
+
+  const toTableCellMarkdown = (value: string): string =>
+    value
+      .replace(/\s*\n\s*/g, '<br />')
+      .replace(/\|/g, '\\|')
+      .trim();
+
+  const tableToMarkdown = (table: HTMLTableElement): string[] => {
+    const rawRows = Array.from(table.querySelectorAll('tr'))
+      .map((row) =>
+        Array.from(row.children)
+          .filter((cell): cell is HTMLTableCellElement => cell instanceof HTMLTableCellElement)
+          .map((cell) =>
+            toTableCellMarkdown(
+              Array.from(cell.childNodes)
+                .map((child) => inlineNodeToMarkdown(child))
+                .join('')
+            )
+          )
+      )
+      .filter((row) => row.length > 0);
+
+    if (rawRows.length === 0) return [];
+
+    const columnCount = Math.max(...rawRows.map((row) => row.length), 1);
+    const rows = rawRows.map((row) => Array.from({ length: columnCount }, (_item, index) => row[index] ?? ''));
+    const hasHeader = Boolean(table.querySelector('thead th, tr th'));
+    const header = hasHeader ? rows[0] : rows[0].map((cell, index) => cell || `列${index + 1}`);
+    const body = hasHeader ? rows.slice(1) : rows;
+    const separator = Array.from({ length: columnCount }, () => '---');
+    const lines = [`| ${header.join(' | ')} |`, `| ${separator.join(' | ')} |`];
+
+    for (const row of body) {
+      lines.push(`| ${row.join(' | ')} |`);
+    }
+
+    return lines;
+  };
+
   const inlineNodeToMarkdown = (node: ChildNode): string => {
     if (node.nodeType === Node.TEXT_NODE) {
       return node.textContent ?? '';
@@ -559,6 +457,9 @@ function htmlToMarkdownLike(html: string): string {
       return text ? [text] : [];
     }
     if (!(node instanceof HTMLElement)) return [];
+
+    if (node.tagName === 'TABLE') return tableToMarkdown(node as HTMLTableElement);
+    if (node.tagName === 'HR') return ['---'];
 
     const text = Array.from(node.childNodes)
       .map((child) => inlineNodeToMarkdown(child))
@@ -661,6 +562,7 @@ export function KnowledgeDocPanel({
   const [docHistory, setDocHistory] = useState<KnowledgeDocHistoryEntry[]>([]);
   const [scenarioState, setScenarioState] = useState<KnowledgeDocScenarioState>(getDefaultKnowledgeDocScenarioState);
   const [draftScenarioLoading, setDraftScenarioLoading] = useState<KnowledgeDocScenarioId | null>(null);
+  const [draftDialog, setDraftDialog] = useState<DraftDialogState>(null);
   const [creationGenerating, setCreationGenerating] = useState<CreationMode | null>(null);
   const [externalBusy, setExternalBusy] = useState(false);
   const [externalBusyLabel, setExternalBusyLabel] = useState('正在更新知识文档…');
@@ -743,7 +645,7 @@ export function KnowledgeDocPanel({
         return;
       }
       const rawContent = typeof data?.content === 'string' ? data.content : '';
-      const nextContent = rawContent.includes('<') ? rawContent : markdownToHtml(rawContent);
+      const nextContent = rawContent.includes('<') ? rawContent : markdownToKnowledgeDocHtml(rawContent);
       const nextId = typeof data?.id === 'string' ? data.id : null;
       const storedHistory = normalizeHistoryEntries(data?.history);
       const nextScenarioState = normalizeKnowledgeDocScenarioState(data?.scenarioState);
@@ -828,7 +730,15 @@ export function KnowledgeDocPanel({
   );
 
   const editor = useEditor({
-    extensions: [StarterKit],
+    extensions: [
+      StarterKit,
+      Table.configure({
+        resizable: true,
+      }),
+      TableRow,
+      TableHeader,
+      TableCell,
+    ],
     content,
     editable: !!notebookId && !pendingDiff,
     onUpdate: ({ editor }) => {
@@ -956,7 +866,7 @@ export function KnowledgeDocPanel({
 
   const applyGeneratedText = useCallback(
     async (nextText: string, options: SaveDocOptions = {}) => {
-      const newHtml = markdownToHtml(nextText);
+      const newHtml = markdownToKnowledgeDocHtml(nextText);
       editor?.commands.setContent(newHtml || '<p></p>', false);
       await saveDoc(newHtml || '<p></p>', options);
     },
@@ -968,16 +878,14 @@ export function KnowledgeDocPanel({
       if (!notebookId || draftScenarioLoading) return;
       const scenarioConfig = draftScenarios.find((item) => item.id === scenarioId);
       if (!scenarioConfig) return;
-      const noticeId = `draft-${Date.now()}-${scenarioId}`;
       setSheetMode(null);
       setDraftScenarioLoading(scenarioId);
-      const scenarioLabel = scenarioConfig.label;
-      emitArtifactNotice({
-        id: noticeId,
-        state: 'running',
-        title: mode === 'update' ? `正在更新${scenarioLabel}` : `正在生成${scenarioLabel}`,
-        description: '已转为后台生成，你可以继续浏览和对话。',
+      setDraftDialog({
+        kind: 'loading',
+        title: mode === 'update' ? `正在更新${scenarioConfig.label}` : `正在生成${scenarioConfig.label}`,
+        description: '系统正在按所选结构整理内容，完成后会直接更新到右侧知识文档。',
       });
+      const scenarioLabel = scenarioConfig.label;
       const previousScenarioState = scenarioState;
       try {
         await ensureDocExists();
@@ -1001,17 +909,11 @@ export function KnowledgeDocPanel({
           summary: mode === 'update' ? `更新${scenarioLabel}初稿` : `生成${scenarioLabel}初稿`,
         });
         setSheetMode(null);
-        emitArtifactNotice({
-          id: noticeId,
-          state: 'success',
-          title: mode === 'update' ? `${scenarioLabel}已更新` : `${scenarioLabel}已生成`,
-          description: '右侧知识文档已完成更新。',
-        });
+        setDraftDialog(null);
       } catch (error) {
         setScenarioState(previousScenarioState);
-        emitArtifactNotice({
-          id: noticeId,
-          state: 'error',
+        setDraftDialog({
+          kind: 'error',
           title: `${scenarioLabel}生成失败`,
           description: error instanceof Error ? error.message : '知识文档生成失败',
         });
@@ -1109,7 +1011,7 @@ export function KnowledgeDocPanel({
   }, [creationGenerating, draftScenarioLoading, ensureDocExists]);
 
   const requestPreviewDownload = useCallback(() => {
-    const markdown = htmlToMarkdownLike(editor?.getHTML() ?? content ?? '');
+    const markdown = normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(editor?.getHTML() ?? content ?? ''));
     const blob = new Blob([markdown || stripHtml(content)], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -1127,7 +1029,7 @@ export function KnowledgeDocPanel({
       const previous = editor ? stripHtml(editor.getHTML()) : '';
       if (detail?.autoApply || autoUpdate) {
         setUpdatingFromChat(true);
-        const newHtml = markdownToHtml(suggested);
+        const newHtml = markdownToKnowledgeDocHtml(suggested);
         editor?.commands.setContent(newHtml || '<p></p>', false);
         void saveDoc(newHtml || '<p></p>', {
           historyMode: 'append',
@@ -1176,7 +1078,7 @@ export function KnowledgeDocPanel({
           setUpdatingFromChat(false);
           return;
         }
-        const newHtml = markdownToHtml(String(data.suggestedContent));
+        const newHtml = markdownToKnowledgeDocHtml(String(data.suggestedContent));
         editor.commands.setContent(newHtml || '<p></p>', false);
         void saveDoc(newHtml || '<p></p>', {
           historyMode: 'append',
@@ -1231,7 +1133,7 @@ export function KnowledgeDocPanel({
 
   const confirmPending = useCallback(() => {
     if (!pendingDiff || !editor) return;
-    const newHtml = markdownToHtml(pendingDiff.suggested);
+    const newHtml = markdownToKnowledgeDocHtml(pendingDiff.suggested);
     editor.commands.setContent(newHtml || '<p></p>', false);
     void saveDoc(newHtml || '<p></p>', {
       historyMode: 'append',
@@ -1443,8 +1345,42 @@ export function KnowledgeDocPanel({
         </div>
       ) : null}
 
+      {draftDialog ? (
+        <div className="absolute inset-x-0 bottom-0 top-12 z-20 flex items-center justify-center bg-white/78 px-4 backdrop-blur-[2px] dark:bg-gray-950/74">
+          <div className="relative w-full max-w-[320px] overflow-hidden rounded-[22px] border border-white/70 bg-white/92 px-5 py-4 text-center shadow-lg dark:border-gray-800 dark:bg-gray-900/92">
+            {draftDialog.kind === 'loading' ? <div className="knowledge-doc-busy absolute inset-0" /> : null}
+            <div className="relative z-10 space-y-3">
+              {draftDialog.kind === 'loading' ? (
+                <div className="mx-auto h-9 w-9 rounded-full border-2 border-gray-200 border-t-gray-700 animate-spin dark:border-gray-700 dark:border-t-gray-100" />
+              ) : (
+                <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-full bg-red-50 text-red-600 dark:bg-red-950/60 dark:text-red-300">
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 9v4" />
+                    <path d="M12 17h.01" />
+                    <circle cx="12" cy="12" r="9" />
+                  </svg>
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <p className="text-sm font-medium text-gray-800 dark:text-gray-100">{draftDialog.title}</p>
+                <p className="text-xs leading-5 text-gray-500 dark:text-gray-400">{draftDialog.description}</p>
+              </div>
+              {draftDialog.kind === 'error' ? (
+                <button
+                  type="button"
+                  onClick={() => setDraftDialog(null)}
+                  className="inline-flex h-8 items-center rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  关闭
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {panelBusy ? (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/76 backdrop-blur-[2px] dark:bg-gray-950/72">
+        <div className="absolute inset-x-0 bottom-0 top-12 z-20 flex items-center justify-center bg-white/76 px-4 backdrop-blur-[2px] dark:bg-gray-950/72">
           <div className="relative overflow-hidden rounded-[22px] border border-white/70 bg-white/90 px-5 py-4 text-center shadow-lg dark:border-gray-800 dark:bg-gray-900/90">
             <div className="knowledge-doc-busy absolute inset-0" />
             <div className="relative z-10 space-y-2">
@@ -1457,7 +1393,7 @@ export function KnowledgeDocPanel({
 
       {sheetMode ? (
         <div
-          className="app-modal-backdrop absolute inset-x-0 bottom-0 top-[72px] z-30 flex items-end"
+          className="app-modal-backdrop absolute inset-x-0 bottom-0 top-12 z-30 flex items-end"
           onClick={(event) => {
             if (event.target === event.currentTarget) {
               setSheetMode(null);
