@@ -4,8 +4,7 @@ import { getNotebookAccess } from '@/lib/notebook-access';
 
 /**
  * Given current doc content and recent conversation, ask LLM to produce
- * an updated knowledge document. Returns suggested content (plain text).
- * Caller can show diff and let user confirm, or apply when auto-update is on.
+ * an updated knowledge document in structured Markdown.
  */
 export async function POST(
   request: Request,
@@ -39,14 +38,16 @@ export async function POST(
 要求：
 1. 将对话中的关键信息、结论、事实整合进文档，保持结构清晰（可分段、分条）。
 2. 不要编造对话中未出现的内容。
-3. 输出纯文本，不要使用 Markdown 标题符号（如 # ##），可用简短小标题或分段。
-4. 当前文档中已有内容视为用户撰写或修改过的，请尽量保留并在其基础上补充或合并新信息，避免大段重写。${
+3. 输出 Markdown，可使用 #、##、###、无序列表、加粗等结构化格式。
+4. 如果当前知识文档是 HTML，请先理解其现有结构，再用等价的 Markdown 完整输出。
+5. 当前文档中已有内容视为用户撰写或修改过的，请尽量保留并在其基础上补充或合并新信息，避免大段重写。
+6. 优先整理成适合右侧知识文档面板直接渲染的结构化内容，例如标题、小节、要点列表。${
   userEditedHint
-    ? `\n5. 以下内容为用户明确标注的手动编辑，请务必保留不改动：\n${userEditedHint}`
+    ? `\n7. 以下内容为用户明确标注的手动编辑，请务必保留不改动：\n${userEditedHint}`
     : ''
 }`;
 
-    const userPrompt = `【当前知识文档】\n${currentContent || '(空)'}\n\n【最近一轮对话】\n用户：${lastUserMessage}\n\n助手：${lastAssistantMessage}\n\n请输出更新后的完整知识文档内容（纯文本）：`;
+    const userPrompt = `【当前知识文档（可能是 HTML）】\n${currentContent || '(空)'}\n\n【最近一轮对话】\n用户：${lastUserMessage}\n\n助手：${lastAssistantMessage}\n\n请输出更新后的完整知识文档内容（Markdown）：`;
 
     const { content: suggestedContent } = await chat([
       { role: 'system', content: systemPrompt },

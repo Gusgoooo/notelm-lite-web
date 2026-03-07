@@ -467,10 +467,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           { cache: 'no-store' }
         );
         const docData = await docRes.json().catch(() => ({}));
-        const currentContent =
-          typeof docData?.content === 'string'
-            ? docData.content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
-            : '';
+        const currentContent = typeof docData?.content === 'string' ? docData.content : '';
         const updateRes = await fetch(
           `/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc/update-from-chat`,
           {
@@ -776,7 +773,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-white">
       <div className="flex h-12 shrink-0 items-center px-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
           知识库问答
@@ -1003,14 +1000,14 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           </div>
         </div>
       ) : null}
-      <div className="shrink-0 bg-[#f1f1f1] px-3 pb-3 pt-2">
+      <div className="relative z-10 shrink-0 border-t border-[#ececec] bg-white px-3 pb-3 pt-2">
         <div className="mx-auto w-full max-w-[680px]">
           <form
             onSubmit={(e) => {
               e.preventDefault();
               void send();
             }}
-            className="relative rounded-[12px] bg-[#f1f1f1] p-2"
+            className="relative rounded-[14px] bg-[#f1f1f1] p-2"
           >
             <textarea
               ref={textareaRef}

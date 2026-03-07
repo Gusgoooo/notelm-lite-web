@@ -134,37 +134,149 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
-function buildParagraphHtml(text: string): string {
-  return text
-    .split('\n')
-    .map((line) => escapeHtml(line.trim()))
-    .filter(Boolean)
-    .join('<br>');
+function renderInlineMarkdown(value: string): string {
+  const codeSegments: string[] = [];
+  const withPlaceholders = value.replace(/`([^`]+)`/g, (_match, code: string) => {
+    codeSegments.push(code);
+    return `@@CODE_${codeSegments.length - 1}@@`;
+  });
+
+  let html = escapeHtml(withPlaceholders);
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  html = html.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+  html = html.replace(/_([^_\n]+)_/g, '<em>$1</em>');
+  html = html.replace(/@@CODE_(\d+)@@/g, (_match, index: string) => {
+    const code = codeSegments[Number(index)] ?? '';
+    return `<code>${escapeHtml(code)}</code>`;
+  });
+  return html;
 }
 
-function structuredTextToHtml(raw: string): string {
+function markdownToHtml(raw: string): string {
   const normalized = raw.replace(/\r/g, '\n').trim();
   if (!normalized) return '<p></p>';
 
-  const blocks = normalized
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter(Boolean);
+  const lines = normalized.split('\n');
+  const html: string[] = [];
+  let paragraphLines: string[] = [];
+  let listType: 'ul' | 'ol' | null = null;
+  let listItems: string[] = [];
+  let quoteLines: string[] = [];
+  let inCodeBlock = false;
+  let codeLines: string[] = [];
 
-  return blocks
-    .map((block) => {
-      if (block.startsWith('### ')) {
-        return `<h3>${escapeHtml(block.slice(4).trim())}</h3>`;
+  const flushParagraph = () => {
+    if (paragraphLines.length === 0) return;
+    html.push(`<p>${paragraphLines.map((line) => renderInlineMarkdown(line)).join('<br>')}</p>`);
+    paragraphLines = [];
+  };
+
+  const flushList = () => {
+    if (!listType || listItems.length === 0) {
+      listType = null;
+      listItems = [];
+      return;
+    }
+    html.push(
+      `<${listType}>${listItems
+        .map((item) => `<li>${renderInlineMarkdown(item)}</li>`)
+        .join('')}</${listType}>`
+    );
+    listType = null;
+    listItems = [];
+  };
+
+  const flushQuotes = () => {
+    if (quoteLines.length === 0) return;
+    html.push(`<blockquote>${quoteLines.map((line) => `<p>${renderInlineMarkdown(line)}</p>`).join('')}</blockquote>`);
+    quoteLines = [];
+  };
+
+  const flushCodeBlock = () => {
+    if (codeLines.length === 0) return;
+    html.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+    codeLines = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (inCodeBlock) {
+      if (trimmed.startsWith('```')) {
+        flushCodeBlock();
+        inCodeBlock = false;
+      } else {
+        codeLines.push(line);
       }
-      if (block.startsWith('## ')) {
-        return `<h2>${escapeHtml(block.slice(3).trim())}</h2>`;
-      }
-      if (block.startsWith('# ')) {
-        return `<h1>${escapeHtml(block.slice(2).trim())}</h1>`;
-      }
-      return `<p>${buildParagraphHtml(block)}</p>`;
-    })
-    .join('');
+      continue;
+    }
+
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      flushQuotes();
+      continue;
+    }
+
+    if (trimmed.startsWith('```')) {
+      flushParagraph();
+      flushList();
+      flushQuotes();
+      inCodeBlock = true;
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      flushParagraph();
+      flushList();
+      flushQuotes();
+      const level = Math.min(3, headingMatch[1].length);
+      html.push(`<h${level}>${renderInlineMarkdown(headingMatch[2].trim())}</h${level}>`);
+      continue;
+    }
+
+    const unorderedMatch = trimmed.match(/^[-*+]\s*(.+)$/);
+    if (unorderedMatch) {
+      flushParagraph();
+      flushQuotes();
+      if (listType === 'ol') flushList();
+      listType = 'ul';
+      listItems.push(unorderedMatch[1].trim());
+      continue;
+    }
+
+    const orderedMatch = trimmed.match(/^\d+\.\s+(.+)$/);
+    if (orderedMatch) {
+      flushParagraph();
+      flushQuotes();
+      if (listType === 'ul') flushList();
+      listType = 'ol';
+      listItems.push(orderedMatch[1].trim());
+      continue;
+    }
+
+    const quoteMatch = trimmed.match(/^>\s?(.*)$/);
+    if (quoteMatch) {
+      flushParagraph();
+      flushList();
+      quoteLines.push(quoteMatch[1].trim());
+      continue;
+    }
+
+    flushList();
+    flushQuotes();
+    paragraphLines.push(trimmed);
+  }
+
+  if (inCodeBlock) flushCodeBlock();
+  flushParagraph();
+  flushList();
+  flushQuotes();
+
+  return html.join('') || '<p></p>';
 }
 
 function stripHtml(html: string): string {
@@ -187,29 +299,73 @@ function htmlToMarkdownLike(html: string): string {
 
   const container = document.createElement('div');
   container.innerHTML = html;
-  const lines: string[] = [];
-
-  const toText = (node: ChildNode): string => {
+  const inlineNodeToMarkdown = (node: ChildNode): string => {
     if (node.nodeType === Node.TEXT_NODE) {
       return node.textContent ?? '';
     }
     if (!(node instanceof HTMLElement)) return '';
+    const text = Array.from(node.childNodes).map((child) => inlineNodeToMarkdown(child)).join('');
     if (node.tagName === 'BR') return '\n';
-    return Array.from(node.childNodes)
-      .map((child) => toText(child))
-      .join('');
+    if (node.tagName === 'STRONG' || node.tagName === 'B') return `**${text.trim()}**`;
+    if (node.tagName === 'EM' || node.tagName === 'I') return `*${text.trim()}*`;
+    if (node.tagName === 'CODE') return `\`${text.trim()}\``;
+    if (node.tagName === 'A') {
+      const href = node.getAttribute('href') ?? '';
+      return href ? `[${text.trim()}](${href})` : text;
+    }
+    return text;
   };
 
-  for (const child of Array.from(container.children)) {
-    const text = toText(child).replace(/\s+\n/g, '\n').replace(/\n\s+/g, '\n').trim();
-    if (!text) continue;
-    if (child.tagName === 'H1') lines.push(`# ${text}`);
-    else if (child.tagName === 'H2') lines.push(`## ${text}`);
-    else if (child.tagName === 'H3') lines.push(`### ${text}`);
-    else lines.push(text);
-  }
+  const blockNodeToMarkdown = (node: ChildNode): string[] => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = (node.textContent ?? '').trim();
+      return text ? [text] : [];
+    }
+    if (!(node instanceof HTMLElement)) return [];
 
-  return lines.join('\n\n');
+    const text = Array.from(node.childNodes)
+      .map((child) => inlineNodeToMarkdown(child))
+      .join('')
+      .replace(/\s+\n/g, '\n')
+      .replace(/\n\s+/g, '\n')
+      .trim();
+
+    if (node.tagName === 'H1') return text ? [`# ${text}`] : [];
+    if (node.tagName === 'H2') return text ? [`## ${text}`] : [];
+    if (node.tagName === 'H3') return text ? [`### ${text}`] : [];
+    if (node.tagName === 'P') return text ? [text] : [];
+    if (node.tagName === 'UL') {
+      return Array.from(node.children)
+        .filter((child): child is HTMLElement => child instanceof HTMLElement && child.tagName === 'LI')
+        .map((child) => `- ${Array.from(child.childNodes).map((item) => inlineNodeToMarkdown(item)).join('').trim()}`)
+        .filter(Boolean);
+    }
+    if (node.tagName === 'OL') {
+      return Array.from(node.children)
+        .filter((child): child is HTMLElement => child instanceof HTMLElement && child.tagName === 'LI')
+        .map(
+          (child, index) =>
+            `${index + 1}. ${Array.from(child.childNodes).map((item) => inlineNodeToMarkdown(item)).join('').trim()}`
+        )
+        .filter(Boolean);
+    }
+    if (node.tagName === 'BLOCKQUOTE') {
+      return Array.from(node.childNodes)
+        .flatMap((child) => blockNodeToMarkdown(child))
+        .map((line) => `> ${line}`);
+    }
+    if (node.tagName === 'PRE') {
+      const code = node.textContent?.trim() ?? '';
+      return code ? [`\`\`\`\n${code}\n\`\`\``] : [];
+    }
+
+    return Array.from(node.childNodes).flatMap((child) => blockNodeToMarkdown(child));
+  };
+
+  return Array.from(container.childNodes)
+    .flatMap((child) => blockNodeToMarkdown(child))
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 function DiffView({
@@ -376,7 +532,7 @@ export function KnowledgeDocPanel({
         return;
       }
       const rawContent = typeof data?.content === 'string' ? data.content : '';
-      const nextContent = rawContent.includes('<') ? rawContent : structuredTextToHtml(rawContent);
+      const nextContent = rawContent.includes('<') ? rawContent : markdownToHtml(rawContent);
       const nextId = typeof data?.id === 'string' ? data.id : null;
       setDocId(nextId);
       setContent(nextContent || '<p></p>');
@@ -464,7 +620,7 @@ export function KnowledgeDocPanel({
 
   const applyGeneratedText = useCallback(
     async (nextText: string) => {
-      const newHtml = structuredTextToHtml(nextText);
+      const newHtml = markdownToHtml(nextText);
       editor?.commands.setContent(newHtml || '<p></p>', false);
       await saveDoc(newHtml || '<p></p>');
     },
@@ -571,7 +727,7 @@ export function KnowledgeDocPanel({
       const previous = editor ? stripHtml(editor.getHTML()) : '';
       if (detail?.autoApply || autoUpdate) {
         setUpdatingFromChat(true);
-        const newHtml = structuredTextToHtml(suggested);
+        const newHtml = markdownToHtml(suggested);
         editor?.commands.setContent(newHtml || '<p></p>', false);
         void saveDoc(newHtml || '<p></p>');
         setPendingDiff(null);
@@ -593,7 +749,7 @@ export function KnowledgeDocPanel({
       if (!userQ.trim() && !assistantA.trim()) return;
       setUpdatingFromChat(true);
       try {
-        const currentContent = stripHtml(editor.getHTML());
+        const currentContent = editor.getHTML();
         const res = await fetch(
           `/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc/update-from-chat`,
           {
@@ -611,7 +767,7 @@ export function KnowledgeDocPanel({
           setUpdatingFromChat(false);
           return;
         }
-        const newHtml = structuredTextToHtml(String(data.suggestedContent));
+        const newHtml = markdownToHtml(String(data.suggestedContent));
         editor.commands.setContent(newHtml || '<p></p>', false);
         void saveDoc(newHtml || '<p></p>');
       } finally {
@@ -659,7 +815,7 @@ export function KnowledgeDocPanel({
 
   const confirmPending = useCallback(() => {
     if (!pendingDiff || !editor) return;
-    const newHtml = structuredTextToHtml(pendingDiff.suggested);
+    const newHtml = markdownToHtml(pendingDiff.suggested);
     editor.commands.setContent(newHtml || '<p></p>', false);
     void saveDoc(newHtml || '<p></p>');
     setPendingDiff(null);

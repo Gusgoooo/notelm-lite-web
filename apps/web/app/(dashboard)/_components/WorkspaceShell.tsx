@@ -25,7 +25,7 @@ export function WorkspaceShell({
 }: WorkspaceShellProps) {
   const router = useRouter();
   const [notesWidth, setNotesWidth] = useState<number | null>(null);
-  const [docCollapsed, setDocCollapsed] = useState(true);
+  const [docCollapsed, setDocCollapsed] = useState(false);
   const [resizing, setResizing] = useState(false);
   const [savingFork, setSavingFork] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -125,6 +125,13 @@ export function WorkspaceShell({
   }, [notebookId]);
 
   useEffect(() => {
+    let nextDocCollapsed = false;
+    try {
+      nextDocCollapsed = window.sessionStorage.getItem(`notebook-entry:${notebookId}`) === 'bootstrap';
+    } catch {
+      nextDocCollapsed = false;
+    }
+
     // Keep local UI state in sync when switching notebooks (e.g. fork/save-as-mine).
     setHeaderTitle(initialTitle);
     setHeaderTitleDraft(initialTitle);
@@ -135,7 +142,7 @@ export function WorkspaceShell({
     setPublishOpen(false);
     setPublishError('');
     setPublishSuccess('');
-    setDocCollapsed(true);
+    setDocCollapsed(nextDocCollapsed);
     setBootstrapOpen(false);
     setBootstrapStep(0);
     setBootstrapHint('');
