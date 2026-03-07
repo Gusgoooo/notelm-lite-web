@@ -79,6 +79,27 @@ type NotebookEntryMode = 'bootstrap' | null;
 const HISTORY_PAGE_SIZE = 20;
 const REPORT_ACTION_MARKER = '[[ACTION:REPORT]]';
 
+function buildHighlightedMaterialsFromCitations(citations: Citation[] | undefined): string {
+  const normalized = sortCitations(citations);
+  if (normalized.length === 0) return '';
+  return normalized
+    .map(
+      (citation) =>
+        `- ${citation.sourceTitle}${
+          citation.pageStart != null
+            ? `（p.${citation.pageStart}${
+                citation.pageEnd != null && citation.pageEnd !== citation.pageStart ? `-${citation.pageEnd}` : ''
+              }）`
+            : ''
+        }：${citation.snippet}`
+    )
+    .join('\n');
+}
+
+function shouldSyncKnowledgeDocFromMessage(message: string): boolean {
+  return /更新知识文档|更新知识库文档|同步到知识文档|写入知识文档|整理到知识文档|修改知识文档/i.test(message);
+}
+
 function toTimestamp(value: string | undefined): number | null {
   if (!value) return null;
   const ts = Date.parse(value);
@@ -450,7 +471,15 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   }, [loading]);
 
   const updateKnowledgeDocFromChat = useCallback(
-    async (lastUserMessage: string, lastAssistantMessage: string) => {
+    async ({
+      lastUserMessage,
+      lastAssistantMessage,
+      highlightedMaterials = '',
+    }: {
+      lastUserMessage: string;
+      lastAssistantMessage: string;
+      highlightedMaterials?: string;
+    }) => {
       if (!notebookId) throw new Error('notebookId is required');
       window.dispatchEvent(new CustomEvent('knowledge-doc-expand'));
       window.dispatchEvent(
@@ -477,6 +506,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               currentContent,
               lastUserMessage,
               lastAssistantMessage,
+              highlightedMaterials,
             }),
           }
         );
@@ -652,12 +682,21 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
             },
           })
         );
+        if (shouldSyncKnowledgeDocFromMessage(text)) {
+          void updateKnowledgeDocFromChat({
+            lastUserMessage: text,
+            lastAssistantMessage: data.answer,
+            highlightedMaterials: buildHighlightedMaterialsFromCitations(normalizedCitations),
+          }).catch((error) => {
+            console.error('Failed to sync knowledge document from chat command', error);
+          });
+        }
         setTailVersion((v) => v + 1);
       } finally {
         setLoading(false);
       }
     },
-    [conversationId, input, loading, notebookId]
+    [conversationId, input, loading, notebookId, updateKnowledgeDocFromChat]
   );
 
   useEffect(() => {
@@ -854,25 +893,11 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                             .find((msg) => msg.role === 'user')
                                         : null;
                                     await updateKnowledgeDocFromChat(
-                                      prevUser?.content ?? '',
-                                      parsed.displayContent +
-                                        (m.citations && m.citations.length > 0
-                                          ? '\n\n## Sources\n\n' +
-                                            sortCitations(m.citations)
-                                              .map(
-                                                (c) =>
-                                                  `- **${c.sourceTitle}**${
-                                                    c.pageStart != null
-                                                      ? ` (p.${c.pageStart}${
-                                                          c.pageEnd != null && c.pageEnd !== c.pageStart
-                                                            ? `-${c.pageEnd}`
-                                                            : ''
-                                                        })`
-                                                      : ''
-                                                  }\n  ${c.snippet}`
-                                              )
-                                              .join('\n')
-                                          : '')
+                                      {
+                                        lastUserMessage: prevUser?.content ?? '',
+                                        lastAssistantMessage: parsed.displayContent,
+                                        highlightedMaterials: buildHighlightedMaterialsFromCitations(m.citations),
+                                      }
                                     );
                                   }}
                                 >
@@ -976,7 +1001,11 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               const content =
                 (selectionRangeRef.current?.cloneContents().textContent ?? selectionToast.text).trim();
               if (!content) return;
-              await updateKnowledgeDocFromChat('', content);
+              await updateKnowledgeDocFromChat({
+                lastUserMessage: '',
+                lastAssistantMessage: '',
+                highlightedMaterials: content,
+              });
               setSelectionToast(null);
             } catch (error) {
               alert(error instanceof Error ? error.message : '更新知识文档失败');

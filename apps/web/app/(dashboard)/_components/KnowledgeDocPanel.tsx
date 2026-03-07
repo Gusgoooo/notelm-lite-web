@@ -16,6 +16,13 @@ type DraftScenarioKey = 'auto' | 'okr' | 'prd' | 'prompt' | 'analysis' | 'learni
 type CreationMode = 'infographic' | 'summary' | 'mindmap' | 'report' | 'webpage';
 type SheetMode = 'draft' | 'create' | null;
 
+type KnowledgeDocCitation = {
+  sourceTitle: string;
+  pageStart?: number;
+  pageEnd?: number;
+  snippet: string;
+};
+
 function CollapseIcon({ collapsed }: { collapsed: boolean }) {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
@@ -286,6 +293,22 @@ function stripHtml(html: string): string {
   const div = document.createElement('div');
   div.innerHTML = html;
   return (div.textContent ?? div.innerText ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function buildHighlightedMaterials(citations: KnowledgeDocCitation[] | undefined): string {
+  if (!Array.isArray(citations) || citations.length === 0) return '';
+  return citations
+    .map(
+      (citation) =>
+        `- ${citation.sourceTitle}${
+          citation.pageStart != null
+            ? `（p.${citation.pageStart}${
+                citation.pageEnd != null && citation.pageEnd !== citation.pageStart ? `-${citation.pageEnd}` : ''
+              }）`
+            : ''
+        }：${citation.snippet}`
+    )
+    .join('\n');
 }
 
 function hasMeaningfulHtml(html: string): boolean {
@@ -743,9 +766,14 @@ export function KnowledgeDocPanel({
   useEffect(() => {
     if (!autoUpdate || !notebookId || !editor) return;
     const onAnswer = async (event: Event) => {
-      const detail = (event as CustomEvent<{ user_question?: string; assistant_answer?: string }>).detail;
+      const detail = (event as CustomEvent<{
+        user_question?: string;
+        assistant_answer?: string;
+        citations?: KnowledgeDocCitation[];
+      }>).detail;
       const userQ = typeof detail?.user_question === 'string' ? detail.user_question : '';
       const assistantA = typeof detail?.assistant_answer === 'string' ? detail.assistant_answer : '';
+      const highlightedMaterials = buildHighlightedMaterials(detail?.citations);
       if (!userQ.trim() && !assistantA.trim()) return;
       setUpdatingFromChat(true);
       try {
@@ -759,6 +787,7 @@ export function KnowledgeDocPanel({
               currentContent,
               lastUserMessage: userQ,
               lastAssistantMessage: assistantA,
+              highlightedMaterials,
             }),
           }
         );

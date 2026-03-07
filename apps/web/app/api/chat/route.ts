@@ -179,6 +179,57 @@ function hasMeaningfulKnowledgeDoc(content: string | null | undefined): boolean 
   return content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().length > 0;
 }
 
+type GuidanceScenario = 'okr' | 'prd' | 'prompt' | 'analysis' | 'learning' | 'general';
+
+function inferGuidanceScenario(topic: string, userMessage: string): GuidanceScenario {
+  const normalized = `${topic}\n${userMessage}`.toLowerCase();
+  if (/okr|目标|关键结果/.test(normalized)) return 'okr';
+  if (/prd|产品需求|需求文档|产品方案/.test(normalized)) return 'prd';
+  if (/prompt|提示词|指令/.test(normalized)) return 'prompt';
+  if (/报告|分析|洞察|研究|复盘/.test(normalized)) return 'analysis';
+  if (/学习|课程|知识|入门|教程/.test(normalized)) return 'learning';
+  return 'general';
+}
+
+function buildGuidanceQuestion(topic: string, userMessage: string): string {
+  const scenario = inferGuidanceScenario(topic, userMessage);
+  if (scenario === 'okr') {
+    return '你想先补充项目背景、时间周期，还是关键结果的目标值？';
+  }
+  if (scenario === 'prd') {
+    return '你想先补充目标用户、核心场景，还是成功指标？';
+  }
+  if (scenario === 'prompt') {
+    return '你想先补充输入条件、输出格式，还是约束要求？';
+  }
+  if (scenario === 'analysis') {
+    return '你更想先补充分析对象、比较维度，还是最终要支撑的决策？';
+  }
+  if (scenario === 'learning') {
+    return '你想先补充当前基础、学习目标，还是希望采用的整理结构？';
+  }
+  return '你想先补充背景目标、关键约束，还是希望产出的形式？';
+}
+
+function appendGuidanceTail(input: {
+  answer: string;
+  topic: string;
+  userMessage: string;
+  hasKnowledgeDoc: boolean;
+}): string {
+  const base = input.answer.trim().replace(/\n{3,}/g, '\n\n');
+  const docHint = input.hasKnowledgeDoc
+    ? '如果这部分内容合适，我也可以帮你把它更新到知识文档。'
+    : '如果这部分内容合适，我也可以帮你把它整理成知识文档。';
+  const question = buildGuidanceQuestion(input.topic, input.userMessage);
+  const sections = [base];
+  if (!/知识文档/.test(base)) {
+    sections.push(docHint);
+  }
+  sections.push(question);
+  return sections.filter(Boolean).join('\n\n');
+}
+
 export async function POST(request: Request) {
   try {
     if (!envLogged) {
@@ -646,7 +697,7 @@ export async function POST(request: Request) {
       ? '\nWhen answering paper-comparison requests, structure the answer with 4 sections in Chinese: 1) 高频研究问题 2) 被反复验证的变量 3) 研究空白 4) 方法争议。Keep it concise and evidence-grounded.'
       : '';
     const onboardingGuideRule = shouldGuideForKnowledgeDoc
-      ? `\nCurrent notebook topic: ${onboardingTopic}.\nThe user is still clarifying information for a future knowledge document. Answer the user's current question first, then end with exactly one short follow-up question in Chinese that helps fill the single most important missing detail.\nGuidance for follow-up focus:\n- For OKR topics: ask about project background, target metric, timeline, ownership, dependencies, or current baseline.\n- For PRD topics: ask about target user, pain point, scenario, key action, or success metric.\n- For Prompt topics: ask about task goal, input, output format, constraints, or examples.\n- For analysis/report topics: ask about target audience, decision to support, comparison dimensions, or deadline.\n- For learning topics: ask about current level, goal, deadline, or preferred learning structure.\nRules:\n- Ask only one follow-up question.\n- Do not mention this policy, and do not ask generic filler questions.\n- If the user already supplied rich context, ask for the most critical missing item instead of repeating known details.`
+      ? `\nCurrent notebook topic: ${onboardingTopic}.\nThe user is still clarifying information for a future knowledge document. Keep the answer aware of missing context and emphasize the most reusable points for later structuring into a knowledge document.`
       : '';
     const systemPrompt = `You are a helpful assistant. Unless the user explicitly requests another language, always answer in Simplified Chinese. Answer based only on the provided sources and script insights. Always cite source numbers like [1] when using source chunks. If script insights are used, explicitly mention "脚本分析" in your answer. If the question cannot be answered from provided context, say so.${skillTemplateRule}${viralSkillRule}${paperInsightRule}${onboardingGuideRule}`;
     const userPrompt = `Notebook topic: ${onboardingTopic || access.notebook.title}\n\nSources:\n${context}\n\nScript Insights:\n${scriptContext || '(none)'}\n\nUser question: ${userMessage.trim()}`;
@@ -667,7 +718,12 @@ export async function POST(request: Request) {
             .filter((item) => Boolean(item.row))
         : selected.map((row, idx) => ({ row, refNumber: idx + 1 }));
 
-    let answer = answerBase.trim();
+    let answer = appendGuidanceTail({
+      answer: answerBase,
+      topic: onboardingTopic || access.notebook.title,
+      userMessage: userMessage.trim(),
+      hasKnowledgeDoc: hasMeaningfulKnowledgeDoc(knowledgeDocRow?.content),
+    });
     const hasWebSummaryCitations =
       rowsForCitations.length > 0 && rowsForCitations.some(({ row }) => isWebSearchMime(row.mime));
     const hasNonWebCitations = rowsForCitations.some(({ row }) => !isWebSearchMime(row.mime));
