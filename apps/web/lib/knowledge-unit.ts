@@ -3,6 +3,7 @@ export const KNOWLEDGE_UNIT_TEMP_NOTE_PREFIX = '__SYSTEM_KU_TMP__';
 
 /** Single knowledge document per notebook (right panel editor). */
 export const KNOWLEDGE_DOC_NOTE_TITLE = '__KNOWLEDGE_DOC__';
+export const KNOWLEDGE_DOC_HISTORY_NOTE_TITLE = '__KNOWLEDGE_DOC_HISTORY__';
 
 export type KnowledgeUnitTrigger =
   | 'ON_ANSWER_GENERATED'

@@ -561,7 +561,7 @@ export function SourcesPanel({
   const askPaperInsight = () => {
     window.dispatchEvent(
       new CustomEvent('chat-send-message', {
-        detail: { message: '论文对比洞察' },
+        detail: { message: '来源洞察' },
       })
     );
   };
@@ -577,14 +577,14 @@ export function SourcesPanel({
             type="button"
             onClick={askPaperInsight}
             className="h-7 rounded-[12px] border border-gray-300 px-2 text-[11px] text-gray-700 transition hover:bg-gray-100"
-            title="论文对比洞察"
+            title="来源洞察"
           >
-            论文对比洞察
+            来源洞察
           </button>
         </div>
       </div>
 
-      <div className="space-y-2 p-2.5">
+      <div className="space-y-2 px-2.5 pb-2.5 pt-0">
         {readOnly && (
           <div className="rounded-[12px] border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-[11px] text-amber-800">
             <div className="flex items-center justify-between gap-2">

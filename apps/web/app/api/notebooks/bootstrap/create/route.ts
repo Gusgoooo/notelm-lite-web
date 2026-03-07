@@ -5,6 +5,7 @@ import { db, notebooks, eq } from 'db';
 import { authOptions } from '@/lib/auth';
 import { saveResearchState } from '@/lib/research-state';
 import { ingestWebSources, searchWebViaOpenRouter } from '@/lib/web-research';
+import { normalizeNotebookTitle } from '@/lib/notebook-title';
 
 function normalizeTopic(value: unknown): string {
   if (typeof value !== 'string') return '';
@@ -17,9 +18,7 @@ function normalizeNotebookId(value: unknown): string {
 }
 
 function buildNotebookTitle(topic: string): string {
-  const clean = topic.replace(/\s+/g, ' ').trim();
-  if (!clean) return '研究课题';
-  return `${clean.slice(0, 36)} · 研究`;
+  return normalizeNotebookTitle(topic.slice(0, 36), '研究课题');
 }
 
 export async function POST(request: Request) {

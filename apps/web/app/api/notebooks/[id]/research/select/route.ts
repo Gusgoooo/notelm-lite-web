@@ -3,6 +3,7 @@ import { and, cosineDistance, db, desc, eq, inArray, notebooks, sourceChunks, so
 import { createEmbeddings } from 'shared';
 import { getAgentSettings } from '@/lib/agent-settings';
 import { getNotebookAccess } from '@/lib/notebook-access';
+import { normalizeNotebookTitle } from '@/lib/notebook-title';
 import { addAssistantMessage, getLatestResearchState, saveResearchState } from '@/lib/research-state';
 
 function extractTextFromContent(content: unknown): string {
@@ -309,7 +310,7 @@ export async function POST(
     await db
       .update(notebooks)
       .set({
-        title: `${selectedDirection.title} · 研究`,
+        title: normalizeNotebookTitle(selectedDirection.title, '研究课题'),
       })
       .where(eq(notebooks.id, notebookId));
 

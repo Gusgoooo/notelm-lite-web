@@ -154,6 +154,23 @@ function sortCitations(citations: Citation[] | undefined): Citation[] {
 const SAVE_ACTION_PILL_CLASS =
   'inline-flex h-7 items-center rounded-[12px] border border-blue-200 bg-blue-50 px-3 text-[11px] text-blue-700 transition hover:bg-blue-100 disabled:opacity-50';
 
+async function copyTextToClipboard(value: string): Promise<void> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  if (typeof document === 'undefined') return;
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
+}
+
 function hasKnowledgeDocContent(content: string | undefined): boolean {
   if (!content) return false;
   return content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().length > 0;
@@ -227,6 +244,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [starterQuestionLoading, setStarterQuestionLoading] = useState<string | null>(null);
   const [selectionToast, setSelectionToast] = useState<SelectionToastState | null>(null);
   const [savingSelection, setSavingSelection] = useState(false);
+  const [selectionCopied, setSelectionCopied] = useState(false);
   const [knowledgeDocState, setKnowledgeDocState] = useState<{ exists: boolean; hasContent: boolean }>({
     exists: false,
     hasContent: false,
@@ -601,7 +619,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       selectionRangeRef.current = range.cloneRange();
       return {
         text,
-        x: Math.min(window.innerWidth - 148, Math.max(12, tailRect.right + 8)),
+        x: Math.min(window.innerWidth - 248, Math.max(12, tailRect.right + 8)),
         y: Math.max(12, preferredY),
       } satisfies SelectionToastState;
     };
@@ -636,6 +654,26 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       window.removeEventListener('scroll', clearSelectionToast, true);
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectionToast || !selectionRangeRef.current) return;
+    const restoreSelection = () => {
+      const selection = window.getSelection();
+      if (!selection) return;
+      if (selection.rangeCount === 0 || selection.isCollapsed) {
+        selection.removeAllRanges();
+        selection.addRange(selectionRangeRef.current!);
+      }
+    };
+    const frame = window.requestAnimationFrame(restoreSelection);
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectionToast]);
+
+  useEffect(() => {
+    if (!selectionCopied) return;
+    const timer = window.setTimeout(() => setSelectionCopied(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [selectionCopied]);
 
   const send = useCallback(
     async (overrideText?: string) => {
@@ -770,10 +808,10 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       return (
         <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
           <div className="space-y-1">
-            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">建议先补充这些关键信息：</p>
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">不如先从这些问题开始：</p>
             <p className="text-xs text-gray-500 dark:text-gray-400">
               {bootstrapGuide.lead || `主题：${(researchState?.topic ?? bootstrapTopic).trim() || '当前任务'}。`}
-              点击任一问题后，会直接发送到当前对话。
+              点击后会直接发到对话里，我会继续顺着你的回答往下追问。
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -871,45 +909,35 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                     </div>
                     {m.role === 'assistant' && (
                       <>
-                        {!refineDone && messageAction ? (
-                          <div className="mt-3 border-t pt-3">
+                        {!refineDone && messageAction?.type === 'update_doc' ? (
+                          <div className="mt-3">
                             <div className="flex flex-wrap items-center gap-2">
-                              {messageAction.type === 'update_doc' ? (
-                                <button
-                                  type="button"
-                                  className={SAVE_ACTION_PILL_CLASS}
-                                  onClick={async () => {
-                                    if (messageAction.source === 'sources') {
-                                      requestKnowledgeDocRefreshFromSources();
-                                      return;
-                                    }
-                                    if (!notebookId) return;
-                                    const idx = messages.findIndex((msg) => msg.id === m.id);
-                                    const prevUser =
-                                      idx > 0
-                                        ? messages
-                                            .slice(0, idx)
-                                            .reverse()
-                                            .find((msg) => msg.role === 'user')
-                                        : null;
-                                    await updateKnowledgeDocFromChat(
-                                      {
-                                        lastUserMessage: prevUser?.content ?? '',
-                                        lastAssistantMessage: parsed.displayContent,
-                                        highlightedMaterials: buildHighlightedMaterialsFromCitations(m.citations),
-                                      }
-                                    );
-                                  }}
-                                >
-                                  更新知识文档
-                                </button>
-                              ) : (
-                                <KnowledgeDocCreateButton
-                                  onClick={requestKnowledgeDocCreate}
-                                  compact
-                                  className="h-7 px-3"
-                                />
-                              )}
+                              <button
+                                type="button"
+                                className={SAVE_ACTION_PILL_CLASS}
+                                onClick={async () => {
+                                  if (messageAction.source === 'sources') {
+                                    requestKnowledgeDocRefreshFromSources();
+                                    return;
+                                  }
+                                  if (!notebookId) return;
+                                  const idx = messages.findIndex((msg) => msg.id === m.id);
+                                  const prevUser =
+                                    idx > 0
+                                      ? messages
+                                          .slice(0, idx)
+                                          .reverse()
+                                          .find((msg) => msg.role === 'user')
+                                      : null;
+                                  await updateKnowledgeDocFromChat({
+                                    lastUserMessage: prevUser?.content ?? '',
+                                    lastAssistantMessage: parsed.displayContent,
+                                    highlightedMaterials: buildHighlightedMaterialsFromCitations(m.citations),
+                                  });
+                                }}
+                              >
+                                更新知识文档
+                              </button>
                             </div>
                           </div>
                         ) : null}
@@ -966,6 +994,15 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                             </ul>
                           </div>
                         )}
+                        {!refineDone && messageAction?.type === 'create_doc' ? (
+                          <div className="mt-3">
+                            <KnowledgeDocCreateButton
+                              onClick={requestKnowledgeDocCreate}
+                              compact
+                              className="h-7 px-3"
+                            />
+                          </div>
+                        ) : null}
                       </>
                     )}
                   </div>
@@ -989,54 +1026,66 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         </div>
       </ScrollArea>
       {selectionToast ? (
-        <button
-          type="button"
-          className="fixed z-50 rounded-[12px] border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-medium text-gray-700 shadow-lg transition hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+        <div
+          className="fixed z-50 flex items-center gap-2 rounded-[14px] border border-gray-200 bg-white/96 p-1.5 shadow-lg backdrop-blur-sm dark:border-gray-700 dark:bg-gray-900/96"
           style={{ left: selectionToast.x, top: selectionToast.y }}
           onMouseDown={(event) => event.preventDefault()}
-          onClick={async () => {
-            if (savingSelection) return;
-            setSavingSelection(true);
-            try {
+        >
+          <button
+            type="button"
+            className="inline-flex h-8 items-center rounded-[10px] bg-black px-3 text-[11px] font-medium text-white transition hover:bg-black/90 disabled:opacity-60 dark:bg-white dark:text-black dark:hover:bg-white/90"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={async () => {
+              if (savingSelection) return;
+              setSavingSelection(true);
+              try {
+                const content =
+                  (selectionRangeRef.current?.cloneContents().textContent ?? selectionToast.text).trim();
+                if (!content) return;
+                await updateKnowledgeDocFromChat({
+                  lastUserMessage: '',
+                  lastAssistantMessage: '',
+                  highlightedMaterials: content,
+                });
+                setSelectionToast(null);
+              } catch (error) {
+                alert(error instanceof Error ? error.message : '更新知识文档失败');
+              } finally {
+                setSavingSelection(false);
+              }
+            }}
+            disabled={savingSelection}
+          >
+            {savingSelection ? '更新中…' : '更新到知识库'}
+          </button>
+          <button
+            type="button"
+            className="inline-flex h-8 items-center rounded-[10px] bg-[#f4f4f5] px-3 text-[11px] font-medium text-gray-700 transition hover:bg-[#ebebed] disabled:opacity-60 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={async () => {
               const content =
                 (selectionRangeRef.current?.cloneContents().textContent ?? selectionToast.text).trim();
               if (!content) return;
-              await updateKnowledgeDocFromChat({
-                lastUserMessage: '',
-                lastAssistantMessage: '',
-                highlightedMaterials: content,
-              });
-              setSelectionToast(null);
-            } catch (error) {
-              alert(error instanceof Error ? error.message : '更新知识文档失败');
-            } finally {
-              setSavingSelection(false);
-            }
-          }}
-          disabled={savingSelection}
-        >
-          {savingSelection ? '更新中…' : '更新知识文档'}
-        </button>
-      ) : null}
-      {!knowledgeDocState.exists && messages.some((message) => message.role === 'assistant') ? (
-        <div className="shrink-0 px-3 pb-0 pt-1">
-          <div className="mx-auto flex w-full max-w-[680px] items-center justify-between gap-3 rounded-[16px] bg-[#f5f6fb] px-4 py-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-gray-800">当前来源已经可以整理成知识文档</p>
-              <p className="mt-1 text-xs text-gray-500">点击创建后会展开右侧文档区，并可选择场景生成初稿。</p>
-            </div>
-            <KnowledgeDocCreateButton onClick={requestKnowledgeDocCreate} />
-          </div>
+              try {
+                await copyTextToClipboard(content);
+                setSelectionCopied(true);
+              } catch (error) {
+                alert(error instanceof Error ? error.message : '复制失败');
+              }
+            }}
+          >
+            {selectionCopied ? '已复制' : '复制'}
+          </button>
         </div>
       ) : null}
-      <div className="relative z-10 shrink-0 border-t border-[#ececec] bg-white px-3 pb-3 pt-2">
+      <div className="relative z-10 shrink-0 bg-white px-3 pb-3 pt-2">
         <div className="mx-auto w-full max-w-[680px]">
           <form
             onSubmit={(e) => {
               e.preventDefault();
               void send();
             }}
-            className="relative rounded-[14px] bg-[#f1f1f1] p-2"
+            className="relative rounded-[20px] bg-[#f1f1f1] p-2"
           >
             <textarea
               ref={textareaRef}
@@ -1059,7 +1108,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               }}
               placeholder="请输入你的问题..."
               disabled={loading}
-              className="h-[104px] w-full resize-none rounded-[12px] border-0 bg-transparent px-4 pb-12 pt-4 text-sm text-gray-900 outline-none transition dark:text-gray-100"
+              className="h-[104px] w-full resize-none rounded-[20px] border-0 bg-transparent px-4 pb-12 pt-4 text-sm text-gray-900 outline-none transition dark:text-gray-100"
             />
             <button
               type="submit"

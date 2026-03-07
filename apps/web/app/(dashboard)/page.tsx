@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import Link from 'next/link';
 import { db, eq, notebooks } from 'db';
 import { authOptions } from '@/lib/auth';
+import { stripResearchSuffix } from '@/lib/notebook-title';
 import { ProjectPanel } from './_components/ProjectPanel';
 import { WorkspaceShell } from './_components/WorkspaceShell';
 
@@ -50,12 +51,12 @@ export default async function DashboardPage({
   }
 
   return (
-    <WorkspaceShell
-      notebookId={notebook.id}
-      initialTitle={notebook.title}
-      initialDescription={notebook.description ?? ''}
-      isOwner={isOwner}
-      isPublished={Boolean(notebook.isPublished)}
-    />
+      <WorkspaceShell
+        notebookId={notebook.id}
+        initialTitle={stripResearchSuffix(notebook.title)}
+        initialDescription={notebook.description ?? ''}
+        isOwner={isOwner}
+        isPublished={Boolean(notebook.isPublished)}
+      />
   );
 }

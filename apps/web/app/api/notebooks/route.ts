@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { db, notebooks, eq, desc, isNull } from 'db';
 import { randomUUID } from 'crypto';
 import { authOptions } from '@/lib/auth';
+import { normalizeNotebookTitle } from '@/lib/notebook-title';
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const title =
       typeof body?.title === 'string' && body.title.trim()
-        ? body.title.trim()
+        ? normalizeNotebookTitle(body.title, 'Untitled')
         : 'Untitled';
     const description =
       typeof body?.description === 'string'

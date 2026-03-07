@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { isAdminEmail } from '@/lib/admin';
+import { normalizeNotebookTitle, stripResearchSuffix } from '@/lib/notebook-title';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -70,9 +71,7 @@ function formatTime(value: string | null | undefined): string {
 }
 
 function buildBootstrapNotebookTitle(topic: string): string {
-  const clean = topic.replace(/\s+/g, ' ').trim();
-  if (!clean) return '研究课题';
-  return `${clean.slice(0, 36)} · 研究`;
+  return normalizeNotebookTitle(topic.slice(0, 36), '研究课题');
 }
 
 export function ProjectPanel() {
@@ -372,7 +371,7 @@ export function ProjectPanel() {
                                 onClick={(e) => e.stopPropagation()}
                               />
                             ) : (
-                              <CardTitle className="truncate">{nb.title}</CardTitle>
+                              <CardTitle className="truncate">{stripResearchSuffix(nb.title)}</CardTitle>
                             )}
                           </div>
 
@@ -388,7 +387,7 @@ export function ProjectPanel() {
                                 type="button"
                                 onClick={() => {
                                   setEditingId(nb.id);
-                                  setEditTitle(nb.title);
+                                  setEditTitle(stripResearchSuffix(nb.title));
                                 }}
                                 className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
                               >
@@ -450,7 +449,7 @@ export function ProjectPanel() {
                     <Card className="h-full">
                       <CardHeader className="pb-2">
                         <div className="flex items-center gap-2">
-                          <CardTitle className="truncate">{nb.title}</CardTitle>
+                          <CardTitle className="truncate">{stripResearchSuffix(nb.title)}</CardTitle>
                           {nb.isMine ? (
                             <span className="shrink-0 rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-medium text-gray-700 dark:bg-white/10 dark:text-gray-200">
                               我发布的

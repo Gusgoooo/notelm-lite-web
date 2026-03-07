@@ -15,6 +15,7 @@ type KnowledgeDocPanelProps = {
 type DraftScenarioKey = 'auto' | 'okr' | 'prd' | 'prompt' | 'analysis' | 'learning';
 type CreationMode = 'infographic' | 'summary' | 'mindmap' | 'report' | 'webpage';
 type SheetMode = 'draft' | 'create' | null;
+type HistoryMode = 'append' | 'merge-edit' | 'skip';
 
 type KnowledgeDocCitation = {
   sourceTitle: string;
@@ -23,10 +24,43 @@ type KnowledgeDocCitation = {
   snippet: string;
 };
 
+type KnowledgeDocHistoryEntry = {
+  id: string;
+  content: string;
+  summary: string;
+  savedAt: string;
+};
+
+type SaveDocOptions = {
+  historyMode?: HistoryMode;
+  summary?: string;
+};
+
+const HISTORY_STORAGE_LIMIT = 30;
+
 function CollapseIcon({ collapsed }: { collapsed: boolean }) {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
       {collapsed ? <path d="m15 6-6 6 6 6" /> : <path d="m9 6 6 6-6 6" />}
+    </svg>
+  );
+}
+
+function HistoryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M3 12a9 9 0 1 0 3-6.7" />
+      <path d="M3 4v4h4" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  );
+}
+
+function ArrowRightIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M5 12h14" />
+      <path d="m13 6 6 6-6 6" />
     </svg>
   );
 }
@@ -315,6 +349,107 @@ function hasMeaningfulHtml(html: string): boolean {
   return stripHtml(html).length > 0;
 }
 
+function normalizeHistoryEntries(value: unknown): KnowledgeDocHistoryEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (item): item is KnowledgeDocHistoryEntry =>
+        Boolean(
+          item &&
+            typeof item === 'object' &&
+            typeof (item as KnowledgeDocHistoryEntry).id === 'string' &&
+            typeof (item as KnowledgeDocHistoryEntry).content === 'string' &&
+            typeof (item as KnowledgeDocHistoryEntry).summary === 'string' &&
+            typeof (item as KnowledgeDocHistoryEntry).savedAt === 'string'
+        )
+    )
+    .slice(0, HISTORY_STORAGE_LIMIT);
+}
+
+function extractHistoryFocus(markdown: string): string {
+  const lines = markdown
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const heading = lines.find((line) => /^#{1,3}\s+/.test(line));
+  if (heading) {
+    return heading.replace(/^#{1,3}\s+/, '').slice(0, 24);
+  }
+  const bullet = lines.find((line) => /^[-*+]\s+/.test(line));
+  if (bullet) {
+    return bullet.replace(/^[-*+]\s+/, '').slice(0, 24);
+  }
+  return lines[0]?.slice(0, 24) ?? '';
+}
+
+function buildHistorySummary(previousHtml: string, nextHtml: string): string {
+  const previousMarkdown = htmlToMarkdownLike(previousHtml).trim();
+  const nextMarkdown = htmlToMarkdownLike(nextHtml).trim();
+  if (!previousMarkdown && nextMarkdown) {
+    const focus = extractHistoryFocus(nextMarkdown);
+    return focus ? `创建初稿：${focus}` : '创建知识文档初稿';
+  }
+  if (previousMarkdown && !nextMarkdown) {
+    return '清空了知识文档内容';
+  }
+  const previousFocus = extractHistoryFocus(previousMarkdown);
+  const nextFocus = extractHistoryFocus(nextMarkdown);
+  if (nextFocus && nextFocus !== previousFocus) {
+    return `更新「${nextFocus}」部分`;
+  }
+  const nextLines = nextMarkdown.split('\n').map((line) => line.trim()).filter(Boolean);
+  const addedLine = nextLines.find((line) => !previousMarkdown.includes(line));
+  if (addedLine) {
+    return `补充：${addedLine.replace(/^[-*+]\s+/, '').slice(0, 24)}`;
+  }
+  return '编辑了知识文档';
+}
+
+function formatHistoryTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '刚刚';
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function appendHistoryEntry(
+  entries: KnowledgeDocHistoryEntry[],
+  previousHtml: string,
+  nextHtml: string,
+  options: SaveDocOptions = {}
+): KnowledgeDocHistoryEntry[] {
+  if (options.historyMode === 'skip') return entries;
+  const previousText = stripHtml(previousHtml);
+  const nextText = stripHtml(nextHtml);
+  if (previousText === nextText) return entries;
+
+  const summary = (options.summary ?? buildHistorySummary(previousHtml, nextHtml)).trim() || '编辑了知识文档';
+  const nextEntry: KnowledgeDocHistoryEntry = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    content: nextHtml,
+    summary,
+    savedAt: new Date().toISOString(),
+  };
+
+  if (entries[0]?.content === nextHtml) {
+    return [{ ...entries[0], summary: nextEntry.summary, savedAt: nextEntry.savedAt }, ...entries.slice(1)];
+  }
+
+  if (options.historyMode === 'merge-edit' && entries[0]) {
+    const latest = entries[0];
+    const latestAt = Date.parse(latest.savedAt);
+    if (Number.isFinite(latestAt) && Date.now() - latestAt < 120000 && latest.summary.startsWith('编辑')) {
+      return [{ ...latest, content: nextHtml, summary: nextEntry.summary, savedAt: nextEntry.savedAt }, ...entries.slice(1)];
+    }
+  }
+
+  return [nextEntry, ...entries].slice(0, HISTORY_STORAGE_LIMIT);
+}
+
 function htmlToMarkdownLike(html: string): string {
   if (typeof document === 'undefined') {
     return stripHtml(html);
@@ -443,6 +578,8 @@ export function KnowledgeDocPanel({
   const [updatingFromChat, setUpdatingFromChat] = useState(false);
   const [sheetMode, setSheetMode] = useState<SheetMode>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [docHistory, setDocHistory] = useState<KnowledgeDocHistoryEntry[]>([]);
   const [draftScenarioLoading, setDraftScenarioLoading] = useState<DraftScenarioKey | null>(null);
   const [creationGenerating, setCreationGenerating] = useState<CreationMode | null>(null);
   const [externalBusy, setExternalBusy] = useState(false);
@@ -450,6 +587,7 @@ export function KnowledgeDocPanel({
 
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialContentRef = useRef<string | null>(null);
+  const docHistoryRef = useRef<KnowledgeDocHistoryEntry[]>([]);
 
   const draftScenarios = useMemo(
     () => [
@@ -557,9 +695,20 @@ export function KnowledgeDocPanel({
       const rawContent = typeof data?.content === 'string' ? data.content : '';
       const nextContent = rawContent.includes('<') ? rawContent : markdownToHtml(rawContent);
       const nextId = typeof data?.id === 'string' ? data.id : null;
+      const storedHistory = normalizeHistoryEntries(data?.history);
       setDocId(nextId);
       setContent(nextContent || '<p></p>');
       initialContentRef.current = nextContent || '<p></p>';
+      setDocHistory(
+        storedHistory.length > 0
+          ? storedHistory
+          : hasMeaningfulHtml(nextContent || '<p></p>')
+            ? appendHistoryEntry([], '', nextContent || '<p></p>', {
+                summary: '当前版本',
+                historyMode: 'append',
+              })
+            : []
+      );
       emitDocStatus(nextId, nextContent || '<p></p>');
     } finally {
       setLoading(false);
@@ -571,19 +720,22 @@ export function KnowledgeDocPanel({
   }, [fetchDoc]);
 
   const saveDoc = useCallback(
-    async (html: string) => {
+    async (html: string, options: SaveDocOptions = {}) => {
       if (!notebookId || saving) return null;
+      const previous = initialContentRef.current ?? '';
+      const nextHistory = appendHistoryEntry(docHistoryRef.current, previous, html, options);
       setSaving(true);
       try {
         const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: html }),
+          body: JSON.stringify({ content: html, history: nextHistory }),
         });
         if (!res.ok) return null;
         const data = await res.json().catch(() => ({}));
         const next = typeof data?.content === 'string' ? data.content : html;
         const nextId = typeof data?.id === 'string' ? data.id : docId;
+        setDocHistory(normalizeHistoryEntries(data?.history).length > 0 ? normalizeHistoryEntries(data?.history) : nextHistory);
         initialContentRef.current = next;
         setDocId(nextId ?? null);
         setContent(next);
@@ -612,7 +764,7 @@ export function KnowledgeDocPanel({
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
         saveTimeoutRef.current = null;
-        void saveDoc(html);
+        void saveDoc(html, { historyMode: 'merge-edit' });
       }, 800);
     },
     editorProps: {
@@ -632,6 +784,10 @@ export function KnowledgeDocPanel({
   }, [content, editor, loading]);
 
   useEffect(() => {
+    docHistoryRef.current = docHistory;
+  }, [docHistory]);
+
+  useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
@@ -642,10 +798,10 @@ export function KnowledgeDocPanel({
   const panelBusy = updatingFromChat || externalBusy || draftScenarioLoading != null || creationGenerating != null;
 
   const applyGeneratedText = useCallback(
-    async (nextText: string) => {
+    async (nextText: string, options: SaveDocOptions = {}) => {
       const newHtml = markdownToHtml(nextText);
       editor?.commands.setContent(newHtml || '<p></p>', false);
-      await saveDoc(newHtml || '<p></p>');
+      await saveDoc(newHtml || '<p></p>', options);
     },
     [editor, saveDoc]
   );
@@ -668,7 +824,11 @@ export function KnowledgeDocPanel({
         if (!res.ok || typeof data?.suggestedContent !== 'string') {
           throw new Error(data?.error ?? '知识文档生成失败');
         }
-        await applyGeneratedText(data.suggestedContent);
+        const scenarioLabel = draftScenarios.find((item) => item.key === scenario)?.label ?? '当前场景';
+        await applyGeneratedText(data.suggestedContent, {
+          historyMode: 'append',
+          summary: mode === 'update' ? `更新${scenarioLabel}初稿` : `生成${scenarioLabel}初稿`,
+        });
         setSheetMode(null);
       } catch (error) {
         alert(error instanceof Error ? error.message : '知识文档生成失败');
@@ -677,7 +837,7 @@ export function KnowledgeDocPanel({
         setExternalBusy(false);
       }
     },
-    [applyGeneratedText, draftScenarioLoading, ensureDocExists, notebookId]
+    [applyGeneratedText, draftScenarioLoading, draftScenarios, ensureDocExists, notebookId]
   );
 
   const runCreationGenerate = useCallback(
@@ -752,7 +912,10 @@ export function KnowledgeDocPanel({
         setUpdatingFromChat(true);
         const newHtml = markdownToHtml(suggested);
         editor?.commands.setContent(newHtml || '<p></p>', false);
-        void saveDoc(newHtml || '<p></p>');
+        void saveDoc(newHtml || '<p></p>', {
+          historyMode: 'append',
+          summary: '根据对话自动更新知识文档',
+        });
         setPendingDiff(null);
         setUpdatingFromChat(false);
       } else {
@@ -798,7 +961,10 @@ export function KnowledgeDocPanel({
         }
         const newHtml = markdownToHtml(String(data.suggestedContent));
         editor.commands.setContent(newHtml || '<p></p>', false);
-        void saveDoc(newHtml || '<p></p>');
+        void saveDoc(newHtml || '<p></p>', {
+          historyMode: 'append',
+          summary: '根据最新对话自动更新知识文档',
+        });
       } finally {
         setUpdatingFromChat(false);
       }
@@ -846,13 +1012,30 @@ export function KnowledgeDocPanel({
     if (!pendingDiff || !editor) return;
     const newHtml = markdownToHtml(pendingDiff.suggested);
     editor.commands.setContent(newHtml || '<p></p>', false);
-    void saveDoc(newHtml || '<p></p>');
+    void saveDoc(newHtml || '<p></p>', {
+      historyMode: 'append',
+      summary: '采纳了更新建议',
+    });
     setPendingDiff(null);
   }, [editor, pendingDiff, saveDoc]);
 
   const rejectPending = useCallback(() => {
     setPendingDiff(null);
   }, []);
+
+  const restoreHistoryEntry = useCallback(
+    async (entry: KnowledgeDocHistoryEntry) => {
+      if (!editor) return;
+      const nextHtml = entry.content || '<p></p>';
+      editor.commands.setContent(nextHtml, false);
+      await saveDoc(nextHtml, {
+        historyMode: 'append',
+        summary: `回退到 ${formatHistoryTime(entry.savedAt)} 的版本`,
+      });
+      setHistoryOpen(false);
+    },
+    [editor, saveDoc]
+  );
 
   if (!notebookId) {
     return (
@@ -913,13 +1096,21 @@ export function KnowledgeDocPanel({
           知识文档
         </h2>
         <div className="flex items-center gap-2">
-          <label className="inline-flex cursor-pointer items-center gap-1.5">
-            <span className="text-xs text-gray-600 dark:text-gray-400">自动更新</span>
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(true)}
+            className="inline-flex h-8 items-center gap-1.5 rounded-[12px] bg-black/[0.04] px-3 text-xs font-medium text-gray-700 transition hover:bg-black/[0.07] dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/15"
+          >
+            <HistoryIcon />
+            历史
+          </button>
+          <label className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-[12px] bg-black/[0.04] px-2.5 text-xs text-gray-700 transition hover:bg-black/[0.07] dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/15">
+            <span className="font-medium text-gray-600 dark:text-gray-300">自动更新</span>
             <input
               type="checkbox"
               checked={autoUpdate}
               onChange={(e) => setAutoUpdate(e.target.checked)}
-              className="h-3.5 w-7 rounded-full border border-gray-300 bg-gray-200 accent-gray-800 dark:border-gray-600 dark:bg-gray-700"
+              className="h-4 w-4 rounded border border-gray-300 accent-gray-900 dark:border-gray-600"
             />
           </label>
           {onToggleCollapse ? (
@@ -966,11 +1157,11 @@ export function KnowledgeDocPanel({
           </div>
         </div>
       ) : docHasContent ? (
-        <div className="relative z-10 min-h-0 flex-1 overflow-auto">
-          <div className="min-h-full">
+        <div className="relative z-10 min-h-0 flex-1 overflow-auto px-2 pb-5">
+          <div className="min-h-full rounded-[8px] bg-white/55 dark:bg-gray-900/60">
             <EditorContent editor={editor} />
           </div>
-          {saving ? <p className="px-4 pb-2 text-[10px] text-gray-400 dark:text-gray-500">保存中…</p> : null}
+          {saving ? <p className="px-3 pb-2 pt-2 text-[10px] text-gray-400 dark:text-gray-500">保存中…</p> : null}
         </div>
       ) : (
         <div className="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
@@ -1011,40 +1202,25 @@ export function KnowledgeDocPanel({
         <p className="relative z-10 px-3 py-1 text-xs text-blue-600 dark:text-blue-400">正在根据对话更新文档…</p>
       ) : null}
 
-      <div className="relative z-10 flex shrink-0 items-center justify-center gap-2 px-3 pb-3 pt-2">
-        {docHasContent ? (
-          <>
-            <button
-              type="button"
-              onClick={() => setPreviewOpen(true)}
-              className="inline-flex h-10 items-center rounded-[12px] bg-gray-100 px-4 text-sm font-medium text-gray-700 transition hover:bg-gray-200"
-            >
-              预览
-            </button>
-            <button
-              type="button"
-              onClick={() => setSheetMode('create')}
-              className="inline-flex h-10 items-center rounded-[12px] bg-[#f5f6fb] px-4 text-sm font-medium text-gray-700 transition hover:bg-[#eceef8] dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-            >
-              去创作
-            </button>
-          </>
-        ) : (
-          <>
-            {docId ? (
-              <button
-                type="button"
-                onClick={() => void openDraftSheet()}
-                className="inline-flex h-10 items-center rounded-[12px] bg-[#f5f6fb] px-4 text-sm font-medium text-gray-700 transition hover:bg-[#eceef8] dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-              >
-                生成初稿
-              </button>
-            ) : (
-              <KnowledgeDocCreateButton onClick={() => void openDraftSheet()} />
-            )}
-          </>
-        )}
-      </div>
+      {docHasContent ? (
+        <div className="relative z-10 flex shrink-0 items-center justify-center gap-2 px-3 pb-3 pt-0">
+          <button
+            type="button"
+            onClick={() => setPreviewOpen(true)}
+            className="inline-flex h-10 items-center rounded-[12px] bg-gray-100 px-4 text-sm font-medium text-gray-700 transition hover:bg-gray-200"
+          >
+            预览
+          </button>
+          <button
+            type="button"
+            onClick={() => setSheetMode('create')}
+            className="inline-flex h-10 items-center gap-2 rounded-[12px] bg-black px-4 text-sm font-medium text-white shadow-sm transition hover:bg-black/92 dark:bg-white dark:text-black dark:hover:bg-white/92"
+          >
+            去创作
+            <ArrowRightIcon />
+          </button>
+        </div>
+      ) : null}
 
       {panelBusy ? (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/76 backdrop-blur-[2px] dark:bg-gray-950/72">
@@ -1163,6 +1339,72 @@ export function KnowledgeDocPanel({
                 className="knowledge-doc-editor mx-auto min-h-[60vh] max-w-3xl rounded-[20px] bg-white px-8 py-8 shadow-sm dark:bg-gray-900"
                 dangerouslySetInnerHTML={{ __html: currentHtml }}
               />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {historyOpen ? (
+        <div
+          className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setHistoryOpen(false);
+            }
+          }}
+        >
+          <div className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-[24px] bg-white shadow-xl dark:bg-gray-900">
+            <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-800">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">知识文档历史</h3>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">查看最近修改，并可一键回退到任一版本。</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(false)}
+                className="inline-flex h-8 items-center rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200"
+              >
+                关闭
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto px-4 py-4">
+              {docHistory.length > 0 ? (
+                <div className="space-y-3">
+                  {docHistory.map((entry) => {
+                    const isCurrent = entry.content === currentHtml;
+                    return (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        onClick={() => void restoreHistoryEntry(entry)}
+                        className="flex w-full items-start justify-between gap-4 rounded-[18px] bg-[#f6f6f7] px-4 py-3 text-left transition hover:bg-[#eeeeef] dark:bg-gray-800 dark:hover:bg-gray-700"
+                      >
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{entry.summary}</p>
+                            {isCurrent ? (
+                              <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-gray-500 shadow-sm dark:bg-gray-900 dark:text-gray-300">
+                                当前版本
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="line-clamp-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                            {extractHistoryFocus(htmlToMarkdownLike(entry.content)) || '查看当时的文档内容并回退到该版本。'}
+                          </p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="text-xs text-gray-500 dark:text-gray-400">{formatHistoryTime(entry.savedAt)}</p>
+                          <p className="mt-2 text-xs font-medium text-gray-700 dark:text-gray-200">点击回退</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="flex min-h-[220px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+                  暂时还没有可回退的版本。
+                </div>
+              )}
             </div>
           </div>
         </div>

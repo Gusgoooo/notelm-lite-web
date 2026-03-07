@@ -166,7 +166,7 @@ function extractCitationNumbers(answer: string, max: number): number[] {
 }
 
 function shouldRunBuiltinPaperStats(question: string): boolean {
-  return /知识库论文对比洞察|论文对比洞察|文论对比洞察|频繁研究|研究空白|方法争议|变量被反复验证/i.test(question);
+  return /来源洞察|知识库论文对比洞察|论文对比洞察|文论对比洞察|频繁研究|研究空白|方法争议|变量被反复验证/i.test(question);
 }
 
 function isWebSearchMime(mime: string | null | undefined): boolean {

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db, notebooks, eq } from 'db';
 import { getNotebookAccess } from '@/lib/notebook-access';
+import { normalizeNotebookTitle } from '@/lib/notebook-title';
 
 export async function GET(
   _request: Request,
@@ -40,7 +41,7 @@ export async function PATCH(
   }
 
   const body = await request.json().catch(() => ({}));
-  const title = typeof body?.title === 'string' ? body.title.trim() : undefined;
+  const title = typeof body?.title === 'string' ? normalizeNotebookTitle(body.title, '') : undefined;
   const description =
     typeof body?.description === 'string' ? body.description.trim().slice(0, 300) : undefined;
   const isPublished = typeof body?.isPublished === 'boolean' ? body.isPublished : undefined;
