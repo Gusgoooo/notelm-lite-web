@@ -24,7 +24,7 @@ export function WorkspaceShell({
   isPublished,
 }: WorkspaceShellProps) {
   const router = useRouter();
-  const [notesWidth, setNotesWidth] = useState(360);
+  const [notesWidth, setNotesWidth] = useState<number | null>(null);
   const [resizing, setResizing] = useState(false);
   const [savingFork, setSavingFork] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -43,16 +43,38 @@ export function WorkspaceShell({
   const [creationLoading, setCreationLoading] = useState(false);
   const [creationGenerating, setCreationGenerating] = useState<string | null>(null);
 
+  const workspaceBodyRef = useRef<HTMLDivElement | null>(null);
   const resizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const hasManualResizeRef = useRef(false);
+
+  const LEFT_PANEL_WIDTH = 320;
+  const PANEL_GAP = 12;
+  const MIN_CENTER_WIDTH = 320;
+  const MIN_RIGHT_WIDTH = 320;
+
+  const getBalancedNotesWidth = (totalWidth: number): number | null => {
+    const available = totalWidth - LEFT_PANEL_WIDTH - PANEL_GAP - PANEL_GAP;
+    if (available <= 0) return null;
+    const target = Math.floor(available / 2);
+    const maxRightWidth = Math.max(MIN_RIGHT_WIDTH, available - MIN_CENTER_WIDTH);
+    return Math.min(maxRightWidth, Math.max(MIN_RIGHT_WIDTH, target));
+  };
+
+  const clampNotesWidth = (totalWidth: number, desired: number): number => {
+    const available = totalWidth - LEFT_PANEL_WIDTH - PANEL_GAP - PANEL_GAP;
+    const maxRightWidth = Math.max(MIN_RIGHT_WIDTH, available - MIN_CENTER_WIDTH);
+    return Math.min(maxRightWidth, Math.max(MIN_RIGHT_WIDTH, desired));
+  };
 
   useEffect(() => {
     if (!resizing) return;
 
     const onMouseMove = (event: MouseEvent) => {
       const start = resizeStartRef.current;
-      if (!start) return;
+      const totalWidth = workspaceBodyRef.current?.clientWidth ?? 0;
+      if (!start || totalWidth <= 0) return;
       const delta = event.clientX - start.startX;
-      const nextWidth = Math.min(680, Math.max(300, start.startWidth - delta));
+      const nextWidth = clampNotesWidth(totalWidth, start.startWidth - delta);
       setNotesWidth(nextWidth);
     };
 
@@ -68,6 +90,33 @@ export function WorkspaceShell({
       window.removeEventListener('mouseup', onMouseUp);
     };
   }, [resizing]);
+
+  useEffect(() => {
+    const element = workspaceBodyRef.current;
+    if (!element) return;
+
+    const syncWidths = () => {
+      const totalWidth = element.clientWidth;
+      if (totalWidth <= 0) return;
+      if (!hasManualResizeRef.current) {
+        const balanced = getBalancedNotesWidth(totalWidth);
+        if (balanced != null) setNotesWidth(balanced);
+        return;
+      }
+      setNotesWidth((current) => {
+        if (current == null) return getBalancedNotesWidth(totalWidth);
+        return clampNotesWidth(totalWidth, current);
+      });
+    };
+
+    syncWidths();
+
+    const observer = new ResizeObserver(() => {
+      syncWidths();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [notebookId]);
 
   useEffect(() => {
     // Keep local UI state in sync when switching notebooks (e.g. fork/save-as-mine).
@@ -337,8 +386,11 @@ export function WorkspaceShell({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 gap-3 overflow-hidden p-3">
-        <aside className="w-80 shrink-0 overflow-hidden rounded-[20px] border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-950/50">
+      <div ref={workspaceBodyRef} className="flex min-h-0 flex-1 overflow-hidden p-3">
+        <aside
+          className="shrink-0 overflow-hidden rounded-[20px] border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-950/50"
+          style={{ width: LEFT_PANEL_WIDTH, marginRight: PANEL_GAP }}
+        >
           <SourcesPanel
             notebookId={notebookId}
             readOnly={readOnlySources}
@@ -351,18 +403,28 @@ export function WorkspaceShell({
           <ChatPanel notebookId={notebookId} />
         </main>
 
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整知识库问答和知识文档宽度"
+          className={`relative shrink-0 ${resizing ? 'bg-blue-500/20' : 'bg-transparent'}`}
+          style={{ width: PANEL_GAP }}
+          onMouseDown={(event) => {
+            const currentWidth = notesWidth;
+            if (currentWidth == null) return;
+            event.preventDefault();
+            hasManualResizeRef.current = true;
+            resizeStartRef.current = { startX: event.clientX, startWidth: currentWidth };
+            setResizing(true);
+          }}
+        >
+          <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-gray-200 dark:bg-gray-800" />
+        </div>
+
         <aside
           className="relative flex min-h-0 shrink-0 flex-col overflow-hidden rounded-[20px] border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-950/50"
-          style={{ width: notesWidth }}
+          style={{ width: notesWidth ?? undefined }}
         >
-          <div
-            className={`absolute left-0 top-0 h-full w-2 cursor-col-resize ${resizing ? 'bg-blue-500/20' : ''}`}
-            onMouseDown={(event) => {
-              event.preventDefault();
-              resizeStartRef.current = { startX: event.clientX, startWidth: notesWidth };
-              setResizing(true);
-            }}
-          />
           <KnowledgeDocPanel notebookId={notebookId} />
         </aside>
       </div>
