@@ -329,6 +329,11 @@ export function ProjectPanel() {
       setBootstrapProgress(100);
       bootstrapNotebookIdRef.current = null;
       closeBootstrapModal(false);
+      try {
+        window.sessionStorage.setItem(`notebook-entry:${notebookId}`, 'bootstrap');
+      } catch {
+        // Ignore sessionStorage failures and continue to workspace.
+      }
       router.push(`/?notebookId=${encodeURIComponent(notebookId)}`);
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') {

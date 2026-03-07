@@ -62,6 +62,8 @@ type SelectionToastState = {
   y: number;
 };
 
+type NotebookEntryMode = 'bootstrap' | null;
+
 const HISTORY_PAGE_SIZE = 20;
 const REPORT_ACTION_MARKER = '[[ACTION:REPORT]]';
 
@@ -145,6 +147,42 @@ function sortCitations(citations: Citation[] | undefined): Citation[] {
   });
 }
 
+function normalizeGuideQuestion(raw: string): string {
+  const cleaned = raw
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean)
+    ?.replace(/^[\d一二三四五六七八九十]+[.)、\s-]*/, '')
+    .replace(/^[•·\-*]\s*/, '')
+    .trim() ?? '';
+
+  if (!cleaned) return '';
+  const sentence = cleaned.match(/[^。！？!?]*[？?]/)?.[0]?.trim() ?? cleaned.replace(/[。;；]+$/g, '').trim();
+  if (!sentence) return '';
+  return /[？?]$/.test(sentence) ? sentence.replace(/\?$/, '？') : `${sentence}？`;
+}
+
+function getBootstrapGuideQuestions(state: ResearchState | null): string[] {
+  if (!state) return [];
+  const rawQuestions =
+    state.phase === 'ready' && Array.isArray(state.starterQuestions) && state.starterQuestions.length > 0
+      ? state.starterQuestions
+      : state.directions.map((item) => item.researchQuestion || item.title);
+
+  const questions: string[] = [];
+  const seen = new Set<string>();
+  for (const item of rawQuestions) {
+    const normalized = normalizeGuideQuestion(item);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    questions.push(normalized);
+    if (questions.length >= 3) break;
+  }
+  return questions;
+}
+
 const ACTION_PILL_CLASS =
   'inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 transition hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700';
 const SAVE_ACTION_PILL_CLASS =
@@ -210,11 +248,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [researchState, setResearchState] = useState<ResearchState | null>(null);
   const [loadingResearchState, setLoadingResearchState] = useState(false);
   const [researchStateError, setResearchStateError] = useState('');
-  const [selectingDirectionId, setSelectingDirectionId] = useState<string | null>(null);
-  const [refineOpen, setRefineOpen] = useState(false);
-  const [refineStep, setRefineStep] = useState<0 | 1 | 2>(0);
-  const [refineHint, setRefineHint] = useState('');
-  const [refineError, setRefineError] = useState('');
+  const [entryMode, setEntryMode] = useState<NotebookEntryMode>(null);
   const [quickActionRunning, setQuickActionRunning] = useState<{ messageId: string; mode: 'report' | 'infographic' } | null>(null);
   const [starterQuestionLoading, setStarterQuestionLoading] = useState<string | null>(null);
   const [selectionToast, setSelectionToast] = useState<SelectionToastState | null>(null);
@@ -289,8 +323,21 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     setHasMore(false);
     setHistoryPage(0);
     setHistoryError('');
+    setEntryMode(null);
     setResearchState(null);
     setResearchStateError('');
+    if (notebookId) {
+      try {
+        const key = `notebook-entry:${notebookId}`;
+        const nextMode = window.sessionStorage.getItem(key);
+        if (nextMode === 'bootstrap') {
+          setEntryMode('bootstrap');
+        }
+        window.sessionStorage.removeItem(key);
+      } catch {
+        // Ignore sessionStorage failures and continue without entry-specific UI.
+      }
+    }
     if (notebookId) {
       void fetchHistoryPage(0, true);
       void fetchResearchState();
@@ -586,60 +633,6 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     return () => window.removeEventListener('chat-send-message', onChatSendMessage as EventListener);
   }, [send]);
 
-  const selectDirection = useCallback(
-    async (direction: ResearchDirection) => {
-      if (!notebookId || selectingDirectionId) return;
-      setSelectingDirectionId(direction.id);
-      setRefineOpen(true);
-      setRefineError('');
-      setRefineStep(1);
-      setRefineHint('开始重新整理资料，正在筛选相关度更高的来源…');
-      try {
-        const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/research/select`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ directionId: direction.id }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(data?.error ?? '选题确认失败');
-        }
-        setRefineStep(2);
-        setRefineHint('资料重整完成，正在刷新研究空间…');
-        const nextState = researchState
-          ? {
-              ...researchState,
-              phase: 'ready' as const,
-              selectedDirectionId: direction.id,
-              starterQuestions: Array.isArray(data?.starterQuestions) ? data.starterQuestions : [],
-              sourceStats:
-                data?.sourceStats && typeof data.sourceStats === 'object'
-                  ? {
-                      totalBefore: Number(data.sourceStats.totalBefore ?? 0),
-                      totalAfter: Number(data.sourceStats.totalAfter ?? 0),
-                    }
-                  : researchState.sourceStats,
-              updatedAt: new Date().toISOString(),
-            }
-          : null;
-        if (nextState) setResearchState(nextState);
-        window.dispatchEvent(
-          new CustomEvent('notebook-title-updated', { detail: { title: `${direction.title} · 研究` } })
-        );
-        window.dispatchEvent(new CustomEvent('sources-updated'));
-        await fetchHistoryPage(0, true);
-        setRefineOpen(false);
-        setRefineStep(0);
-        setRefineHint('');
-      } catch (e) {
-        setRefineError(e instanceof Error ? e.message : '选题确认失败');
-      } finally {
-        setSelectingDirectionId(null);
-      }
-    },
-    [notebookId, selectingDirectionId, researchState, fetchHistoryPage]
-  );
-
   const generateArtifactFromAnswer = useCallback(
     async (message: Message, mode: 'report' | 'infographic') => {
       if (!notebookId || quickActionRunning) return;
@@ -698,6 +691,18 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     [createNote, notebookId, quickActionRunning]
   );
 
+  const askBootstrapGuideQuestion = useCallback(
+    async (question: string) => {
+      const text = question.trim();
+      if (!text || !notebookId || loading) return;
+      setEntryMode(null);
+      await send(text, {
+        skipSourceMaintenance: true,
+      });
+    },
+    [loading, notebookId, send]
+  );
+
   const askStarterQuestion = useCallback(
     async (question: string) => {
       const text = question.trim();
@@ -739,6 +744,8 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   );
 
   const renderResearchSection = () => {
+    if (entryMode !== 'bootstrap') return null;
+
     if (loadingResearchState) {
       return (
         <div className="rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-500 dark:border-gray-800 dark:bg-gray-900">
@@ -765,41 +772,24 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       );
     }
 
-    if (researchState.phase === 'select_direction' && researchState.directions.length > 0) {
+    const bootstrapQuestions = getBootstrapGuideQuestions(researchState);
+    if (bootstrapQuestions.length > 0) {
       return (
         <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
           <div className="space-y-1">
-            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">请选择一个核心发现继续深入探索</p>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              主题：{researchState.topic}。这些卡片来自当前来源的高频信息总结，点击后会基于该发现继续整理来源并给出下一步研究问题。
-            </p>
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">左侧知识库来源，主要探讨了以下几个问题：</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">主题：{researchState.topic}。点击任一问题后，会直接把该问题发送到当前对话。</p>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {researchState.directions.map((dir) => (
+          <div className="flex flex-wrap gap-2">
+            {bootstrapQuestions.map((question) => (
               <button
-                key={dir.id}
+                key={question}
                 type="button"
-                onClick={() => void selectDirection(dir)}
-                disabled={Boolean(selectingDirectionId)}
-                className={`rounded-lg border p-3 text-left transition ${
-                  selectingDirectionId === dir.id
-                    ? 'border-blue-500 bg-blue-50 dark:border-blue-500 dark:bg-blue-900/20'
-                    : 'border-gray-200 bg-gray-50 hover:border-gray-300 hover:bg-white dark:border-gray-700 dark:bg-gray-800/70 dark:hover:border-gray-600'
-                }`}
+                onClick={() => void askBootstrapGuideQuestion(question)}
+                disabled={loading}
+                className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-left text-xs text-gray-700 transition hover:border-gray-300 hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800/70 dark:text-gray-200 dark:hover:border-gray-600"
               >
-                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{dir.title}</p>
-                <p className="mt-1 line-clamp-2 text-xs text-gray-600 dark:text-gray-300">{dir.researchQuestion}</p>
-                <div className="mt-2 space-y-1 text-[11px] text-gray-500 dark:text-gray-400">
-                  <p>{dir.evidenceSummary || dir.trendHeat}</p>
-                  <p>
-                    {dir.evidenceCount != null
-                      ? `被 ${dir.evidenceCount} 条来源提及`
-                      : dir.trendHeat}
-                  </p>
-                </div>
-                <p className="mt-2 text-xs font-medium text-blue-600 dark:text-blue-400">
-                  {selectingDirectionId === dir.id ? '正在确认…' : '基于此继续探索'}
-                </p>
+                {question}
               </button>
             ))}
           </div>
@@ -1100,63 +1090,6 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           </form>
         </div>
       </div>
-      {refineOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">正在整理研究资料</h3>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{refineHint}</p>
-            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
-              <div
-                className="h-full rounded-full bg-blue-600 transition-all duration-500"
-                style={{ width: `${refineStep === 1 ? 45 : refineStep === 2 ? 100 : 0}%` }}
-              />
-            </div>
-            <div className="mt-4 space-y-2">
-              {['开始重新整理资料', '完成'].map((label, idx) => {
-                const stepNumber = (idx + 1) as 1 | 2;
-                const done = refineStep > stepNumber;
-                const running = refineStep === stepNumber;
-                return (
-                  <div
-                    key={label}
-                    className={`flex items-center gap-2 rounded border px-2 py-2 text-xs ${
-                      done
-                        ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/20 dark:text-green-300'
-                        : running
-                          ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-300'
-                          : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-2 w-2 rounded-full ${
-                        done ? 'bg-green-600' : running ? 'bg-blue-600 animate-pulse' : 'bg-gray-400'
-                      }`}
-                    />
-                    <span>{label}</span>
-                  </div>
-                );
-              })}
-            </div>
-            {refineError ? <p className="mt-3 text-xs text-red-600 dark:text-red-400">{refineError}</p> : null}
-            <div className="mt-4 flex justify-end">
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  if (!selectingDirectionId) {
-                    setRefineOpen(false);
-                    setRefineStep(0);
-                    setRefineHint('');
-                    setRefineError('');
-                  }
-                }}
-                disabled={Boolean(selectingDirectionId)}
-              >
-                关闭
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
