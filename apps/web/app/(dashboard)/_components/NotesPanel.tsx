@@ -1553,7 +1553,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
       </div>
 
       {kuTimelineOpen && knowledgeUnit && (
-        <div className="fixed inset-0 z-[68] flex items-center justify-center bg-black/45 p-4">
+        <div className="app-modal-backdrop fixed inset-0 z-[68] flex items-center justify-center p-4">
           <div className="w-full max-w-2xl max-h-[80vh] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
               <div>
@@ -1590,7 +1590,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
       )}
 
       {kuConfigOpen && knowledgeUnit ? (
-        <div className="fixed inset-0 z-[69] flex items-center justify-center bg-black/45 p-4">
+        <div className="app-modal-backdrop fixed inset-0 z-[69] flex items-center justify-center p-4">
           <div className="w-full max-w-2xl rounded-xl border border-gray-200 bg-white p-4 shadow-xl">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -1718,7 +1718,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
       ) : null}
 
       {paperOutlinePickerOpen && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4">
+        <div className="app-modal-backdrop fixed inset-0 z-[70] flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-4 shadow-xl dark:border-gray-800 dark:bg-gray-900">
             <div className="space-y-1">
               <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">选择论文格式</p>
@@ -1770,7 +1770,7 @@ export function NotesPanel({ notebookId }: { notebookId: string | null }) {
       )}
 
       {expandedNote && (
-        <div className="fixed inset-0 z-50 bg-black/45 p-4 flex items-center justify-center">
+        <div className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-6xl max-h-[90vh] bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 flex flex-col overflow-hidden">
             <div className="p-3 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between gap-3">
               <div className="min-w-0 flex-1">

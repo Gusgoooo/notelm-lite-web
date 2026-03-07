@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ShinyText from '@/components/ShinyText';
+import { KnowledgeDocCreateButton } from './KnowledgeDocCreateButton';
 
 type Citation = {
   sourceId: string;
@@ -68,6 +69,11 @@ type SelectionToastState = {
   y: number;
 };
 
+type BootstrapGuidePayload = {
+  lead: string;
+  questions: string[];
+};
+
 type NotebookEntryMode = 'bootstrap' | null;
 
 const HISTORY_PAGE_SIZE = 20;
@@ -124,46 +130,8 @@ function sortCitations(citations: Citation[] | undefined): Citation[] {
   });
 }
 
-function normalizeGuideQuestion(raw: string): string {
-  const cleaned = raw
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/\r/g, '\n')
-    .split('\n')
-    .map((line) => line.trim())
-    .find(Boolean)
-    ?.replace(/^[\d一二三四五六七八九十]+[.)、\s-]*/, '')
-    .replace(/^[•·\-*]\s*/, '')
-    .trim() ?? '';
-
-  if (!cleaned) return '';
-  const sentence = cleaned.match(/[^。！？!?]*[？?]/)?.[0]?.trim() ?? cleaned.replace(/[。;；]+$/g, '').trim();
-  if (!sentence) return '';
-  return /[？?]$/.test(sentence) ? sentence.replace(/\?$/, '？') : `${sentence}？`;
-}
-
-function getBootstrapGuideQuestions(state: ResearchState | null): string[] {
-  if (!state) return [];
-  const rawQuestions =
-    state.phase === 'ready' && Array.isArray(state.starterQuestions) && state.starterQuestions.length > 0
-      ? state.starterQuestions
-      : state.directions.map((item) => item.researchQuestion || item.title);
-
-  const questions: string[] = [];
-  const seen = new Set<string>();
-  for (const item of rawQuestions) {
-    const normalized = normalizeGuideQuestion(item);
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    questions.push(normalized);
-    if (questions.length >= 3) break;
-  }
-  return questions;
-}
-
-const ACTION_PILL_CLASS =
-  'inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 transition hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700';
 const SAVE_ACTION_PILL_CLASS =
-  'inline-flex h-7 items-center rounded-full border border-blue-200 bg-blue-50 px-3 text-[11px] text-blue-700 transition hover:bg-blue-100 disabled:opacity-50';
+  'inline-flex h-7 items-center rounded-[12px] border border-blue-200 bg-blue-50 px-3 text-[11px] text-blue-700 transition hover:bg-blue-100 disabled:opacity-50';
 
 function hasKnowledgeDocContent(content: string | undefined): boolean {
   if (!content) return false;
@@ -231,6 +199,10 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [loadingResearchState, setLoadingResearchState] = useState(false);
   const [researchStateError, setResearchStateError] = useState('');
   const [entryMode, setEntryMode] = useState<NotebookEntryMode>(null);
+  const [bootstrapTopic, setBootstrapTopic] = useState('');
+  const [bootstrapGuide, setBootstrapGuide] = useState<BootstrapGuidePayload | null>(null);
+  const [bootstrapGuideLoading, setBootstrapGuideLoading] = useState(false);
+  const [bootstrapGuideError, setBootstrapGuideError] = useState('');
   const [starterQuestionLoading, setStarterQuestionLoading] = useState<string | null>(null);
   const [selectionToast, setSelectionToast] = useState<SelectionToastState | null>(null);
   const [savingSelection, setSavingSelection] = useState(false);
@@ -244,7 +216,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const selectionTimerRef = useRef<number | null>(null);
   const selectionRangeRef = useRef<Range | null>(null);
   const composingRef = useRef(false);
-  const bootstrapDirectionsStartedRef = useRef<string | null>(null);
+  const bootstrapGuideTopicRef = useRef('');
 
   const fetchHistoryPage = useCallback(
     async (page: number, reset: boolean) => {
@@ -324,6 +296,40 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     }
   }, [notebookId]);
 
+  const fetchBootstrapGuide = useCallback(async (topic: string) => {
+    const normalizedTopic = topic.trim();
+    if (!normalizedTopic) return;
+    setBootstrapGuideLoading(true);
+    setBootstrapGuideError('');
+    try {
+      const res = await fetch('/api/notebooks/bootstrap/onboarding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: normalizedTopic }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setBootstrapGuideError(data?.error ?? '加载引导问题失败');
+        setBootstrapGuide(null);
+        return;
+      }
+      const questions = Array.isArray(data?.questions)
+        ? data.questions.filter((item: unknown): item is string => typeof item === 'string').slice(0, 3)
+        : [];
+      const lead = typeof data?.lead === 'string' ? data.lead.trim() : '';
+      setBootstrapGuide(
+        questions.length > 0
+          ? {
+              lead,
+              questions,
+            }
+          : null
+      );
+    } finally {
+      setBootstrapGuideLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     setMessages([]);
     setConversationId(null);
@@ -333,8 +339,12 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     setEntryMode(null);
     setResearchState(null);
     setResearchStateError('');
+    setBootstrapTopic('');
+    setBootstrapGuide(null);
+    setBootstrapGuideLoading(false);
+    setBootstrapGuideError('');
     setKnowledgeDocState({ exists: false, hasContent: false });
-    bootstrapDirectionsStartedRef.current = null;
+    bootstrapGuideTopicRef.current = '';
     if (notebookId) {
       try {
         const key = `notebook-entry:${notebookId}`;
@@ -342,6 +352,8 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         if (nextMode === 'bootstrap') {
           setEntryMode('bootstrap');
         }
+        const storedTopic = window.sessionStorage.getItem(`notebook-bootstrap-topic:${notebookId}`)?.trim() ?? '';
+        setBootstrapTopic(storedTopic);
         window.sessionStorage.removeItem(key);
       } catch {
         // Ignore sessionStorage failures and continue without entry-specific UI.
@@ -397,24 +409,29 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   }, [fetchKnowledgeDocState, knowledgeDocState.exists]);
 
   useEffect(() => {
-    if (!notebookId || entryMode !== 'bootstrap' || !researchState) return;
-    if (researchState.phase !== 'analyzing') return;
-    if (bootstrapDirectionsStartedRef.current === notebookId) return;
-    bootstrapDirectionsStartedRef.current = notebookId;
+    if (entryMode !== 'bootstrap') return;
+    const topic = (researchState?.topic ?? bootstrapTopic).trim();
+    if (!topic) return;
+    if (bootstrapGuideTopicRef.current === topic && bootstrapGuide) return;
+    bootstrapGuideTopicRef.current = topic;
+    void fetchBootstrapGuide(topic);
+  }, [bootstrapGuide, bootstrapTopic, entryMode, fetchBootstrapGuide, researchState?.topic]);
 
-    void fetch('/api/notebooks/bootstrap/directions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        notebookId,
-        topic: researchState.topic,
-      }),
-    })
-      .catch(() => null)
-      .finally(() => {
-        void fetchResearchState();
-      });
-  }, [entryMode, fetchResearchState, notebookId, researchState]);
+  useEffect(() => {
+    const onBootstrapReady = (event: Event) => {
+      const detail = (event as CustomEvent<{ topic?: string }>).detail;
+      const topic = typeof detail?.topic === 'string' ? detail.topic.trim() : '';
+      if (topic) {
+        setBootstrapTopic(topic);
+        bootstrapGuideTopicRef.current = '';
+        void fetchBootstrapGuide(topic);
+      }
+      void fetchResearchState();
+    };
+
+    window.addEventListener('bootstrap-research-ready', onBootstrapReady as EventListener);
+    return () => window.removeEventListener('bootstrap-research-ready', onBootstrapReady as EventListener);
+  }, [fetchBootstrapGuide, fetchResearchState]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -684,48 +701,53 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const renderResearchSection = () => {
     if (entryMode !== 'bootstrap') return null;
 
-    if (loadingResearchState) {
+    if (loadingResearchState || bootstrapGuideLoading) {
       return (
         <div className="rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-500 dark:border-gray-800 dark:bg-gray-900">
-          <ShinyText text="正在准备研究空间..." className="text-xs text-gray-500 dark:text-gray-400" />
+          <ShinyText text="正在准备引导问题..." className="text-xs text-gray-500 dark:text-gray-400" />
         </div>
       );
     }
-    if (researchStateError) {
+    if (bootstrapGuideError && !bootstrapGuide) {
+      return (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-600 dark:border-red-900 dark:bg-red-950/20 dark:text-red-400">
+          {bootstrapGuideError}
+        </div>
+      );
+    }
+    if (researchStateError && !bootstrapGuide) {
       return (
         <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-600 dark:border-red-900 dark:bg-red-950/20 dark:text-red-400">
           {researchStateError}
         </div>
       );
     }
-    if (!researchState) return null;
-
-    if (researchState.phase === 'collecting' || researchState.phase === 'analyzing') {
+    if (researchState && (researchState.phase === 'collecting' || researchState.phase === 'analyzing')) {
       return (
         <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-300">
-          {researchState.phase === 'collecting'
-            ? '正在联网检索首批来源…'
-            : '正在整理来源脉络，稍后会给出推荐问题…'}
+          正在联网检索首批来源…
         </div>
       );
     }
 
-    const bootstrapQuestions = getBootstrapGuideQuestions(researchState);
-    if (bootstrapQuestions.length > 0) {
+    if (bootstrapGuide && bootstrapGuide.questions.length > 0) {
       return (
         <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
           <div className="space-y-1">
-            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">左侧知识库来源，主要探讨了以下几个问题：</p>
-            <p className="text-xs text-gray-500 dark:text-gray-400">主题：{researchState.topic}。点击任一问题后，会直接把该问题发送到当前对话。</p>
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">建议先补充这些关键信息：</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              {bootstrapGuide.lead || `主题：${(researchState?.topic ?? bootstrapTopic).trim() || '当前任务'}。`}
+              点击任一问题后，会直接发送到当前对话。
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {bootstrapQuestions.map((question) => (
+            {bootstrapGuide.questions.map((question) => (
               <button
                 key={question}
                 type="button"
                 onClick={() => void askBootstrapGuideQuestion(question)}
                 disabled={loading}
-                className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-left text-xs text-gray-700 transition hover:border-gray-300 hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800/70 dark:text-gray-200 dark:hover:border-gray-600"
+                className="rounded-[12px] border border-gray-200 bg-gray-50 px-3 py-1.5 text-left text-xs text-gray-700 transition hover:border-gray-300 hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800/70 dark:text-gray-200 dark:hover:border-gray-600"
               >
                 {question}
               </button>
@@ -860,13 +882,11 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                   更新知识文档
                                 </button>
                               ) : (
-                                <button
-                                  type="button"
+                                <KnowledgeDocCreateButton
                                   onClick={requestKnowledgeDocCreate}
-                                  className={ACTION_PILL_CLASS}
-                                >
-                                  创建知识文档
-                                </button>
+                                  compact
+                                  className="h-7 px-3"
+                                />
                               )}
                             </div>
                           </div>
@@ -884,7 +904,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                   type="button"
                                   onClick={() => void askStarterQuestion(q)}
                                   disabled={loading || starterQuestionLoading === q}
-                                  className="rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-left text-[11px] text-gray-700 transition hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+                                  className="rounded-[12px] border border-gray-200 bg-gray-50 px-2 py-1 text-left text-[11px] text-gray-700 transition hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
                                 >
                                   {starterQuestionLoading === q ? '正在补充来源并提问…' : q}
                                 </button>
@@ -949,7 +969,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       {selectionToast ? (
         <button
           type="button"
-          className="fixed z-50 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-medium text-gray-700 shadow-lg transition hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+          className="fixed z-50 rounded-[12px] border border-gray-200 bg-white px-3 py-1.5 text-[11px] font-medium text-gray-700 shadow-lg transition hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
           style={{ left: selectionToast.x, top: selectionToast.y }}
           onMouseDown={(event) => event.preventDefault()}
           onClick={async () => {
@@ -974,29 +994,23 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       ) : null}
       {!knowledgeDocState.exists && messages.some((message) => message.role === 'assistant') ? (
         <div className="shrink-0 px-3 pb-0 pt-1">
-          <div className="mx-auto flex w-full max-w-[680px] items-center justify-between gap-3 rounded-[18px] bg-[#f5f6fb] px-4 py-3">
+          <div className="mx-auto flex w-full max-w-[680px] items-center justify-between gap-3 rounded-[16px] bg-[#f5f6fb] px-4 py-3">
             <div className="min-w-0">
               <p className="text-sm font-medium text-gray-800">当前来源已经可以整理成知识文档</p>
               <p className="mt-1 text-xs text-gray-500">点击创建后会展开右侧文档区，并可选择场景生成初稿。</p>
             </div>
-            <button
-              type="button"
-              onClick={requestKnowledgeDocCreate}
-              className="inline-flex h-9 shrink-0 items-center rounded-full bg-white px-4 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
-            >
-              创建知识文档
-            </button>
+            <KnowledgeDocCreateButton onClick={requestKnowledgeDocCreate} />
           </div>
         </div>
       ) : null}
-      <div className="shrink-0 bg-white px-3 pb-3 pt-2">
+      <div className="shrink-0 bg-[#f1f1f1] px-3 pb-3 pt-2">
         <div className="mx-auto w-full max-w-[680px]">
           <form
             onSubmit={(e) => {
               e.preventDefault();
               void send();
             }}
-            className="relative rounded-[24px] bg-[#f1f1f1] p-2"
+            className="relative rounded-[12px] bg-[#f1f1f1] p-2"
           >
             <textarea
               ref={textareaRef}
@@ -1019,12 +1033,12 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               }}
               placeholder="请输入你的问题..."
               disabled={loading}
-              className="h-[104px] w-full resize-none rounded-[20px] border-0 bg-transparent px-4 pb-12 pt-4 text-sm text-gray-900 outline-none transition dark:text-gray-100"
+              className="h-[104px] w-full resize-none rounded-[12px] border-0 bg-transparent px-4 pb-12 pt-4 text-sm text-gray-900 outline-none transition dark:text-gray-100"
             />
             <button
               type="submit"
               disabled={loading || !input.trim()}
-              className="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-white/90"
+              className="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-[12px] bg-black text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-white/90"
               aria-label="发送"
               title="发送"
             >

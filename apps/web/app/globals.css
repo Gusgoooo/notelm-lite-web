@@ -61,7 +61,7 @@ body {
     --chart-3: 197 37% 24%;
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
-    --radius: 0.5rem;
+    --radius: 0.75rem;
   }
   .dark {
     --background: 0 0% 3.9%;
@@ -188,4 +188,10 @@ body {
 
 .knowledge-doc-sheet-enter {
   animation: knowledge-doc-sheet-in 220ms ease-out;
+}
+
+.app-modal-backdrop {
+  background: rgba(227, 227, 227, 0.5);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
 }

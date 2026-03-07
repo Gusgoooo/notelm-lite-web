@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import DiffMatchPatch from 'diff-match-patch';
+import { KnowledgeDocCreateButton } from './KnowledgeDocCreateButton';
 
 type KnowledgeDocPanelProps = {
   notebookId: string | null;
@@ -473,6 +474,7 @@ export function KnowledgeDocPanel({
   const runDraftGeneration = useCallback(
     async (scenario: DraftScenarioKey, mode: 'create' | 'update') => {
       if (!notebookId || draftScenarioLoading) return;
+      setSheetMode(null);
       setDraftScenarioLoading(scenario);
       setExternalBusy(true);
       setExternalBusyLabel(mode === 'update' ? '正在根据最新来源更新知识文档…' : '正在生成知识文档初稿…');
@@ -507,6 +509,7 @@ export function KnowledgeDocPanel({
         alert('请先生成或填写知识文档内容');
         return;
       }
+      setSheetMode(null);
       setCreationGenerating(mode);
       let tempNoteId: string | null = null;
       try {
@@ -703,7 +706,7 @@ export function KnowledgeDocPanel({
           <button
             type="button"
             onClick={onToggleCollapse}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
             aria-label="展开知识文档"
             title="展开知识文档"
           >
@@ -725,15 +728,6 @@ export function KnowledgeDocPanel({
           知识文档
         </h2>
         <div className="flex items-center gap-2">
-          {docHasContent ? (
-            <button
-              type="button"
-              onClick={() => setPreviewOpen(true)}
-              className="inline-flex h-7 items-center rounded-full bg-gray-100 px-3 text-[11px] font-medium text-gray-700 transition hover:bg-gray-200"
-            >
-              预览
-            </button>
-          ) : null}
           <label className="inline-flex cursor-pointer items-center gap-1.5">
             <span className="text-xs text-gray-600 dark:text-gray-400">自动更新</span>
             <input
@@ -747,7 +741,7 @@ export function KnowledgeDocPanel({
             <button
               type="button"
               onClick={onToggleCollapse}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
               aria-label="收起知识文档"
               title="收起知识文档"
             >
@@ -769,14 +763,14 @@ export function KnowledgeDocPanel({
               <button
                 type="button"
                 onClick={rejectPending}
-                className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:text-gray-300"
+                className="rounded-[12px] border border-gray-300 px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:text-gray-300"
               >
                 放弃
               </button>
               <button
                 type="button"
                 onClick={confirmPending}
-                className="rounded bg-gray-900 px-2 py-1 text-xs font-medium text-white dark:bg-gray-100 dark:text-gray-900"
+                className="rounded-[12px] bg-gray-900 px-2 py-1 text-xs font-medium text-white dark:bg-gray-100 dark:text-gray-900"
               >
                 确认修改
               </button>
@@ -813,13 +807,17 @@ export function KnowledgeDocPanel({
                   : '可以先创建一个空白知识文档，再根据来源生成初稿。'}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => void openDraftSheet()}
-              className="inline-flex h-10 items-center rounded-full bg-[#f5f6fb] px-4 text-sm font-medium text-gray-700 transition hover:bg-[#eceef8]"
-            >
-              {docId ? '选择场景生成初稿' : '创建知识文档'}
-            </button>
+            {docId ? (
+              <button
+                type="button"
+                onClick={() => void openDraftSheet()}
+                className="inline-flex h-10 items-center rounded-[12px] bg-[#f5f6fb] px-4 text-sm font-medium text-gray-700 transition hover:bg-[#eceef8]"
+              >
+                选择场景生成初稿
+              </button>
+            ) : (
+              <KnowledgeDocCreateButton onClick={() => void openDraftSheet()} />
+            )}
           </div>
         </div>
       )}
@@ -834,26 +832,32 @@ export function KnowledgeDocPanel({
             <button
               type="button"
               onClick={() => setPreviewOpen(true)}
-              className="inline-flex h-10 items-center rounded-full bg-gray-100 px-4 text-sm font-medium text-gray-700 transition hover:bg-gray-200"
+              className="inline-flex h-10 items-center rounded-[12px] bg-gray-100 px-4 text-sm font-medium text-gray-700 transition hover:bg-gray-200"
             >
               预览
             </button>
             <button
               type="button"
               onClick={() => setSheetMode('create')}
-              className="inline-flex h-10 items-center rounded-full bg-[#f5f6fb] px-4 text-sm font-medium text-gray-700 transition hover:bg-[#eceef8] dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              className="inline-flex h-10 items-center rounded-[12px] bg-[#f5f6fb] px-4 text-sm font-medium text-gray-700 transition hover:bg-[#eceef8] dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
             >
               去创作
             </button>
           </>
         ) : (
-          <button
-            type="button"
-            onClick={() => void openDraftSheet()}
-            className="inline-flex h-10 items-center rounded-full bg-[#f5f6fb] px-4 text-sm font-medium text-gray-700 transition hover:bg-[#eceef8] dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-          >
-            {docId ? '生成初稿' : '创建知识文档'}
-          </button>
+          <>
+            {docId ? (
+              <button
+                type="button"
+                onClick={() => void openDraftSheet()}
+                className="inline-flex h-10 items-center rounded-[12px] bg-[#f5f6fb] px-4 text-sm font-medium text-gray-700 transition hover:bg-[#eceef8] dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                生成初稿
+              </button>
+            ) : (
+              <KnowledgeDocCreateButton onClick={() => void openDraftSheet()} />
+            )}
+          </>
         )}
       </div>
 
@@ -871,14 +875,14 @@ export function KnowledgeDocPanel({
 
       {sheetMode ? (
         <div
-          className="absolute inset-0 z-30 flex items-end bg-black/15"
+          className="app-modal-backdrop absolute inset-x-0 bottom-0 top-[72px] z-30 flex items-end"
           onClick={(event) => {
             if (event.target === event.currentTarget) {
               setSheetMode(null);
             }
           }}
         >
-          <div className="knowledge-doc-sheet-enter w-full rounded-t-[28px] bg-white px-4 pb-4 pt-4 shadow-[0_-20px_40px_rgba(15,23,42,0.15)] dark:bg-gray-900">
+          <div className="knowledge-doc-sheet-enter max-h-full w-full overflow-auto rounded-t-[28px] bg-white px-4 pb-4 pt-4 shadow-[0_-20px_40px_rgba(15,23,42,0.15)] dark:bg-gray-900">
             <div className="flex items-start justify-between gap-3 px-1">
               <div>
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
@@ -893,7 +897,7 @@ export function KnowledgeDocPanel({
               <button
                 type="button"
                 onClick={() => setSheetMode(null)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
                 aria-label="关闭抽屉"
                 title="关闭"
               >
@@ -911,7 +915,7 @@ export function KnowledgeDocPanel({
                     type="button"
                     onClick={() => void runDraftGeneration(key, docHasContent ? 'update' : 'create')}
                     disabled={draftScenarioLoading != null}
-                    className={`flex min-h-[82px] flex-col items-start justify-between rounded-2xl px-4 py-3 text-left transition disabled:opacity-50 ${className}`}
+                    className={`flex min-h-[82px] flex-col items-start justify-between rounded-[18px] px-4 py-3 text-left transition disabled:opacity-50 ${className}`}
                   >
                     <span className="inline-flex items-center gap-2 text-sm font-semibold">
                       <DraftIcon scenario={key} />
@@ -929,7 +933,7 @@ export function KnowledgeDocPanel({
                     type="button"
                     onClick={() => void runCreationGenerate(mode)}
                     disabled={creationGenerating != null}
-                    className={`flex min-h-[82px] flex-col items-start justify-between rounded-2xl px-4 py-3 text-left transition disabled:opacity-50 ${className}`}
+                    className={`flex min-h-[82px] flex-col items-start justify-between rounded-[18px] px-4 py-3 text-left transition disabled:opacity-50 ${className}`}
                   >
                     <span className="inline-flex items-center gap-2 text-sm font-semibold">
                       <CreationIcon mode={mode} />
@@ -945,7 +949,7 @@ export function KnowledgeDocPanel({
       ) : null}
 
       {previewOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-[24px] bg-white shadow-xl dark:bg-gray-900">
             <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-800">
               <div>
@@ -956,14 +960,14 @@ export function KnowledgeDocPanel({
                 <button
                   type="button"
                   onClick={requestPreviewDownload}
-                  className="inline-flex h-8 items-center rounded-full bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200"
+                  className="inline-flex h-8 items-center rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200"
                 >
                   下载
                 </button>
                 <button
                   type="button"
                   onClick={() => setPreviewOpen(false)}
-                  className="inline-flex h-8 items-center rounded-full bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200"
+                  className="inline-flex h-8 items-center rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200"
                 >
                   关闭
                 </button>

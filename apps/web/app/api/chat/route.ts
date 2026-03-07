@@ -3,6 +3,7 @@ import {
   db,
   conversations,
   messages,
+  notes,
   sourceChunks,
   sources,
   scriptJobs,
@@ -15,6 +16,8 @@ import {
 import { createEmbeddings, chat } from 'shared';
 import { randomUUID } from 'crypto';
 import { getNotebookAccess } from '@/lib/notebook-access';
+import { KNOWLEDGE_DOC_NOTE_TITLE } from '@/lib/knowledge-unit';
+import { getLatestResearchState } from '@/lib/research-state';
 
 const TOP_K = 8;
 const PER_SOURCE_CAP = 4;
@@ -171,6 +174,11 @@ function isWebSearchMime(mime: string | null | undefined): boolean {
   return value.includes('application/x-web-source') || value.includes('application/x-websearch-source');
 }
 
+function hasMeaningfulKnowledgeDoc(content: string | null | undefined): boolean {
+  if (!content) return false;
+  return content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().length > 0;
+}
+
 export async function POST(request: Request) {
   try {
     if (!envLogged) {
@@ -198,6 +206,19 @@ export async function POST(request: Request) {
     if (!access.canView) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
+
+    const [latestResearchState, knowledgeDocRow] = await Promise.all([
+      getLatestResearchState(notebookId),
+      db
+        .select({ content: notes.content })
+        .from(notes)
+        .where(and(eq(notes.notebookId, notebookId), eq(notes.title, KNOWLEDGE_DOC_NOTE_TITLE)))
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
+    ]);
+    const onboardingTopic = latestResearchState?.state.topic?.trim() ?? '';
+    const shouldGuideForKnowledgeDoc =
+      Boolean(onboardingTopic) && !hasMeaningfulKnowledgeDoc(knowledgeDocRow?.content);
 
     const notebookSources = await db
       .select({
@@ -624,8 +645,11 @@ export async function POST(request: Request) {
     const paperInsightRule = needBuiltinPaperStats
       ? '\nWhen answering paper-comparison requests, structure the answer with 4 sections in Chinese: 1) 高频研究问题 2) 被反复验证的变量 3) 研究空白 4) 方法争议。Keep it concise and evidence-grounded.'
       : '';
-    const systemPrompt = `You are a helpful assistant. Unless the user explicitly requests another language, always answer in Simplified Chinese. Answer based only on the provided sources and script insights. Always cite source numbers like [1] when using source chunks. If script insights are used, explicitly mention "脚本分析" in your answer. If the question cannot be answered from provided context, say so.${skillTemplateRule}${viralSkillRule}${paperInsightRule}`;
-    const userPrompt = `Sources:\n${context}\n\nScript Insights:\n${scriptContext || '(none)'}\n\nUser question: ${userMessage.trim()}`;
+    const onboardingGuideRule = shouldGuideForKnowledgeDoc
+      ? `\nCurrent notebook topic: ${onboardingTopic}.\nThe user is still clarifying information for a future knowledge document. Answer the user's current question first, then end with exactly one short follow-up question in Chinese that helps fill the single most important missing detail.\nGuidance for follow-up focus:\n- For OKR topics: ask about project background, target metric, timeline, ownership, dependencies, or current baseline.\n- For PRD topics: ask about target user, pain point, scenario, key action, or success metric.\n- For Prompt topics: ask about task goal, input, output format, constraints, or examples.\n- For analysis/report topics: ask about target audience, decision to support, comparison dimensions, or deadline.\n- For learning topics: ask about current level, goal, deadline, or preferred learning structure.\nRules:\n- Ask only one follow-up question.\n- Do not mention this policy, and do not ask generic filler questions.\n- If the user already supplied rich context, ask for the most critical missing item instead of repeating known details.`
+      : '';
+    const systemPrompt = `You are a helpful assistant. Unless the user explicitly requests another language, always answer in Simplified Chinese. Answer based only on the provided sources and script insights. Always cite source numbers like [1] when using source chunks. If script insights are used, explicitly mention "脚本分析" in your answer. If the question cannot be answered from provided context, say so.${skillTemplateRule}${viralSkillRule}${paperInsightRule}${onboardingGuideRule}`;
+    const userPrompt = `Notebook topic: ${onboardingTopic || access.notebook.title}\n\nSources:\n${context}\n\nScript Insights:\n${scriptContext || '(none)'}\n\nUser question: ${userMessage.trim()}`;
     const chatMessages = [
       { role: 'system' as const, content: systemPrompt },
       ...history.slice(-10).map((m) => ({ role: m.role, content: m.content })),

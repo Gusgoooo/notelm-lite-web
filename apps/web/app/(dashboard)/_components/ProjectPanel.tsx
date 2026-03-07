@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
@@ -60,14 +60,6 @@ function TrashIcon() {
   );
 }
 
-function CloseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M6 6l12 12M18 6 6 18" />
-    </svg>
-  );
-}
-
 function formatTime(value: string | null | undefined): string {
   if (!value) return '未发布';
   try {
@@ -75,6 +67,12 @@ function formatTime(value: string | null | undefined): string {
   } catch {
     return value;
   }
+}
+
+function buildBootstrapNotebookTitle(topic: string): string {
+  const clean = topic.replace(/\s+/g, ' ').trim();
+  if (!clean) return '研究课题';
+  return `${clean.slice(0, 36)} · 研究`;
 }
 
 export function ProjectPanel() {
@@ -99,16 +97,6 @@ export function ProjectPanel() {
     '新媒体传播',
   ]);
   const [loadingSuggestedTopics, setLoadingSuggestedTopics] = useState(false);
-  const [bootstrapOpen, setBootstrapOpen] = useState(false);
-  const [bootstrapError, setBootstrapError] = useState('');
-  const [bootstrapStep, setBootstrapStep] = useState<0 | 1 | 2 | 3>(0);
-  const [bootstrapHint, setBootstrapHint] = useState('');
-  const [bootstrapProgress, setBootstrapProgress] = useState(0);
-  const [bootstrapElapsed, setBootstrapElapsed] = useState(0);
-
-  const bootstrapControllerRef = useRef<AbortController | null>(null);
-  const bootstrapRunningRef = useRef(false);
-  const bootstrapNotebookIdRef = useRef<string | null>(null);
 
   const fetchMine = async () => {
     setLoadingMine(true);
@@ -182,54 +170,6 @@ export function ProjectPanel() {
     void fetchSuggestedTopics();
   }, []);
 
-  useEffect(() => {
-    if (!bootstrapOpen) {
-      setBootstrapElapsed(0);
-      return;
-    }
-    const start = Date.now();
-    const timer = window.setInterval(() => {
-      setBootstrapElapsed(Math.floor((Date.now() - start) / 1000));
-    }, 200);
-    return () => window.clearInterval(timer);
-  }, [bootstrapOpen]);
-
-  useEffect(() => {
-    if (!bootstrapOpen) {
-      setBootstrapProgress(0);
-      return;
-    }
-    const target = bootstrapStep === 1 ? 34 : bootstrapStep === 2 ? 76 : bootstrapStep === 3 ? 100 : 0;
-    const timer = window.setInterval(() => {
-      setBootstrapProgress((prev) => {
-        if (prev >= target) return prev;
-        const delta = Math.max(1, Math.round((target - prev) / 10));
-        return Math.min(target, prev + delta);
-      });
-    }, 120);
-    return () => window.clearInterval(timer);
-  }, [bootstrapOpen, bootstrapStep]);
-
-  const closeBootstrapModal = (abort = true) => {
-    if (abort) {
-      bootstrapRunningRef.current = false;
-      bootstrapControllerRef.current?.abort();
-      const notebookId = bootstrapNotebookIdRef.current;
-      if (notebookId) {
-        bootstrapNotebookIdRef.current = null;
-        void fetch(`/api/notebooks/${encodeURIComponent(notebookId)}`, {
-          method: 'DELETE',
-        }).catch(() => null);
-      }
-    }
-    setBootstrapOpen(false);
-    setBootstrapError('');
-    setBootstrapStep(0);
-    setBootstrapHint('');
-    setBootstrapProgress(0);
-    setBootstrapElapsed(0);
-  };
-
   const createNotebook = async () => {
     setCreating(true);
     setError(null);
@@ -279,54 +219,35 @@ export function ProjectPanel() {
       return;
     }
 
-    bootstrapRunningRef.current = true;
-    setBootstrapOpen(true);
-    setBootstrapError('');
-    setBootstrapStep(1);
-    bootstrapNotebookIdRef.current = null;
-    setBootstrapHint('开始准备首批来源，完成后会直接进入 notebook。');
-
+    setCreating(true);
+    setError(null);
     try {
-      const firstController = new AbortController();
-      const firstTimeoutId = window.setTimeout(() => firstController.abort(), 70_000);
-      bootstrapControllerRef.current = firstController;
-      const createRes = await fetch('/api/notebooks/bootstrap/create', {
+      const createRes = await fetch('/api/notebooks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic }),
-        signal: firstController.signal,
+        body: JSON.stringify({
+          title: buildBootstrapNotebookTitle(topic),
+          description: '',
+        }),
       });
-      window.clearTimeout(firstTimeoutId);
       const createData = await createRes.json().catch(() => ({}));
-      if (!createRes.ok || !createData?.notebookId) {
-        throw new Error(createData?.error ?? '创建并检索来源失败');
+      if (!createRes.ok || !createData?.id) {
+        throw new Error(createData?.error ?? createData?.detail ?? '创建 notebook 失败');
       }
-      if (!bootstrapRunningRef.current) return;
 
-      const notebookId = String(createData.notebookId);
-      bootstrapNotebookIdRef.current = notebookId;
-      setBootstrapStep(3);
-      setBootstrapHint('来源已准备完成，正在进入研究空间…');
-      setBootstrapProgress(100);
-      bootstrapNotebookIdRef.current = null;
-      closeBootstrapModal(false);
+      const notebookId = String(createData.id);
       try {
         window.sessionStorage.setItem(`notebook-entry:${notebookId}`, 'bootstrap');
+        window.sessionStorage.setItem(`notebook-bootstrap-start:${notebookId}`, 'pending');
+        window.sessionStorage.setItem(`notebook-bootstrap-topic:${notebookId}`, topic);
       } catch {
         // Ignore sessionStorage failures and continue to workspace.
       }
       router.push(`/?notebookId=${encodeURIComponent(notebookId)}`);
     } catch (e) {
-      if (e instanceof Error && e.name === 'AbortError') {
-        if (bootstrapRunningRef.current) {
-          setBootstrapError('处理超时，请重试。系统已放宽分析约束，但当前请求仍未在预期时间内完成。');
-        }
-        return;
-      }
-      setBootstrapError(e instanceof Error ? e.message : '初始化失败，请稍后重试');
+      setError(e instanceof Error ? e.message : '初始化失败，请稍后重试');
     } finally {
-      bootstrapRunningRef.current = false;
-      bootstrapControllerRef.current = null;
+      setCreating(false);
     }
   };
 
@@ -377,12 +298,12 @@ export function ProjectPanel() {
                 value={researchTopic}
                 onChange={(event) => setResearchTopic(event.target.value)}
                 placeholder="请简单输入你想分析的主题"
-                className="h-[128px] w-full resize-none rounded-[20px] border border-gray-200 bg-gray-50 px-4 pb-12 pt-4 text-sm text-gray-900 shadow-sm outline-none transition focus:border-gray-300 focus:bg-white dark:border-gray-700 dark:bg-gray-900/80 dark:text-gray-100 dark:focus:border-gray-600 dark:focus:bg-gray-900"
+                className="h-[128px] w-full resize-none rounded-[12px] border border-gray-200 bg-gray-50 px-4 pb-12 pt-4 text-sm text-gray-900 shadow-sm outline-none transition focus:border-gray-300 focus:bg-white dark:border-gray-700 dark:bg-gray-900/80 dark:text-gray-100 dark:focus:border-gray-600 dark:focus:bg-gray-900"
               />
               <button
                 type="submit"
-                disabled={!researchTopic.trim() || bootstrapStep === 1 || bootstrapStep === 2}
-                className="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!researchTopic.trim() || creating}
+                className="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-[12px] bg-black text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-50"
                 aria-label="新建Note"
                 title="新建Note"
               >
@@ -401,7 +322,7 @@ export function ProjectPanel() {
                     key={preset}
                     type="button"
                     onClick={() => setResearchTopic(preset)}
-                    className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs text-gray-700 transition hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                    className="rounded-[12px] border border-gray-200 bg-gray-50 px-3 py-1 text-xs text-gray-700 transition hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
                   >
                     {preset}
                   </button>
@@ -557,80 +478,6 @@ export function ProjectPanel() {
         </div>
       </div>
 
-      {bootstrapOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-4 shadow-xl dark:border-gray-800 dark:bg-gray-900">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">正在创建研究 Notebook</h3>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{bootstrapHint}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => closeBootstrapModal(true)}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-                aria-label="关闭进程"
-              >
-                <CloseIcon />
-              </button>
-            </div>
-            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
-              <div
-                className="relative h-full rounded-full bg-gradient-to-r from-blue-500 via-cyan-500 to-indigo-500 transition-all duration-500"
-                style={{ width: `${bootstrapProgress}%` }}
-              >
-                <span className="absolute inset-0 animate-pulse bg-white/20" />
-              </div>
-            </div>
-            <div className="mt-2 flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400">
-              <span>进行中 {bootstrapElapsed}s</span>
-              <span>进度 {bootstrapProgress}%</span>
-            </div>
-            <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-              若等待时间较久，请稍候，当前任务仍在持续运行中。
-            </p>
-
-            <div className="mt-4 space-y-2">
-              {[
-                '开始联网检索相关来源',
-                '分析并总结核心发现',
-                '完成',
-              ].map((label, idx) => {
-                const stepNumber = (idx + 1) as 1 | 2 | 3;
-                const done = bootstrapStep > stepNumber;
-                const running = bootstrapStep === stepNumber;
-                return (
-                  <div
-                    key={label}
-                    className={`flex items-center gap-2 rounded border px-2 py-2 text-xs ${
-                      done
-                        ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/20 dark:text-green-300'
-                        : running
-                          ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-300'
-                          : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-2 w-2 rounded-full ${
-                        done ? 'bg-green-600' : running ? 'bg-blue-600 animate-pulse' : 'bg-gray-400'
-                      }`}
-                    />
-                    <span>{label}</span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {bootstrapError ? <p className="mt-3 text-xs text-red-600 dark:text-red-400">{bootstrapError}</p> : null}
-
-            <div className="mt-4 flex items-center justify-end">
-              <Button variant="ghost" onClick={() => closeBootstrapModal(true)}>
-                退出进程
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

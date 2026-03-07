@@ -576,7 +576,7 @@ export function SourcesPanel({
           <button
             type="button"
             onClick={askPaperInsight}
-            className="h-7 rounded-full border border-gray-300 px-2 text-[11px] text-gray-700 transition hover:bg-gray-100"
+            className="h-7 rounded-[12px] border border-gray-300 px-2 text-[11px] text-gray-700 transition hover:bg-gray-100"
             title="论文对比洞察"
           >
             论文对比洞察
@@ -586,7 +586,7 @@ export function SourcesPanel({
 
       <div className="space-y-2 p-2.5">
         {readOnly && (
-          <div className="rounded-md border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-[11px] text-amber-800">
+          <div className="rounded-[12px] border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-[11px] text-amber-800">
             <div className="flex items-center justify-between gap-2">
               <span>当前为共享知识库，保存为我的 notebook 后可修改 sources。</span>
               {onSaveAsMine && (
@@ -594,7 +594,7 @@ export function SourcesPanel({
                   type="button"
                   onClick={onSaveAsMine}
                   disabled={savingAsMine}
-                  className="shrink-0 rounded bg-black px-2 py-1 text-[10px] text-white disabled:opacity-60"
+                  className="shrink-0 rounded-[12px] bg-black px-2 py-1 text-[10px] text-white disabled:opacity-60"
                 >
                   {savingAsMine ? '保存中…' : '保存为我的'}
                 </button>
@@ -631,12 +631,12 @@ export function SourcesPanel({
                     }
                   }}
                   placeholder="联网检索，请输入你想要进一步拓展的内容"
-                  className="h-9 w-full rounded-md border border-black bg-white px-3 pr-16 text-xs outline-none transition focus:border-black"
+                  className="h-9 w-full rounded-[12px] border border-black bg-white px-3 pr-16 text-xs outline-none transition focus:border-black"
                   disabled={webSearching}
                 />
                 <button
                   type="button"
-                  className="absolute bottom-1 right-1 top-1 rounded bg-black px-3 text-[11px] text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="absolute bottom-1 right-1 top-1 rounded-[10px] bg-black px-3 text-[11px] text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => void addWebSources()}
                   disabled={webSearching || !webTopic.trim()}
                 >
@@ -682,7 +682,7 @@ export function SourcesPanel({
               ) : null}
               {sourceToast ? (
                 <div
-                  className={`rounded-md px-2 py-1.5 text-[11px] ${
+                  className={`rounded-[12px] px-2 py-1.5 text-[11px] ${
                     sourceToast.type === 'error'
                       ? 'border border-red-200 bg-red-50 text-red-600'
                       : 'border border-blue-200 bg-blue-50 text-blue-600'
