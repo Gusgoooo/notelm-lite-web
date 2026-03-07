@@ -31,6 +31,8 @@ type KnowledgeDocHistoryEntry = {
   savedAt: string;
 };
 
+type ArtifactNoticeState = 'running' | 'success' | 'error';
+
 type SaveDocOptions = {
   historyMode?: HistoryMode;
   summary?: string;
@@ -416,6 +418,15 @@ function formatHistoryTime(value: string): string {
   }).format(date);
 }
 
+function emitArtifactNotice(detail: {
+  id: string;
+  state: ArtifactNoticeState;
+  title: string;
+  description: string;
+}) {
+  window.dispatchEvent(new CustomEvent('artifact-notice', { detail }));
+}
+
 function appendHistoryEntry(
   entries: KnowledgeDocHistoryEntry[],
   previousHtml: string,
@@ -448,6 +459,14 @@ function appendHistoryEntry(
   }
 
   return [nextEntry, ...entries].slice(0, HISTORY_STORAGE_LIMIT);
+}
+
+function creationModeLabel(mode: CreationMode): string {
+  if (mode === 'summary') return '摘要';
+  if (mode === 'infographic') return '信息图';
+  if (mode === 'mindmap') return '思维导图';
+  if (mode === 'report') return '报告';
+  return '互动PPT';
 }
 
 function htmlToMarkdownLike(html: string): string {
@@ -795,7 +814,7 @@ export function KnowledgeDocPanel({
 
   const currentHtml = editor?.getHTML() ?? content ?? '<p></p>';
   const docHasContent = hasMeaningfulHtml(currentHtml);
-  const panelBusy = updatingFromChat || externalBusy || draftScenarioLoading != null || creationGenerating != null;
+  const panelBusy = updatingFromChat || externalBusy;
 
   const applyGeneratedText = useCallback(
     async (nextText: string, options: SaveDocOptions = {}) => {
@@ -809,10 +828,16 @@ export function KnowledgeDocPanel({
   const runDraftGeneration = useCallback(
     async (scenario: DraftScenarioKey, mode: 'create' | 'update') => {
       if (!notebookId || draftScenarioLoading) return;
+      const noticeId = `draft-${Date.now()}-${scenario}`;
       setSheetMode(null);
       setDraftScenarioLoading(scenario);
-      setExternalBusy(true);
-      setExternalBusyLabel(mode === 'update' ? '正在根据最新来源更新知识文档…' : '正在生成知识文档初稿…');
+      const scenarioLabel = draftScenarios.find((item) => item.key === scenario)?.label ?? '当前场景';
+      emitArtifactNotice({
+        id: noticeId,
+        state: 'running',
+        title: mode === 'update' ? `正在更新${scenarioLabel}` : `正在生成${scenarioLabel}`,
+        description: '已转为后台生成，你可以继续浏览和对话。',
+      });
       try {
         await ensureDocExists();
         const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc/generate`, {
@@ -824,17 +849,26 @@ export function KnowledgeDocPanel({
         if (!res.ok || typeof data?.suggestedContent !== 'string') {
           throw new Error(data?.error ?? '知识文档生成失败');
         }
-        const scenarioLabel = draftScenarios.find((item) => item.key === scenario)?.label ?? '当前场景';
         await applyGeneratedText(data.suggestedContent, {
           historyMode: 'append',
           summary: mode === 'update' ? `更新${scenarioLabel}初稿` : `生成${scenarioLabel}初稿`,
         });
         setSheetMode(null);
+        emitArtifactNotice({
+          id: noticeId,
+          state: 'success',
+          title: mode === 'update' ? `${scenarioLabel}已更新` : `${scenarioLabel}已生成`,
+          description: '右侧知识文档已完成更新。',
+        });
       } catch (error) {
-        alert(error instanceof Error ? error.message : '知识文档生成失败');
+        emitArtifactNotice({
+          id: noticeId,
+          state: 'error',
+          title: `${scenarioLabel}生成失败`,
+          description: error instanceof Error ? error.message : '知识文档生成失败',
+        });
       } finally {
         setDraftScenarioLoading(null);
-        setExternalBusy(false);
       }
     },
     [applyGeneratedText, draftScenarioLoading, draftScenarios, ensureDocExists, notebookId]
@@ -848,8 +882,16 @@ export function KnowledgeDocPanel({
         alert('请先生成或填写知识文档内容');
         return;
       }
+      const noticeId = `artifact-${Date.now()}-${mode}`;
+      const modeLabel = creationModeLabel(mode);
       setSheetMode(null);
       setCreationGenerating(mode);
+      emitArtifactNotice({
+        id: noticeId,
+        state: 'running',
+        title: `正在生成${modeLabel}`,
+        description: '生成结果会进入作品列表，可稍后查看。',
+      });
       let tempNoteId: string | null = null;
       try {
         const createRes = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/notes`, {
@@ -872,10 +914,36 @@ export function KnowledgeDocPanel({
         });
         const genData = await genRes.json().catch(() => ({}));
         if (!genRes.ok) throw new Error(genData?.error ?? '生成失败');
+        const createdNoteId = typeof genData?.note?.id === 'string' ? genData.note.id : null;
+        if (createdNoteId) {
+          await fetch(`/api/notes/${encodeURIComponent(createdNoteId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: `作品 · ${modeLabel}` }),
+          }).catch(() => null);
+        }
         setSheetMode(null);
+        emitArtifactNotice({
+          id: noticeId,
+          state: 'success',
+          title: `${modeLabel}已完成`,
+          description: '可在顶部作品列表中查看、预览和下载。',
+        });
         window.dispatchEvent(new CustomEvent('notes-updated'));
+        window.dispatchEvent(
+          new CustomEvent('artifact-output-created', {
+            detail: {
+              noteId: createdNoteId,
+            },
+          })
+        );
       } catch (error) {
-        alert(error instanceof Error ? error.message : '生成失败');
+        emitArtifactNotice({
+          id: noticeId,
+          state: 'error',
+          title: `${modeLabel}生成失败`,
+          description: error instanceof Error ? error.message : '生成失败',
+        });
       } finally {
         if (tempNoteId) {
           await fetch(`/api/notes/${encodeURIComponent(tempNoteId)}`, { method: 'DELETE' }).catch(() => null);
@@ -887,9 +955,10 @@ export function KnowledgeDocPanel({
   );
 
   const openDraftSheet = useCallback(async () => {
+    if (draftScenarioLoading || creationGenerating) return;
     await ensureDocExists();
     setSheetMode('draft');
-  }, [ensureDocExists]);
+  }, [creationGenerating, draftScenarioLoading, ensureDocExists]);
 
   const requestPreviewDownload = useCallback(() => {
     const markdown = htmlToMarkdownLike(editor?.getHTML() ?? content ?? '');
@@ -984,6 +1053,7 @@ export function KnowledgeDocPanel({
     };
 
     const onOpenCreationDrawer = () => {
+      if (draftScenarioLoading || creationGenerating) return;
       setSheetMode('create');
     };
 
@@ -1006,7 +1076,7 @@ export function KnowledgeDocPanel({
       window.removeEventListener('knowledge-doc-open-create-drawer', onOpenCreationDrawer);
       window.removeEventListener('knowledge-doc-pending-state', onPendingState as EventListener);
     };
-  }, [docHasContent, openDraftSheet, runDraftGeneration]);
+  }, [creationGenerating, docHasContent, draftScenarioLoading, openDraftSheet, runDraftGeneration]);
 
   const confirmPending = useCallback(() => {
     if (!pendingDiff || !editor) return;

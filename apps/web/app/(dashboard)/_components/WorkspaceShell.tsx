@@ -1,12 +1,93 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { AnimatedList } from '@/components/ui/animated-list';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { ChatPanel } from './ChatPanel';
 import { KnowledgeDocPanel } from './KnowledgeDocPanel';
 import { SourcesPanel } from './SourcesPanel';
+
+type ArtifactNotice = {
+  id: string;
+  state: 'running' | 'success' | 'error';
+  title: string;
+  description: string;
+};
+
+type WorkNote = {
+  id: string;
+  title: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function extractWorkImage(content: string): string | null {
+  const markdownImage = content.match(/!\[[^\]]*]\((data:image\/[^)]+|https?:\/\/[^)\s]+)\)/i);
+  if (markdownImage?.[1]) return markdownImage[1];
+  const rawDataUrl = content.match(/(data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+)/i);
+  if (rawDataUrl?.[1]) return rawDataUrl[1];
+  return null;
+}
+
+function extractWorkHtml(content: string): string | null {
+  return content.match(/```html\s*([\s\S]*?)```/i)?.[1]?.trim() ?? null;
+}
+
+function inferWorkKind(note: WorkNote): '信息图' | '摘要' | '思维导图' | '互动PPT' | '论文大纲' | '报告' | null {
+  const title = note.title.trim();
+  if (/^创作_infographic/i.test(title)) return '信息图';
+  if (/^创作_summary/i.test(title)) return '摘要';
+  if (/^创作_mindmap/i.test(title)) return '思维导图';
+  if (/^创作_webpage/i.test(title)) return '互动PPT';
+  if (/^创作_report/i.test(title)) return '报告';
+  if (/信息图/.test(title) || Boolean(extractWorkImage(note.content))) return '信息图';
+  if (/思维导图/.test(title) || /```mermaid/i.test(note.content)) return '思维导图';
+  if (/互动PPT/.test(title)) return '互动PPT';
+  if (/论文大纲/.test(title)) return '论文大纲';
+  if (/报告/.test(title)) return '报告';
+  if (/摘要/.test(title) || /简化摘要/.test(title)) return '摘要';
+  return null;
+}
+
+function isCreationWork(note: WorkNote): boolean {
+  const kind = inferWorkKind(note);
+  if (!kind) return false;
+  return note.title.startsWith('作品 ·') || /^创作_[^ ]+/i.test(note.title);
+}
+
+function formatWorkTitle(note: WorkNote): string {
+  if (note.title.startsWith('作品 ·')) return note.title;
+  const kind = inferWorkKind(note);
+  if (kind && /^创作_[^ ]+/i.test(note.title)) {
+    return `作品 · ${kind}`;
+  }
+  return note.title;
+}
+
+function formatWorkUpdatedAt(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '刚刚更新';
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function buildWorkFilename(note: WorkNote, extension: string): string {
+  const normalized = formatWorkTitle(note)
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, '_')
+    .slice(0, 48)
+    .trim();
+  return `${normalized || '作品'}.${extension}`;
+}
 
 type WorkspaceShellProps = {
   notebookId: string;
@@ -40,17 +121,21 @@ export function WorkspaceShell({
   const [descriptionInput, setDescriptionInput] = useState(initialDescription);
   const [publishedFlag, setPublishedFlag] = useState(isPublished);
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
-  const [bootstrapStep, setBootstrapStep] = useState<0 | 1 | 2 | 3>(0);
   const [bootstrapHint, setBootstrapHint] = useState('');
-  const [bootstrapProgress, setBootstrapProgress] = useState(0);
-  const [bootstrapElapsed, setBootstrapElapsed] = useState(0);
   const [bootstrapError, setBootstrapError] = useState('');
+  const [artifactNotices, setArtifactNotices] = useState<ArtifactNotice[]>([]);
+  const [worksOpen, setWorksOpen] = useState(false);
+  const [worksLoading, setWorksLoading] = useState(false);
+  const [worksError, setWorksError] = useState('');
+  const [works, setWorks] = useState<WorkNote[]>([]);
+  const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
 
   const workspaceBodyRef = useRef<HTMLDivElement | null>(null);
   const resizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const hasManualResizeRef = useRef(false);
   const bootstrapControllerRef = useRef<AbortController | null>(null);
   const bootstrapStartedRef = useRef<string | null>(null);
+  const noticeTimersRef = useRef<Record<string, number>>({});
 
   const LEFT_PANEL_WIDTH = 320;
   const COLLAPSED_DOC_WIDTH = 48;
@@ -144,11 +229,14 @@ export function WorkspaceShell({
     setPublishSuccess('');
     setDocCollapsed(nextDocCollapsed);
     setBootstrapOpen(false);
-    setBootstrapStep(0);
     setBootstrapHint('');
-    setBootstrapProgress(0);
-    setBootstrapElapsed(0);
     setBootstrapError('');
+    setArtifactNotices([]);
+    setWorksOpen(false);
+    setWorksLoading(false);
+    setWorksError('');
+    setWorks([]);
+    setSelectedWorkId(null);
     bootstrapControllerRef.current?.abort();
     bootstrapControllerRef.current = null;
     bootstrapStartedRef.current = null;
@@ -178,6 +266,18 @@ export function WorkspaceShell({
   }, []);
 
   const readOnlySources = useMemo(() => !isOwner, [isOwner]);
+  const selectedWork = useMemo(
+    () => works.find((item) => item.id === selectedWorkId) ?? null,
+    [selectedWorkId, works]
+  );
+  const selectedWorkImage = useMemo(
+    () => (selectedWork ? extractWorkImage(selectedWork.content) : null),
+    [selectedWork]
+  );
+  const selectedWorkHtml = useMemo(
+    () => (selectedWork ? extractWorkHtml(selectedWork.content) : null),
+    [selectedWork]
+  );
 
   useEffect(() => {
     if (!docCollapsed) return;
@@ -192,33 +292,150 @@ export function WorkspaceShell({
     onWidenDoc();
   }, [docCollapsed]);
 
-  useEffect(() => {
-    if (!bootstrapOpen) {
-      setBootstrapElapsed(0);
+  const clearNoticeTimer = useCallback((id: string) => {
+    const timer = noticeTimersRef.current[id];
+    if (timer != null) {
+      window.clearTimeout(timer);
+      delete noticeTimersRef.current[id];
+    }
+  }, []);
+
+  const dismissArtifactNotice = useCallback((id: string) => {
+    clearNoticeTimer(id);
+    setArtifactNotices((prev) => prev.filter((item) => item.id !== id));
+  }, [clearNoticeTimer]);
+
+  const queueArtifactNotice = useCallback((notice: ArtifactNotice) => {
+    clearNoticeTimer(notice.id);
+    setArtifactNotices((prev) => {
+      const next = [notice, ...prev.filter((item) => item.id !== notice.id)];
+      return next.slice(0, 4);
+    });
+    noticeTimersRef.current[notice.id] = window.setTimeout(() => {
+      dismissArtifactNotice(notice.id);
+    }, 10_000);
+  }, [clearNoticeTimer, dismissArtifactNotice]);
+
+  const fetchWorks = useCallback(async (preferredId?: string | null) => {
+    if (!notebookId) return;
+    setWorksLoading(true);
+    setWorksError('');
+    try {
+      const response = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/notes`, {
+        cache: 'no-store',
+      });
+      const data = await response.json().catch(() => []);
+      if (!response.ok) {
+        throw new Error(typeof data?.error === 'string' ? data.error : '加载作品列表失败');
+      }
+      const nextWorks = (Array.isArray(data) ? data : [])
+        .filter(
+          (item): item is WorkNote =>
+            Boolean(
+              item &&
+                typeof item === 'object' &&
+                typeof item.id === 'string' &&
+                typeof item.title === 'string' &&
+                typeof item.content === 'string' &&
+                typeof item.createdAt === 'string' &&
+                typeof item.updatedAt === 'string'
+            )
+        )
+        .filter((item) => isCreationWork(item));
+      setWorks(nextWorks);
+      setSelectedWorkId((current) => {
+        if (preferredId && nextWorks.some((item) => item.id === preferredId)) return preferredId;
+        if (current && nextWorks.some((item) => item.id === current)) return current;
+        return nextWorks[0]?.id ?? null;
+      });
+    } catch (error) {
+      setWorks([]);
+      setSelectedWorkId(null);
+      setWorksError(error instanceof Error ? error.message : '加载作品列表失败');
+    } finally {
+      setWorksLoading(false);
+    }
+  }, [notebookId]);
+
+  const downloadWork = (note: WorkNote) => {
+    const image = extractWorkImage(note.content);
+    if (image) {
+      const extension = image.match(/^data:image\/([a-zA-Z0-9+.-]+)/)?.[1]?.replace('jpeg', 'jpg') ?? 'png';
+      const anchor = document.createElement('a');
+      anchor.href = image;
+      anchor.download = buildWorkFilename(note, extension);
+      anchor.rel = 'noreferrer';
+      anchor.click();
       return;
     }
-    const start = Date.now();
-    const timer = window.setInterval(() => {
-      setBootstrapElapsed(Math.floor((Date.now() - start) / 1000));
-    }, 200);
-    return () => window.clearInterval(timer);
-  }, [bootstrapOpen]);
+
+    const html = extractWorkHtml(note.content);
+    if (html) {
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = buildWorkFilename(note, 'html');
+      anchor.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+
+    const blob = new Blob([note.content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = buildWorkFilename(note, 'md');
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
 
   useEffect(() => {
-    if (!bootstrapOpen) {
-      setBootstrapProgress(0);
-      return;
-    }
-    const target = bootstrapStep === 1 ? 24 : bootstrapStep === 2 ? 86 : bootstrapStep === 3 ? 100 : 0;
-    const timer = window.setInterval(() => {
-      setBootstrapProgress((prev) => {
-        if (prev >= target) return prev;
-        const delta = Math.max(1, Math.round((target - prev) / 9));
-        return Math.min(target, prev + delta);
-      });
-    }, 120);
-    return () => window.clearInterval(timer);
-  }, [bootstrapOpen, bootstrapStep]);
+    return () => {
+      Object.values(noticeTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+      noticeTimersRef.current = {};
+    };
+  }, []);
+
+  useEffect(() => {
+    Object.values(noticeTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+    noticeTimersRef.current = {};
+  }, [notebookId]);
+
+  useEffect(() => {
+    const onArtifactNotice = (event: Event) => {
+      const detail = (event as CustomEvent<ArtifactNotice>).detail;
+      if (!detail?.id || !detail?.title) return;
+      queueArtifactNotice(detail);
+    };
+
+    const onArtifactOutputCreated = (event: Event) => {
+      const detail = (event as CustomEvent<{ noteId?: string }>).detail;
+      if (worksOpen) {
+        void fetchWorks(typeof detail?.noteId === 'string' ? detail.noteId : null);
+      }
+    };
+
+    const onNotesUpdated = () => {
+      if (worksOpen) {
+        void fetchWorks();
+      }
+    };
+
+    window.addEventListener('artifact-notice', onArtifactNotice as EventListener);
+    window.addEventListener('artifact-output-created', onArtifactOutputCreated as EventListener);
+    window.addEventListener('notes-updated', onNotesUpdated);
+    return () => {
+      window.removeEventListener('artifact-notice', onArtifactNotice as EventListener);
+      window.removeEventListener('artifact-output-created', onArtifactOutputCreated as EventListener);
+      window.removeEventListener('notes-updated', onNotesUpdated);
+    };
+  }, [fetchWorks, queueArtifactNotice, worksOpen]);
+
+  useEffect(() => {
+    if (!worksOpen) return;
+    void fetchWorks();
+  }, [fetchWorks, worksOpen]);
 
   const closeBootstrapModal = (abort = false) => {
     if (abort) {
@@ -226,10 +443,7 @@ export function WorkspaceShell({
       bootstrapControllerRef.current = null;
     }
     setBootstrapOpen(false);
-    setBootstrapStep(0);
     setBootstrapHint('');
-    setBootstrapProgress(0);
-    setBootstrapElapsed(0);
     setBootstrapError('');
   };
 
@@ -254,15 +468,10 @@ export function WorkspaceShell({
 
     bootstrapStartedRef.current = notebookId;
     setBootstrapOpen(true);
-    setBootstrapStep(1);
-    setBootstrapHint('正在准备首批来源，稍后会直接进入可问答状态。');
+    setBootstrapHint('正在联网检索首批来源，完成后会直接进入可问答状态。');
     setBootstrapError('');
 
     const controller = new AbortController();
-    const advanceTimer = window.setTimeout(() => {
-      setBootstrapStep(2);
-      setBootstrapHint('正在联网检索并导入 15 篇来源…');
-    }, 260);
     bootstrapControllerRef.current = controller;
 
     void fetch('/api/notebooks/bootstrap/create', {
@@ -276,9 +485,7 @@ export function WorkspaceShell({
         if (!response.ok) {
           throw new Error(data?.error ?? '初始化来源失败');
         }
-        setBootstrapStep(3);
-        setBootstrapHint('来源已就绪，可以开始对话了。');
-        setBootstrapProgress(100);
+        setBootstrapHint('来源已就绪，正在进入 Notebook…');
         window.dispatchEvent(new CustomEvent('sources-updated'));
         window.dispatchEvent(
           new CustomEvent('bootstrap-research-ready', {
@@ -296,7 +503,6 @@ export function WorkspaceShell({
         setBootstrapError(error instanceof Error ? error.message : '初始化来源失败');
       })
       .finally(() => {
-        window.clearTimeout(advanceTimer);
         bootstrapControllerRef.current = null;
       });
   }, [notebookId]);
@@ -457,6 +663,17 @@ export function WorkspaceShell({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setWorksOpen(true)}
+              className="inline-flex h-7 items-center gap-1.5 rounded-[12px] bg-black/[0.05] px-3 text-xs font-medium text-gray-700 transition hover:bg-black/[0.08] dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/15"
+            >
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M7 5h10l2 2v12H5V5h2Z" />
+                <path d="M9 10h6M9 14h6" />
+              </svg>
+              作品列表
+            </button>
             {!isOwner && (
               <button
                 type="button"
@@ -532,6 +749,48 @@ export function WorkspaceShell({
         </aside>
       </div>
 
+      {artifactNotices.length > 0 ? (
+        <div className="pointer-events-none fixed right-4 top-4 z-[70] w-[340px] max-w-[calc(100vw-2rem)]">
+          <AnimatedList delay={120} className="items-stretch gap-3">
+            {artifactNotices.map((notice) => (
+              <div
+                key={notice.id}
+                className="pointer-events-auto overflow-hidden rounded-[18px] border border-black/10 bg-white/96 shadow-[0_20px_40px_rgba(15,23,42,0.12)] backdrop-blur dark:border-white/10 dark:bg-gray-900/96"
+              >
+                {notice.state === 'running' ? (
+                  <div className="app-slow-loading-bar relative h-[3px] w-full overflow-hidden bg-black/8 dark:bg-white/10" />
+                ) : null}
+                <div className="flex items-start gap-3 px-4 py-3">
+                  <span
+                    className={`mt-1 inline-flex h-2.5 w-2.5 shrink-0 rounded-full ${
+                      notice.state === 'success'
+                        ? 'bg-emerald-500'
+                        : notice.state === 'error'
+                          ? 'bg-red-500'
+                          : 'bg-black'
+                    }`}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{notice.title}</p>
+                    <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{notice.description}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => dismissArtifactNotice(notice.id)}
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[12px] text-gray-400 transition hover:bg-black/[0.05] hover:text-gray-700 dark:hover:bg-white/10 dark:hover:text-gray-200"
+                    aria-label="关闭提醒"
+                  >
+                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="m18 6-12 12M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </AnimatedList>
+        </div>
+      ) : null}
+
       {publishOpen && (
         <div className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
@@ -584,12 +843,146 @@ export function WorkspaceShell({
         </div>
       )}
 
+      {worksOpen && (
+        <div
+          className="app-modal-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setWorksOpen(false);
+            }
+          }}
+        >
+          <div className="flex h-[min(80vh,760px)] w-full max-w-6xl overflow-hidden rounded-[24px] bg-white shadow-xl dark:bg-gray-900">
+            <div className="flex w-[280px] shrink-0 flex-col border-r border-black/6 bg-[#f7f7f7] dark:border-white/10 dark:bg-gray-950">
+              <div className="border-b border-black/6 px-5 py-4 dark:border-white/10">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">作品列表</h3>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  查看通过去创作生成的内容，并支持预览和下载。
+                </p>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto px-3 py-3">
+                {worksLoading ? (
+                  <div className="flex min-h-[180px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+                    加载中…
+                  </div>
+                ) : worksError ? (
+                  <div className="flex min-h-[180px] items-center justify-center px-4 text-center text-sm text-red-600 dark:text-red-400">
+                    {worksError}
+                  </div>
+                ) : works.length > 0 ? (
+                  <div className="space-y-2">
+                    {works.map((work) => {
+                      const active = work.id === selectedWorkId;
+                      const kind = inferWorkKind(work);
+                      return (
+                        <button
+                          key={work.id}
+                          type="button"
+                          onClick={() => setSelectedWorkId(work.id)}
+                          className={`w-full rounded-[16px] px-4 py-3 text-left transition ${
+                            active
+                              ? 'bg-white shadow-sm ring-1 ring-black/8 dark:bg-gray-900 dark:ring-white/10'
+                              : 'bg-transparent hover:bg-white/70 dark:hover:bg-gray-900/80'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                              {formatWorkTitle(work)}
+                            </p>
+                            {kind ? (
+                              <span className="shrink-0 rounded-full bg-black/[0.05] px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-white/10 dark:text-gray-300">
+                                {kind}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            {formatWorkUpdatedAt(work.updatedAt)}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex min-h-[180px] items-center justify-center px-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                    暂时还没有作品产出。
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex min-w-0 flex-1 flex-col">
+              <div className="flex items-center justify-between gap-3 border-b border-black/6 px-5 py-4 dark:border-white/10">
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    {selectedWork ? formatWorkTitle(selectedWork) : '作品预览'}
+                  </h3>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {selectedWork ? `更新于 ${formatWorkUpdatedAt(selectedWork.updatedAt)}` : '选择左侧作品查看详情。'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {selectedWork ? (
+                    <button
+                      type="button"
+                      onClick={() => downloadWork(selectedWork)}
+                      className="inline-flex h-8 items-center rounded-[12px] bg-black px-3 text-xs font-medium text-white transition hover:bg-black/90"
+                    >
+                      下载
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setWorksOpen(false)}
+                    className="inline-flex h-8 items-center rounded-[12px] bg-black/[0.05] px-3 text-xs font-medium text-gray-700 transition hover:bg-black/[0.08] dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/15"
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-auto bg-[#f4f4f5] p-5 dark:bg-gray-950">
+                {selectedWork ? (
+                  selectedWorkHtml ? (
+                    <div className="h-full min-h-[480px] overflow-hidden rounded-[20px] bg-white shadow-sm dark:bg-gray-900">
+                      <iframe
+                        title={formatWorkTitle(selectedWork)}
+                        srcDoc={selectedWorkHtml}
+                        className="h-full w-full bg-white"
+                      />
+                    </div>
+                  ) : selectedWorkImage ? (
+                    <div className="flex min-h-full items-start justify-center rounded-[20px] bg-white p-5 shadow-sm dark:bg-gray-900">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={selectedWorkImage}
+                        alt={formatWorkTitle(selectedWork)}
+                        className="max-h-full w-full rounded-[16px] object-contain"
+                      />
+                    </div>
+                  ) : (
+                    <div className="mx-auto max-w-4xl rounded-[20px] bg-white px-8 py-8 shadow-sm dark:bg-gray-900">
+                      <article className="knowledge-doc-editor">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedWork.content}</ReactMarkdown>
+                      </article>
+                    </div>
+                  )
+                ) : (
+                  <div className="flex min-h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+                    从左侧选择一个作品开始预览。
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {bootstrapOpen && (
         <div className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-lg rounded-[24px] border border-gray-200 bg-white p-4 shadow-xl dark:border-gray-800 dark:bg-gray-900">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">正在准备研究 Notebook</h3>
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">正在联网检索来源</h3>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{bootstrapHint}</p>
               </div>
               <button
@@ -603,43 +996,11 @@ export function WorkspaceShell({
                 </svg>
               </button>
             </div>
-            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
-              <div
-                className="relative h-full rounded-full bg-gradient-to-r from-sky-500 via-cyan-500 to-blue-500 transition-all duration-500"
-                style={{ width: `${bootstrapProgress}%` }}
-              >
-                <span className="absolute inset-0 animate-pulse bg-white/20" />
-              </div>
+            <div className="mt-4 h-[3px] w-full overflow-hidden rounded-full bg-black/8 dark:bg-white/10">
+              <div className="app-slow-loading-bar relative h-full w-full overflow-hidden" />
             </div>
-            <div className="mt-2 flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400">
-              <span>进行中 {bootstrapElapsed}s</span>
-              <span>进度 {bootstrapProgress}%</span>
-            </div>
-            <div className="mt-4 space-y-2">
-              {['准备 notebook', '联网检索首批来源', '完成'].map((label, idx) => {
-                const stepNumber = (idx + 1) as 1 | 2 | 3;
-                const done = bootstrapStep > stepNumber;
-                const running = bootstrapStep === stepNumber;
-                return (
-                  <div
-                    key={label}
-                    className={`flex items-center gap-2 rounded-[14px] border px-3 py-2 text-xs ${
-                      done
-                        ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/20 dark:text-green-300'
-                        : running
-                          ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-300'
-                          : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-2 w-2 rounded-full ${
-                        done ? 'bg-green-600' : running ? 'bg-blue-600 animate-pulse' : 'bg-gray-400'
-                      }`}
-                    />
-                    <span>{label}</span>
-                  </div>
-                );
-              })}
+            <div className="mt-4 rounded-[18px] bg-[#f5f5f5] px-4 py-3 text-xs leading-5 text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+              当前阶段只做联网检索和来源导入。推荐问题会在进入后再后台准备，不会阻塞你开始对话。
             </div>
             {bootstrapError ? <p className="mt-3 text-xs text-red-600 dark:text-red-400">{bootstrapError}</p> : null}
             <div className="mt-4 flex items-center justify-end">

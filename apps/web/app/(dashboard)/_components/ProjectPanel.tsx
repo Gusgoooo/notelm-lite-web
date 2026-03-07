@@ -297,7 +297,7 @@ export function ProjectPanel() {
                 value={researchTopic}
                 onChange={(event) => setResearchTopic(event.target.value)}
                 placeholder="请简单输入你想分析的主题"
-                className="h-[128px] w-full resize-none rounded-[12px] border border-gray-200 bg-gray-50 px-4 pb-12 pt-4 text-sm text-gray-900 shadow-sm outline-none transition focus:border-gray-300 focus:bg-white dark:border-gray-700 dark:bg-gray-900/80 dark:text-gray-100 dark:focus:border-gray-600 dark:focus:bg-gray-900"
+                className="h-[128px] w-full resize-none rounded-[20px] border border-gray-200 bg-gray-50 px-4 pb-12 pt-4 text-sm text-gray-900 shadow-sm outline-none transition focus:border-gray-300 focus:bg-white dark:border-gray-700 dark:bg-gray-900/80 dark:text-gray-100 dark:focus:border-gray-600 dark:focus:bg-gray-900"
               />
               <button
                 type="submit"
