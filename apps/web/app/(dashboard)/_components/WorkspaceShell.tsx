@@ -25,6 +25,7 @@ export function WorkspaceShell({
 }: WorkspaceShellProps) {
   const router = useRouter();
   const [notesWidth, setNotesWidth] = useState<number | null>(null);
+  const [docCollapsed, setDocCollapsed] = useState(false);
   const [resizing, setResizing] = useState(false);
   const [savingFork, setSavingFork] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -48,6 +49,7 @@ export function WorkspaceShell({
   const hasManualResizeRef = useRef(false);
 
   const LEFT_PANEL_WIDTH = 320;
+  const COLLAPSED_DOC_WIDTH = 48;
   const PANEL_GAP = 12;
   const MIN_CENTER_WIDTH = 320;
   const MIN_RIGHT_WIDTH = 320;
@@ -129,6 +131,7 @@ export function WorkspaceShell({
     setPublishOpen(false);
     setPublishError('');
     setPublishSuccess('');
+    setDocCollapsed(false);
   }, [notebookId, initialTitle, initialDescription, isPublished]);
 
   useEffect(() => {
@@ -308,8 +311,8 @@ export function WorkspaceShell({
   };
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col">
-      <div className="border-b bg-white/80 px-3 py-1 backdrop-blur-sm dark:bg-gray-950/70">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[#f1f1f1]">
+      <div className="bg-[#f1f1f1] px-3 py-1">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <Link
@@ -380,7 +383,7 @@ export function WorkspaceShell({
       </div>
 
       {(publishError || publishSuccess) && (
-        <div className="border-b px-3 py-2">
+        <div className="px-3 py-2">
           {publishError ? <p className="text-xs text-red-600 dark:text-red-400">{publishError}</p> : null}
           {publishSuccess ? <p className="text-xs text-green-600 dark:text-green-400">{publishSuccess}</p> : null}
         </div>
@@ -399,7 +402,7 @@ export function WorkspaceShell({
           />
         </aside>
 
-        <main className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-[20px] border border-gray-200 bg-gray-50/80 shadow-sm dark:border-gray-800 dark:bg-gray-950/40">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-950/40">
           <ChatPanel notebookId={notebookId} />
         </main>
 
@@ -407,9 +410,10 @@ export function WorkspaceShell({
           role="separator"
           aria-orientation="vertical"
           aria-label="调整知识库问答和知识文档宽度"
-          className={`relative shrink-0 ${resizing ? 'bg-blue-500/20' : 'bg-transparent'}`}
+          className={`relative shrink-0 ${resizing ? 'bg-blue-500/20' : 'bg-transparent'} ${docCollapsed ? 'cursor-default' : 'cursor-col-resize'}`}
           style={{ width: PANEL_GAP }}
           onMouseDown={(event) => {
+            if (docCollapsed) return;
             const currentWidth = notesWidth;
             if (currentWidth == null) return;
             event.preventDefault();
@@ -423,9 +427,13 @@ export function WorkspaceShell({
 
         <aside
           className="relative flex min-h-0 shrink-0 flex-col overflow-hidden rounded-[20px] border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-950/50"
-          style={{ width: notesWidth ?? undefined }}
+          style={{ width: docCollapsed ? COLLAPSED_DOC_WIDTH : notesWidth ?? undefined }}
         >
-          <KnowledgeDocPanel notebookId={notebookId} />
+          <KnowledgeDocPanel
+            notebookId={notebookId}
+            collapsed={docCollapsed}
+            onToggleCollapse={() => setDocCollapsed((prev) => !prev)}
+          />
         </aside>
       </div>
 

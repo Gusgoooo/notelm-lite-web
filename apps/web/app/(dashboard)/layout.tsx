@@ -4,7 +4,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="h-screen flex flex-col bg-[var(--background)] text-[var(--foreground)]">
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#f1f1f1] text-[var(--foreground)]">
       {children}
     </div>
   );

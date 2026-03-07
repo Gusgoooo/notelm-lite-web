@@ -7,7 +7,17 @@ import DiffMatchPatch from 'diff-match-patch';
 
 type KnowledgeDocPanelProps = {
   notebookId: string | null;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 };
+
+function CollapseIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      {collapsed ? <path d="m9 6 6 6-6 6" /> : <path d="m15 6-6 6 6 6" />}
+    </svg>
+  );
+}
 
 function stripHtml(html: string): string {
   if (typeof document === 'undefined') {
@@ -56,7 +66,11 @@ function DiffView({
   );
 }
 
-export function KnowledgeDocPanel({ notebookId }: KnowledgeDocPanelProps) {
+export function KnowledgeDocPanel({
+  notebookId,
+  collapsed = false,
+  onToggleCollapse,
+}: KnowledgeDocPanelProps) {
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -234,13 +248,46 @@ export function KnowledgeDocPanel({ notebookId }: KnowledgeDocPanelProps) {
   if (!notebookId) {
     return (
       <div className="flex flex-1 flex-col min-h-0">
-        <div className="flex h-14 items-center border-b border-gray-200 px-3 dark:border-gray-800">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-            知识文档
-          </h2>
+        <div className="flex h-14 items-center justify-between px-3">
+          {!collapsed ? (
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              知识文档
+            </h2>
+          ) : null}
+          {onToggleCollapse ? (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+              aria-label={collapsed ? '展开知识文档' : '收起知识文档'}
+              title={collapsed ? '展开知识文档' : '收起知识文档'}
+            >
+              <CollapseIcon collapsed={collapsed} />
+            </button>
+          ) : null}
         </div>
-        <div className="flex flex-1 items-center justify-center p-4 text-sm text-gray-400 dark:text-gray-500">
+        {collapsed ? null : (
+          <div className="flex flex-1 items-center justify-center p-4 text-sm text-gray-400 dark:text-gray-500">
           请先选择 notebook
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (collapsed) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center px-2 py-3">
+        <div className="flex h-8 w-full items-center justify-center">
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+            aria-label="展开知识文档"
+            title="展开知识文档"
+          >
+            <CollapseIcon collapsed />
+          </button>
         </div>
       </div>
     );
@@ -248,19 +295,32 @@ export function KnowledgeDocPanel({ notebookId }: KnowledgeDocPanelProps) {
 
   return (
     <div className="flex flex-1 flex-col min-h-0">
-      <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-gray-200 px-3 dark:border-gray-800">
+      <div className="flex h-14 shrink-0 items-center justify-between gap-2 px-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
           知识文档
         </h2>
-        <label className="inline-flex cursor-pointer items-center gap-1.5">
-          <span className="text-xs text-gray-600 dark:text-gray-400">自动更新</span>
-          <input
-            type="checkbox"
-            checked={autoUpdate}
-            onChange={(e) => setAutoUpdate(e.target.checked)}
-            className="h-3.5 w-7 rounded-full border border-gray-300 bg-gray-200 dark:border-gray-600 dark:bg-gray-700 accent-gray-800"
-          />
-        </label>
+        <div className="flex items-center gap-2">
+          <label className="inline-flex cursor-pointer items-center gap-1.5">
+            <span className="text-xs text-gray-600 dark:text-gray-400">自动更新</span>
+            <input
+              type="checkbox"
+              checked={autoUpdate}
+              onChange={(e) => setAutoUpdate(e.target.checked)}
+              className="h-3.5 w-7 rounded-full border border-gray-300 bg-gray-200 dark:border-gray-600 dark:bg-gray-700 accent-gray-800"
+            />
+          </label>
+          {onToggleCollapse ? (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+              aria-label="收起知识文档"
+              title="收起知识文档"
+            >
+              <CollapseIcon collapsed={false} />
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {loading ? (
