@@ -27,6 +27,12 @@ type Message = {
   citations?: Citation[];
   createdAt?: string;
   conversationId?: string;
+  action?:
+    | {
+        type: 'create_doc' | 'update_doc';
+        source: 'chat' | 'sources';
+      }
+    | undefined;
 };
 
 type ResearchDirection = {
@@ -90,18 +96,6 @@ function normalizeHistoryOrder(batch: Message[]): Message[] {
     .map((item) => item.message);
 }
 
-function buildNoteTitleFromAnswer(content: string): string {
-  const line = content
-    .split('\n')
-    .map((v) => v.trim())
-    .find(Boolean);
-  const cleaned = (line ?? '')
-    .replace(/^#+\s*/, '')
-    .replace(/[*_`~]/g, '')
-    .trim();
-  return cleaned ? cleaned.slice(0, 28) : '聊天摘录';
-}
-
 function parseMessageActions(content: string): {
   displayContent: string;
   canConvertReport: boolean;
@@ -118,23 +112,6 @@ function parseMessageActions(content: string): {
 
 function isRefineCompletedMessage(content: string): boolean {
   return /已完成资料重整，当前选题为：/i.test(content);
-}
-
-function normalizeForActionCheck(content: string): string {
-  return content
-    .replace(REPORT_ACTION_MARKER, '')
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/[#>*_\-\[\]()`]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function shouldShowRichAnswerActions(content: string): boolean {
-  const plain = normalizeForActionCheck(content);
-  if (!plain) return false;
-  if (/^error:/i.test(plain)) return false;
-  if (/无法回答|来源不足|没有足够信息|请稍后重试/i.test(plain)) return false;
-  return plain.length >= 140;
 }
 
 function sortCitations(citations: Citation[] | undefined): Citation[] {
@@ -187,6 +164,11 @@ const ACTION_PILL_CLASS =
   'inline-flex h-7 items-center rounded-full border border-gray-300 bg-gray-50 px-3 text-[11px] text-gray-700 transition hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700';
 const SAVE_ACTION_PILL_CLASS =
   'inline-flex h-7 items-center rounded-full border border-blue-200 bg-blue-50 px-3 text-[11px] text-blue-700 transition hover:bg-blue-100 disabled:opacity-50';
+
+function hasKnowledgeDocContent(content: string | undefined): boolean {
+  if (!content) return false;
+  return content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().length > 0;
+}
 
 function MarkdownContent({ content }: { content: string }) {
   return (
@@ -249,16 +231,20 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [loadingResearchState, setLoadingResearchState] = useState(false);
   const [researchStateError, setResearchStateError] = useState('');
   const [entryMode, setEntryMode] = useState<NotebookEntryMode>(null);
-  const [quickActionRunning, setQuickActionRunning] = useState<{ messageId: string; mode: 'report' | 'infographic' } | null>(null);
   const [starterQuestionLoading, setStarterQuestionLoading] = useState<string | null>(null);
   const [selectionToast, setSelectionToast] = useState<SelectionToastState | null>(null);
   const [savingSelection, setSavingSelection] = useState(false);
+  const [knowledgeDocState, setKnowledgeDocState] = useState<{ exists: boolean; hasContent: boolean }>({
+    exists: false,
+    hasContent: false,
+  });
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatContentRef = useRef<HTMLDivElement>(null);
   const selectionTimerRef = useRef<number | null>(null);
   const selectionRangeRef = useRef<Range | null>(null);
   const composingRef = useRef(false);
+  const bootstrapDirectionsStartedRef = useRef<string | null>(null);
 
   const fetchHistoryPage = useCallback(
     async (page: number, reset: boolean) => {
@@ -318,6 +304,26 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     }
   }, [notebookId]);
 
+  const fetchKnowledgeDocState = useCallback(async () => {
+    if (!notebookId) return;
+    try {
+      const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`, {
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setKnowledgeDocState({ exists: false, hasContent: false });
+        return;
+      }
+      setKnowledgeDocState({
+        exists: typeof data?.id === 'string',
+        hasContent: hasKnowledgeDocContent(typeof data?.content === 'string' ? data.content : ''),
+      });
+    } catch {
+      setKnowledgeDocState({ exists: false, hasContent: false });
+    }
+  }, [notebookId]);
+
   useEffect(() => {
     setMessages([]);
     setConversationId(null);
@@ -327,6 +333,8 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     setEntryMode(null);
     setResearchState(null);
     setResearchStateError('');
+    setKnowledgeDocState({ exists: false, hasContent: false });
+    bootstrapDirectionsStartedRef.current = null;
     if (notebookId) {
       try {
         const key = `notebook-entry:${notebookId}`;
@@ -342,8 +350,71 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     if (notebookId) {
       void fetchHistoryPage(0, true);
       void fetchResearchState();
+      void fetchKnowledgeDocState();
     }
-  }, [notebookId, fetchHistoryPage, fetchResearchState]);
+  }, [notebookId, fetchHistoryPage, fetchKnowledgeDocState, fetchResearchState]);
+
+  useEffect(() => {
+    const onKnowledgeDocSaved = (event: Event) => {
+      const detail = (event as CustomEvent<{ exists?: boolean; hasContent?: boolean }>).detail;
+      if (typeof detail?.exists === 'boolean' || typeof detail?.hasContent === 'boolean') {
+        setKnowledgeDocState((prev) => ({
+          exists: typeof detail?.exists === 'boolean' ? detail.exists : prev.exists,
+          hasContent: typeof detail?.hasContent === 'boolean' ? detail.hasContent : prev.hasContent,
+        }));
+        return;
+      }
+      void fetchKnowledgeDocState();
+    };
+
+    const onSourcesAdded = (event: Event) => {
+      const detail = (event as CustomEvent<{ addedCount?: number }>).detail;
+      const addedCount = Number(detail?.addedCount ?? 0);
+      if (addedCount <= 0) return;
+      const docActionType = knowledgeDocState.exists ? 'update_doc' : 'create_doc';
+      const docVerb = docActionType === 'update_doc' ? '更新' : '创建';
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `source-hint-${Date.now()}`,
+          role: 'assistant',
+          content: `新增 ${addedCount} 个来源，您可以继续问答，也可以根据新增来源${docVerb}知识文档。`,
+          action: {
+            type: docActionType,
+            source: 'sources',
+          },
+        },
+      ]);
+      setTailVersion((v) => v + 1);
+    };
+
+    window.addEventListener('knowledge-doc-saved', onKnowledgeDocSaved as EventListener);
+    window.addEventListener('sources-added', onSourcesAdded as EventListener);
+    return () => {
+      window.removeEventListener('knowledge-doc-saved', onKnowledgeDocSaved as EventListener);
+      window.removeEventListener('sources-added', onSourcesAdded as EventListener);
+    };
+  }, [fetchKnowledgeDocState, knowledgeDocState.exists]);
+
+  useEffect(() => {
+    if (!notebookId || entryMode !== 'bootstrap' || !researchState) return;
+    if (researchState.phase !== 'analyzing') return;
+    if (bootstrapDirectionsStartedRef.current === notebookId) return;
+    bootstrapDirectionsStartedRef.current = notebookId;
+
+    void fetch('/api/notebooks/bootstrap/directions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        notebookId,
+        topic: researchState.topic,
+      }),
+    })
+      .catch(() => null)
+      .finally(() => {
+        void fetchResearchState();
+      });
+  }, [entryMode, fetchResearchState, notebookId, researchState]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -364,75 +435,73 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const updateKnowledgeDocFromChat = useCallback(
     async (lastUserMessage: string, lastAssistantMessage: string) => {
       if (!notebookId) throw new Error('notebookId is required');
-      const docRes = await fetch(
-        `/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`,
-        { cache: 'no-store' }
-      );
-      const docData = await docRes.json().catch(() => ({}));
-      const currentContent =
-        typeof docData?.content === 'string'
-          ? docData.content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
-          : '';
-      const updateRes = await fetch(
-        `/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc/update-from-chat`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            currentContent,
-            lastUserMessage,
-            lastAssistantMessage,
-          }),
-        }
-      );
-      const updateData = await updateRes.json().catch(() => ({}));
-      if (!updateRes.ok) {
-        throw new Error(updateData?.error ?? '更新知识文档失败');
-      }
+      window.dispatchEvent(new CustomEvent('knowledge-doc-expand'));
       window.dispatchEvent(
-        new CustomEvent('knowledge-doc-update-from-chat', {
-          detail: { suggestedContent: updateData?.suggestedContent ?? '', autoApply: false },
+        new CustomEvent('knowledge-doc-pending-state', {
+          detail: {
+            active: true,
+            label: '正在根据当前回答更新知识文档…',
+          },
         })
       );
+      try {
+        const docRes = await fetch(
+          `/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`,
+          { cache: 'no-store' }
+        );
+        const docData = await docRes.json().catch(() => ({}));
+        const currentContent =
+          typeof docData?.content === 'string'
+            ? docData.content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+            : '';
+        const updateRes = await fetch(
+          `/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc/update-from-chat`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              currentContent,
+              lastUserMessage,
+              lastAssistantMessage,
+            }),
+          }
+        );
+        const updateData = await updateRes.json().catch(() => ({}));
+        if (!updateRes.ok) {
+          throw new Error(updateData?.error ?? '更新知识文档失败');
+        }
+        window.dispatchEvent(
+          new CustomEvent('knowledge-doc-update-from-chat', {
+            detail: { suggestedContent: updateData?.suggestedContent ?? '', autoApply: false },
+          })
+        );
+      } finally {
+        window.dispatchEvent(
+          new CustomEvent('knowledge-doc-pending-state', {
+            detail: { active: false },
+          })
+        );
+      }
     },
     [notebookId]
   );
 
-  const createNote = useCallback(
-    async (content: string, title?: string, emitUpdate = true) => {
-      if (!notebookId) throw new Error('notebookId is required');
-      const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/notes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: title?.trim() || buildNoteTitleFromAnswer(content),
-          content,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error ?? '保存失败');
-      }
-      if (emitUpdate) {
-        window.dispatchEvent(new CustomEvent('notes-updated'));
-        window.dispatchEvent(
-          new CustomEvent('knowledge-unit-trigger', {
-            detail: {
-              trigger: 'ON_NOTE_SAVED',
-              saved_notes: [
-                {
-                  title: title?.trim() || buildNoteTitleFromAnswer(content),
-                  content,
-                },
-              ],
-            },
-          })
-        );
-      }
-      return data;
-    },
-    [notebookId]
-  );
+  const requestKnowledgeDocCreate = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('knowledge-doc-expand'));
+    window.dispatchEvent(new CustomEvent('knowledge-doc-create-request'));
+  }, []);
+
+  const requestKnowledgeDocRefreshFromSources = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('knowledge-doc-expand'));
+    window.dispatchEvent(
+      new CustomEvent('knowledge-doc-generate-request', {
+        detail: {
+          scenario: 'auto',
+          mode: knowledgeDocState.exists ? 'update' : 'create',
+        },
+      })
+    );
+  }, [knowledgeDocState.exists]);
 
   useEffect(() => {
     const clearTimer = () => {
@@ -525,13 +594,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   }, []);
 
   const send = useCallback(
-    async (
-      overrideText?: string,
-      options?: {
-        skipSourceMaintenance?: boolean;
-        postSourceNotice?: string;
-      }
-    ) => {
+    async (overrideText?: string) => {
       const text = (overrideText ?? input).trim();
       if (!text || !notebookId || loading) return;
       setInput('');
@@ -575,46 +638,6 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
             },
           })
         );
-        const appendSourceNotice = (message: string) => {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `a-maintain-${Date.now()}`,
-              role: 'assistant',
-              content: message,
-            },
-          ]);
-          setTailVersion((v) => v + 1);
-        };
-        if (options?.postSourceNotice) {
-          appendSourceNotice(options.postSourceNotice);
-        } else if (!options?.skipSourceMaintenance) {
-          void (async () => {
-            try {
-              const maintainRes = await fetch('/api/sources/maintain', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  notebookId,
-                  topic: text,
-                }),
-              });
-              const maintainData = await maintainRes.json().catch(() => ({}));
-              if (!maintainRes.ok) return;
-              const added = Number(maintainData?.added ?? 0);
-              const removed = Number(maintainData?.removed ?? 0);
-              if (added > 0 || removed > 0) {
-                window.dispatchEvent(new CustomEvent('sources-updated'));
-                appendSourceNotice(
-                  `已补充 ${added} 条强相关来源` +
-                    (removed > 0 ? `，并自动移除了 ${removed} 条低相关来源。` : '。')
-                );
-              }
-            } catch {
-              // Ignore best-effort source maintenance errors.
-            }
-          })();
-        }
         setTailVersion((v) => v + 1);
       } finally {
         setLoading(false);
@@ -634,72 +657,12 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     return () => window.removeEventListener('chat-send-message', onChatSendMessage as EventListener);
   }, [send]);
 
-  const generateArtifactFromAnswer = useCallback(
-    async (message: Message, mode: 'report' | 'infographic') => {
-      if (!notebookId || quickActionRunning) return;
-      const parsed = parseMessageActions(message.content);
-      const answerText = parsed.displayContent.trim();
-      if (!answerText) return;
-      const pendingId = `pending_${mode}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const pendingTitle = buildNoteTitleFromAnswer(answerText);
-      window.dispatchEvent(
-        new CustomEvent('notes-pending-add', {
-          detail: { id: pendingId, mode, title: pendingTitle },
-        })
-      );
-
-      const isReport = mode === 'report';
-      setQuickActionRunning({ messageId: message.id, mode });
-      try {
-        const createData = await createNote(
-          answerText,
-          isReport ? '论文对比洞察' : '回答延展信息图',
-          false
-        );
-        if (!createData?.id) {
-          throw new Error('保存洞察素材失败');
-        }
-        const genRes = await fetch('/api/notes/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            notebookId,
-            noteIds: [String(createData.id)],
-            mode,
-          }),
-        });
-        const genData = await genRes.json().catch(() => ({}));
-        if (!genRes.ok) {
-          throw new Error(genData?.error ?? (isReport ? '转换报告失败' : '生成信息图失败'));
-        }
-        window.dispatchEvent(new CustomEvent('notes-pending-remove', { detail: { id: pendingId } }));
-        window.dispatchEvent(new CustomEvent('notes-updated'));
-      } catch (e) {
-        window.dispatchEvent(new CustomEvent('notes-pending-remove', { detail: { id: pendingId } }));
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `a-${Date.now()}`,
-            role: 'assistant',
-            content: `Error: ${e instanceof Error ? e.message : isReport ? '转换报告失败' : '生成信息图失败'}`,
-          },
-        ]);
-        setTailVersion((v) => v + 1);
-      } finally {
-        setQuickActionRunning(null);
-      }
-    },
-    [createNote, notebookId, quickActionRunning]
-  );
-
   const askBootstrapGuideQuestion = useCallback(
     async (question: string) => {
       const text = question.trim();
       if (!text || !notebookId || loading) return;
       setEntryMode(null);
-      await send(text, {
-        skipSourceMaintenance: true,
-      });
+      await send(text);
     },
     [loading, notebookId, send]
   );
@@ -709,37 +672,11 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       const text = question.trim();
       if (!text || !notebookId || loading || starterQuestionLoading) return;
       setStarterQuestionLoading(text);
-      let sourceNotice = '';
       try {
-        const res = await fetch('/api/sources/maintain', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            notebookId,
-            topic: text,
-            addLimit: 6,
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok) {
-          window.dispatchEvent(new CustomEvent('sources-updated'));
-          const added = Number(data?.added ?? 0);
-          const removed = Number(data?.removed ?? 0);
-          if (added > 0 || removed > 0) {
-            sourceNotice =
-              `已补充 ${added} 条强相关来源` +
-              (removed > 0 ? `，并自动移除了 ${removed} 条低相关来源。` : '。');
-          }
-        }
-      } catch {
-        // Ignore source enrichment failure and continue with the question itself.
+        await send(text);
       } finally {
         setStarterQuestionLoading(null);
       }
-      await send(text, {
-        skipSourceMaintenance: true,
-        postSourceNotice: sourceNotice || undefined,
-      });
     },
     [loading, notebookId, send, starterQuestionLoading]
   );
@@ -767,8 +704,8 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       return (
         <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-300">
           {researchState.phase === 'collecting'
-            ? '正在联网检索并整理论文来源…'
-            : '正在分析并总结资料里的核心发现…'}
+            ? '正在联网检索首批来源…'
+            : '正在整理来源脉络，稍后会给出推荐问题…'}
         </div>
       );
     }
@@ -851,8 +788,14 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               {messages.map((m) => {
                 const parsed = parseMessageActions(m.content);
                 const refineDone = isRefineCompletedMessage(parsed.displayContent);
-                const showRichActions =
-                  m.role === 'assistant' && !refineDone && shouldShowRichAnswerActions(parsed.displayContent);
+                const messageAction = m.action
+                  ? m.action
+                  : m.role === 'assistant' && !/^error:/i.test(parsed.displayContent)
+                    ? {
+                        type: knowledgeDocState.exists ? 'update_doc' : 'create_doc',
+                        source: 'chat' as const,
+                      }
+                    : null;
                 return (
                   <div
                     key={m.id}
@@ -870,17 +813,27 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                     </div>
                     {m.role === 'assistant' && (
                       <>
-                        {!refineDone || showRichActions || parsed.canConvertReport ? (
+                        {!refineDone && messageAction ? (
                           <div className="mt-3 border-t pt-3">
                             <div className="flex flex-wrap items-center gap-2">
-                              {!refineDone ? (
+                              {messageAction.type === 'update_doc' ? (
                                 <button
                                   type="button"
                                   className={SAVE_ACTION_PILL_CLASS}
                                   onClick={async () => {
+                                    if (messageAction.source === 'sources') {
+                                      requestKnowledgeDocRefreshFromSources();
+                                      return;
+                                    }
                                     if (!notebookId) return;
                                     const idx = messages.findIndex((msg) => msg.id === m.id);
-                                    const prevUser = idx > 0 ? messages.slice(0, idx).reverse().find((msg) => msg.role === 'user') : null;
+                                    const prevUser =
+                                      idx > 0
+                                        ? messages
+                                            .slice(0, idx)
+                                            .reverse()
+                                            .find((msg) => msg.role === 'user')
+                                        : null;
                                     await updateKnowledgeDocFromChat(
                                       prevUser?.content ?? '',
                                       parsed.displayContent +
@@ -906,49 +859,15 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                 >
                                   更新知识文档
                                 </button>
-                              ) : null}
-                              {showRichActions ? (
+                              ) : (
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    void send('请基于你上一条回答，延展更多相关论点、对比视角与可继续研究的方向。')
-                                  }
-                                  disabled={loading}
+                                  onClick={requestKnowledgeDocCreate}
                                   className={ACTION_PILL_CLASS}
                                 >
-                                  延展更多论点
+                                  创建知识文档
                                 </button>
-                              ) : null}
-                              {showRichActions || parsed.canConvertReport ? (
-                                <button
-                                  type="button"
-                                  onClick={() => void generateArtifactFromAnswer(m, 'report')}
-                                  disabled={
-                                    quickActionRunning?.messageId === m.id && quickActionRunning.mode === 'report'
-                                  }
-                                  className={ACTION_PILL_CLASS}
-                                >
-                                  {quickActionRunning?.messageId === m.id && quickActionRunning.mode === 'report'
-                                    ? '生成中…'
-                                    : '生成报告'}
-                                </button>
-                              ) : null}
-                              {showRichActions ? (
-                                <button
-                                  type="button"
-                                  onClick={() => void generateArtifactFromAnswer(m, 'infographic')}
-                                  disabled={
-                                    quickActionRunning?.messageId === m.id &&
-                                    quickActionRunning.mode === 'infographic'
-                                  }
-                                  className={ACTION_PILL_CLASS}
-                                >
-                                  {quickActionRunning?.messageId === m.id &&
-                                  quickActionRunning.mode === 'infographic'
-                                    ? '生成中…'
-                                    : '生成信息图'}
-                                </button>
-                              ) : null}
+                              )}
                             </div>
                           </div>
                         ) : null}
@@ -1052,6 +971,23 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         >
           {savingSelection ? '更新中…' : '更新知识文档'}
         </button>
+      ) : null}
+      {!knowledgeDocState.exists && messages.some((message) => message.role === 'assistant') ? (
+        <div className="shrink-0 px-3 pb-0 pt-1">
+          <div className="mx-auto flex w-full max-w-[680px] items-center justify-between gap-3 rounded-[18px] bg-[#f5f6fb] px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-gray-800">当前来源已经可以整理成知识文档</p>
+              <p className="mt-1 text-xs text-gray-500">点击创建后会展开右侧文档区，并可选择场景生成初稿。</p>
+            </div>
+            <button
+              type="button"
+              onClick={requestKnowledgeDocCreate}
+              className="inline-flex h-9 shrink-0 items-center rounded-full bg-white px-4 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+            >
+              创建知识文档
+            </button>
+          </div>
+        </div>
       ) : null}
       <div className="shrink-0 bg-white px-3 pb-3 pt-2">
         <div className="mx-auto w-full max-w-[680px]">

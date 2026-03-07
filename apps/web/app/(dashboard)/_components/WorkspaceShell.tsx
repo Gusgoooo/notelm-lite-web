@@ -16,53 +16,6 @@ type WorkspaceShellProps = {
   isPublished: boolean;
 };
 
-function CreationIcon({ mode }: { mode: 'summary' | 'infographic' | 'mindmap' | 'report' | 'webpage' }) {
-  if (mode === 'summary') {
-    return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M5 7h14M5 12h10M5 17h8" />
-      </svg>
-    );
-  }
-  if (mode === 'infographic') {
-    return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M5 18h14" />
-        <path d="M7 18v-6" />
-        <path d="M12 18V9" />
-        <path d="M17 18V5" />
-      </svg>
-    );
-  }
-  if (mode === 'mindmap') {
-    return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="12" cy="12" r="2.5" />
-        <circle cx="6" cy="7" r="1.5" />
-        <circle cx="18" cy="7" r="1.5" />
-        <circle cx="6" cy="17" r="1.5" />
-        <circle cx="18" cy="17" r="1.5" />
-        <path d="M10 10 7 8M14 10l3-2M10 14l-3 2M14 14l3 2" />
-      </svg>
-    );
-  }
-  if (mode === 'report') {
-    return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M7 4h7l4 4v12H7z" />
-        <path d="M14 4v4h4" />
-        <path d="M9 13h6M9 17h6M9 9h2" />
-      </svg>
-    );
-  }
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-      <rect x="4" y="5" width="16" height="14" rx="2" />
-      <path d="M8 9h8M8 13h5" />
-    </svg>
-  );
-}
-
 export function WorkspaceShell({
   notebookId,
   initialTitle,
@@ -72,7 +25,7 @@ export function WorkspaceShell({
 }: WorkspaceShellProps) {
   const router = useRouter();
   const [notesWidth, setNotesWidth] = useState<number | null>(null);
-  const [docCollapsed, setDocCollapsed] = useState(false);
+  const [docCollapsed, setDocCollapsed] = useState(true);
   const [resizing, setResizing] = useState(false);
   const [savingFork, setSavingFork] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -86,10 +39,6 @@ export function WorkspaceShell({
   const [titleInput, setTitleInput] = useState(initialTitle);
   const [descriptionInput, setDescriptionInput] = useState(initialDescription);
   const [publishedFlag, setPublishedFlag] = useState(isPublished);
-  const [creationOpen, setCreationOpen] = useState(false);
-  const [creationDocContent, setCreationDocContent] = useState('');
-  const [creationLoading, setCreationLoading] = useState(false);
-  const [creationGenerating, setCreationGenerating] = useState<string | null>(null);
 
   const workspaceBodyRef = useRef<HTMLDivElement | null>(null);
   const resizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -178,7 +127,7 @@ export function WorkspaceShell({
     setPublishOpen(false);
     setPublishError('');
     setPublishSuccess('');
-    setDocCollapsed(false);
+    setDocCollapsed(true);
   }, [notebookId, initialTitle, initialDescription, isPublished]);
 
   useEffect(() => {
@@ -197,94 +146,27 @@ export function WorkspaceShell({
   }, []);
 
   useEffect(() => {
-    const onOpenCreation = () => setCreationOpen(true);
-    window.addEventListener('open-creation-panel', onOpenCreation);
-    return () => window.removeEventListener('open-creation-panel', onOpenCreation);
+    const onExpandDoc = () => {
+      setDocCollapsed(false);
+    };
+    window.addEventListener('knowledge-doc-expand', onExpandDoc);
+    return () => window.removeEventListener('knowledge-doc-expand', onExpandDoc);
   }, []);
 
-  useEffect(() => {
-    if (!creationOpen || !notebookId) return;
-    setCreationLoading(true);
-    fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`, { cache: 'no-store' })
-      .then((res) => res.json())
-      .then((data) => setCreationDocContent(typeof data?.content === 'string' ? data.content : ''))
-      .catch(() => setCreationDocContent(''))
-      .finally(() => setCreationLoading(false));
-  }, [creationOpen, notebookId]);
-
-  const runCreationGenerate = async (mode: 'infographic' | 'summary' | 'mindmap' | 'report' | 'webpage') => {
-    if (!notebookId || creationGenerating) return;
-    setCreationGenerating(mode);
-    let tempNoteId: string | null = null;
-    try {
-      const createRes = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/notes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: `创作_${mode}_${Date.now()}`,
-          content: creationDocContent.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || '（空文档）',
-        }),
-      });
-      const createData = await createRes.json().catch(() => ({}));
-      if (!createRes.ok || !createData?.id) {
-        throw new Error(createData?.error ?? '创建素材失败');
-      }
-      tempNoteId = String(createData.id);
-      const genRes = await fetch('/api/notes/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notebookId, noteIds: [tempNoteId], mode }),
-      });
-      const genData = await genRes.json().catch(() => ({}));
-      if (!genRes.ok) throw new Error(genData?.error ?? '生成失败');
-      setCreationOpen(false);
-      window.dispatchEvent(new CustomEvent('notes-updated'));
-    } catch (e) {
-      alert(e instanceof Error ? e.message : '生成失败');
-    } finally {
-      if (tempNoteId) {
-        await fetch(`/api/notes/${encodeURIComponent(tempNoteId)}`, { method: 'DELETE' }).catch(() => null);
-      }
-      setCreationGenerating(null);
-    }
-  };
-
   const readOnlySources = useMemo(() => !isOwner, [isOwner]);
-  const creationActions = useMemo(
-    () => [
-      {
-        mode: 'summary' as const,
-        label: '简化成摘要',
-        hint: '提炼关键信息',
-        className: 'bg-amber-50 text-amber-700 hover:bg-amber-100',
-      },
-      {
-        mode: 'infographic' as const,
-        label: '信息图',
-        hint: '适合快速展示',
-        className: 'bg-sky-50 text-sky-700 hover:bg-sky-100',
-      },
-      {
-        mode: 'mindmap' as const,
-        label: '思维导图',
-        hint: '梳理结构关系',
-        className: 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
-      },
-      {
-        mode: 'report' as const,
-        label: '生成报告',
-        hint: '整理成长文内容',
-        className: 'bg-rose-50 text-rose-700 hover:bg-rose-100',
-      },
-      {
-        mode: 'webpage' as const,
-        label: '互动PPT',
-        hint: '输出可演示页面',
-        className: 'bg-violet-50 text-violet-700 hover:bg-violet-100',
-      },
-    ],
-    []
-  );
+
+  useEffect(() => {
+    if (!docCollapsed) return;
+    const onWidenDoc = () => {
+      const totalWidth = workspaceBodyRef.current?.clientWidth ?? 0;
+      if (totalWidth <= 0) return;
+      const balanced = getBalancedNotesWidth(totalWidth);
+      if (balanced != null) {
+        setNotesWidth((current) => current ?? balanced);
+      }
+    };
+    onWidenDoc();
+  }, [docCollapsed]);
 
   const handleSaveAsMine = async () => {
     if (savingFork) return;
@@ -564,60 +446,6 @@ export function WorkspaceShell({
               >
                 {publishSaving ? '分享中…' : '确认分享'}
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {creationOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/20"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              setCreationOpen(false);
-            }
-          }}
-        >
-          <div className="absolute inset-x-0 bottom-0 flex justify-center px-3 pb-3 pt-16">
-            <div className="w-full max-w-3xl overflow-hidden rounded-[28px] bg-white shadow-[0_-24px_60px_rgba(15,23,42,0.16)] dark:bg-gray-900">
-              <div className="flex items-center justify-between px-5 pb-2 pt-4">
-                <div>
-                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">基于知识文档去创作</h3>
-                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">从当前知识文档快速生成结构化内容。</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setCreationOpen(false)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-                  aria-label="关闭创作抽屉"
-                  title="关闭"
-                >
-                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="m18 6-12 12M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-              {creationLoading ? (
-                <p className="px-5 py-5 text-center text-xs text-gray-500">加载文档中…</p>
-              ) : (
-                <div className="grid grid-cols-2 gap-3 px-5 py-5 md:grid-cols-3">
-                  {creationActions.map(({ mode, label, hint, className }) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => void runCreationGenerate(mode)}
-                      disabled={!!creationGenerating}
-                      className={`flex min-h-[78px] flex-col items-start justify-between rounded-2xl px-4 py-3 text-left transition disabled:opacity-50 ${className}`}
-                    >
-                      <span className="inline-flex items-center gap-2 text-sm font-semibold">
-                        <CreationIcon mode={mode} />
-                        {creationGenerating === mode ? '生成中…' : label}
-                      </span>
-                      <span className="text-xs text-black/55 dark:text-white/60">{hint}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
           </div>
         </div>

@@ -284,7 +284,7 @@ export function ProjectPanel() {
     setBootstrapError('');
     setBootstrapStep(1);
     bootstrapNotebookIdRef.current = null;
-    setBootstrapHint('开始联网检索相关来源，稍后您也可以自己上传论文补充。');
+    setBootstrapHint('开始准备首批来源，完成后会直接进入 notebook。');
 
     try {
       const firstController = new AbortController();
@@ -305,27 +305,8 @@ export function ProjectPanel() {
 
       const notebookId = String(createData.notebookId);
       bootstrapNotebookIdRef.current = notebookId;
-      setBootstrapStep(2);
-      setBootstrapHint('分析并总结资料里的核心发现中…');
-
-      const secondController = new AbortController();
-      const secondTimeoutId = window.setTimeout(() => secondController.abort(), 45_000);
-      bootstrapControllerRef.current = secondController;
-      const dirRes = await fetch('/api/notebooks/bootstrap/directions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notebookId, topic }),
-        signal: secondController.signal,
-      });
-      window.clearTimeout(secondTimeoutId);
-      const dirData = await dirRes.json().catch(() => ({}));
-      if (!dirRes.ok) {
-        throw new Error(dirData?.error ?? '核心发现生成失败');
-      }
-      if (!bootstrapRunningRef.current) return;
-
       setBootstrapStep(3);
-      setBootstrapHint('已完成，正在进入研究空间…');
+      setBootstrapHint('来源已准备完成，正在进入研究空间…');
       setBootstrapProgress(100);
       bootstrapNotebookIdRef.current = null;
       closeBootstrapModal(false);

@@ -4,7 +4,7 @@ import { getServerSession } from 'next-auth';
 import { db, notebooks, eq } from 'db';
 import { authOptions } from '@/lib/auth';
 import { saveResearchState } from '@/lib/research-state';
-import { getAdaptiveWebSourceCount, ingestWebSources, searchWebViaOpenRouter } from '@/lib/web-research';
+import { ingestWebSources, searchWebViaOpenRouter } from '@/lib/web-research';
 
 function normalizeTopic(value: unknown): string {
   if (typeof value !== 'string') return '';
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
 
     const session = await getServerSession(authOptions);
     const userId = session?.user?.id ?? null;
-    const targetSourceCount = getAdaptiveWebSourceCount(topic);
+    const targetSourceCount = 15;
 
     const fetched = await searchWebViaOpenRouter({
       topic,

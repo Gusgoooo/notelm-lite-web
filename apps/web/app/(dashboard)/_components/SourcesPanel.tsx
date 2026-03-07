@@ -185,6 +185,17 @@ export function SourcesPanel({
   const [openMenuSourceId, setOpenMenuSourceId] = useState<string | null>(null);
   const [expandedSourceIds, setExpandedSourceIds] = useState<string[]>([]);
 
+  const announceSourceAddition = useCallback((addedCount: number) => {
+    if (addedCount <= 0) return;
+    window.dispatchEvent(
+      new CustomEvent('sources-added', {
+        detail: {
+          addedCount,
+        },
+      })
+    );
+  }, []);
+
   const fetchSources = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
     try {
@@ -422,6 +433,7 @@ export function SourcesPanel({
       }
       setPendingUpload((prev) => (prev ? { ...prev, progress: 100 } : prev));
       await fetchSources(false);
+      announceSourceAddition(1);
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         alert('上传超时（60秒），请检查对象存储配置后重试');
@@ -508,6 +520,7 @@ export function SourcesPanel({
       setPasteText('');
       setPasteStatus('已接收粘贴文本，正在处理中…');
       await fetchSources(false);
+      announceSourceAddition(1);
     } finally {
       setPasting(false);
     }
@@ -539,6 +552,7 @@ export function SourcesPanel({
         `联网检索完成，新增 ${added} 条来源${skipped > 0 ? `，跳过 ${skipped} 条重复来源` : ''}`
       );
       await fetchSources(false);
+      announceSourceAddition(added);
     } finally {
       setWebSearching(false);
     }
@@ -767,13 +781,17 @@ export function SourcesPanel({
                             }
                             className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                           >
-                            <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
+                            <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
+                              <span
+                                className={`h-2 w-2 rounded-full transition-opacity duration-150 group-hover:opacity-0 ${dotClass}`}
+                              />
+                              <span className="absolute inset-0 flex items-center justify-center text-gray-400 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-hover:text-gray-600">
+                                <ChevronIcon open={expanded} />
+                              </span>
+                            </span>
                             <p className="truncate text-xs font-medium" title={s.filename}>
                               {s.filename}
                             </p>
-                            <span className="shrink-0 text-gray-400">
-                              <ChevronIcon open={expanded} />
-                            </span>
                           </button>
                           {(canPreviewFile || canDownloadFile || !readOnly) && (
                             <div

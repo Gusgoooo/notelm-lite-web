@@ -138,3 +138,54 @@ body {
   font-size: 0.95rem;
   color: rgb(17 24 39);
 }
+
+@keyframes knowledge-doc-flow {
+  0% {
+    transform: translate3d(-12%, 0, 0);
+    opacity: 0.18;
+  }
+  50% {
+    transform: translate3d(10%, 0, 0);
+    opacity: 0.34;
+  }
+  100% {
+    transform: translate3d(-12%, 0, 0);
+    opacity: 0.18;
+  }
+}
+
+@keyframes knowledge-doc-busy {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes knowledge-doc-sheet-in {
+  0% {
+    transform: translateY(100%);
+    opacity: 0.7;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.knowledge-doc-flow {
+  animation: knowledge-doc-flow 9s ease-in-out infinite;
+}
+
+.knowledge-doc-busy::before {
+  content: '';
+  position: absolute;
+  inset: -20%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.72), transparent);
+  animation: knowledge-doc-busy 1.8s linear infinite;
+}
+
+.knowledge-doc-sheet-enter {
+  animation: knowledge-doc-sheet-in 220ms ease-out;
+}
