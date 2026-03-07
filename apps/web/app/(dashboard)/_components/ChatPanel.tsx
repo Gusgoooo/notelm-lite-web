@@ -258,6 +258,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const chatContentRef = useRef<HTMLDivElement>(null);
   const selectionTimerRef = useRef<number | null>(null);
   const selectionRangeRef = useRef<Range | null>(null);
+  const composingRef = useRef(false);
 
   const fetchHistoryPage = useCallback(
     async (page: number, reset: boolean) => {
@@ -802,8 +803,8 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
 
   if (!notebookId) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex h-12 items-center px-3">
+      <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex h-12 shrink-0 items-center px-3">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
             知识库问答
           </h2>
@@ -816,13 +817,13 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex h-12 shrink-0 items-center px-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
           知识库问答
         </h2>
       </div>
-      <ScrollArea className="min-h-0 flex-1 px-3 pb-2 pt-1">
+      <ScrollArea className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3 pt-1">
         <div ref={chatContentRef} className="mx-auto flex w-full max-w-[680px] flex-col gap-4">
           {renderResearchSection()}
           {loadingHistory ? (
@@ -1052,20 +1053,29 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           {savingSelection ? '更新中…' : '更新知识文档'}
         </button>
       ) : null}
-      <div className="shrink-0 bg-[#f1f1f1] px-0 pb-0 pt-0">
+      <div className="shrink-0 bg-white px-3 pb-3 pt-2">
         <div className="mx-auto w-full max-w-[680px]">
           <form
             onSubmit={(e) => {
               e.preventDefault();
               void send();
             }}
-            className="relative"
+            className="relative rounded-[24px] bg-[#f1f1f1] p-2"
           >
             <textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onCompositionStart={() => {
+                composingRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                composingRef.current = false;
+              }}
               onKeyDown={(e) => {
+                const nativeEvent = e.nativeEvent as KeyboardEvent & { isComposing?: boolean; keyCode?: number };
+                const isComposing = composingRef.current || nativeEvent.isComposing || nativeEvent.keyCode === 229;
+                if (isComposing) return;
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   void send();
@@ -1073,12 +1083,12 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               }}
               placeholder="请输入你的问题..."
               disabled={loading}
-              className="h-[108px] w-full resize-none rounded-[20px] border border-transparent bg-white px-4 pb-12 pt-4 text-sm text-gray-900 shadow-sm outline-none transition focus:bg-white dark:bg-gray-900/80 dark:text-gray-100 dark:focus:bg-gray-900"
+              className="h-[104px] w-full resize-none rounded-[20px] border-0 bg-transparent px-4 pb-12 pt-4 text-sm text-gray-900 outline-none transition dark:text-gray-100"
             />
             <button
               type="submit"
               disabled={loading || !input.trim()}
-              className="absolute bottom-4 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-white/90"
+              className="absolute bottom-3 right-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black text-white transition hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-white/90"
               aria-label="发送"
               title="发送"
             >

@@ -14,9 +14,51 @@ type KnowledgeDocPanelProps = {
 function CollapseIcon({ collapsed }: { collapsed: boolean }) {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-      {collapsed ? <path d="m9 6 6 6-6 6" /> : <path d="m15 6-6 6 6 6" />}
+      {collapsed ? <path d="m15 6-6 6 6 6" /> : <path d="m9 6 6 6-6 6" />}
     </svg>
   );
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function buildParagraphHtml(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => escapeHtml(line.trim()))
+    .filter(Boolean)
+    .join('<br>');
+}
+
+function structuredTextToHtml(raw: string): string {
+  const normalized = raw.replace(/\r/g, '\n').trim();
+  if (!normalized) return '<p></p>';
+
+  const blocks = normalized
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  return blocks
+    .map((block) => {
+      if (block.startsWith('### ')) {
+        return `<h3>${escapeHtml(block.slice(4).trim())}</h3>`;
+      }
+      if (block.startsWith('## ')) {
+        return `<h2>${escapeHtml(block.slice(3).trim())}</h2>`;
+      }
+      if (block.startsWith('# ')) {
+        return `<h1>${escapeHtml(block.slice(2).trim())}</h1>`;
+      }
+      return `<p>${buildParagraphHtml(block)}</p>`;
+    })
+    .join('');
 }
 
 function stripHtml(html: string): string {
@@ -93,8 +135,9 @@ export function KnowledgeDocPanel({
         return;
       }
       const html = typeof data?.content === 'string' ? data.content : '';
-      setContent(html || '<p></p>');
-      initialContentRef.current = html || '<p></p>';
+      const nextContent = html.includes('<') ? html : structuredTextToHtml(html);
+      setContent(nextContent || '<p></p>');
+      initialContentRef.current = nextContent || '<p></p>';
     } finally {
       setLoading(false);
     }
@@ -140,8 +183,7 @@ export function KnowledgeDocPanel({
     },
     editorProps: {
       attributes: {
-        class:
-          'prose prose-sm max-w-none min-h-[200px] px-3 py-2 focus:outline-none text-gray-900 dark:text-gray-100',
+        class: 'knowledge-doc-editor min-h-[240px] px-4 py-3 text-gray-900 focus:outline-none dark:text-gray-100',
       },
     },
   });
@@ -169,10 +211,7 @@ export function KnowledgeDocPanel({
       const previous = editor ? stripHtml(editor.getHTML()) : '';
       if (detail?.autoApply || autoUpdate) {
         setUpdatingFromChat(true);
-        const newHtml = suggested
-          .split(/\n\n+/)
-          .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
-          .join('');
+        const newHtml = structuredTextToHtml(suggested);
         editor?.commands.setContent(newHtml || '<p></p>', false);
         void saveDoc(newHtml || '<p></p>');
         setPendingDiff(null);
@@ -212,10 +251,7 @@ export function KnowledgeDocPanel({
           setUpdatingFromChat(false);
           return;
         }
-        const newHtml = (data.suggestedContent as string)
-          .split(/\n\n+/)
-          .map((p: string) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
-          .join('');
+        const newHtml = structuredTextToHtml(String(data.suggestedContent));
         editor.commands.setContent(newHtml || '<p></p>', false);
         void saveDoc(newHtml || '<p></p>');
       } finally {
@@ -228,10 +264,7 @@ export function KnowledgeDocPanel({
 
   const confirmPending = useCallback(() => {
     if (!pendingDiff || !editor) return;
-    const newHtml = pendingDiff.suggested
-      .split(/\n\n+/)
-      .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
-      .join('');
+    const newHtml = structuredTextToHtml(pendingDiff.suggested);
     editor.commands.setContent(newHtml || '<p></p>', false);
     void saveDoc(newHtml || '<p></p>');
     setPendingDiff(null);
@@ -247,8 +280,8 @@ export function KnowledgeDocPanel({
 
   if (!notebookId) {
     return (
-      <div className="flex flex-1 flex-col min-h-0">
-        <div className="flex h-14 items-center justify-between px-3">
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex h-12 items-center justify-between px-3">
           {!collapsed ? (
             <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
               知识文档
@@ -294,8 +327,8 @@ export function KnowledgeDocPanel({
   }
 
   return (
-    <div className="flex flex-1 flex-col min-h-0">
-      <div className="flex h-14 shrink-0 items-center justify-between gap-2 px-3">
+    <div className="flex h-full min-h-0 flex-1 flex-col">
+      <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
           知识文档
         </h2>
@@ -357,12 +390,12 @@ export function KnowledgeDocPanel({
           </div>
         </div>
       ) : (
-        <div className="flex-1 min-h-0 overflow-auto">
-          <div className="min-h-[200px]">
+        <div className="min-h-0 flex-1 overflow-auto">
+          <div className="min-h-full">
             <EditorContent editor={editor} />
           </div>
           {saving && (
-            <p className="px-3 pb-1 text-[10px] text-gray-400 dark:text-gray-500">保存中…</p>
+            <p className="px-4 pb-2 text-[10px] text-gray-400 dark:text-gray-500">保存中…</p>
           )}
         </div>
       )}
@@ -371,11 +404,11 @@ export function KnowledgeDocPanel({
         <p className="px-3 py-1 text-xs text-blue-600 dark:text-blue-400">正在根据对话更新文档…</p>
       )}
 
-      <div className="flex shrink-0 justify-center border-t border-gray-200 py-3 dark:border-gray-800">
+      <div className="flex shrink-0 justify-center px-3 pb-3 pt-2">
         <button
           type="button"
           onClick={openCreationPanel}
-          className="rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+          className="inline-flex h-10 items-center rounded-full bg-[#f5f6fb] px-4 text-sm font-medium text-gray-700 transition hover:bg-[#eceef8] dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
         >
           去创作
         </button>

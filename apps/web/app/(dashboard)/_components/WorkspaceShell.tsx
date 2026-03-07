@@ -16,6 +16,53 @@ type WorkspaceShellProps = {
   isPublished: boolean;
 };
 
+function CreationIcon({ mode }: { mode: 'summary' | 'infographic' | 'mindmap' | 'report' | 'webpage' }) {
+  if (mode === 'summary') {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M5 7h14M5 12h10M5 17h8" />
+      </svg>
+    );
+  }
+  if (mode === 'infographic') {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M5 18h14" />
+        <path d="M7 18v-6" />
+        <path d="M12 18V9" />
+        <path d="M17 18V5" />
+      </svg>
+    );
+  }
+  if (mode === 'mindmap') {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="2.5" />
+        <circle cx="6" cy="7" r="1.5" />
+        <circle cx="18" cy="7" r="1.5" />
+        <circle cx="6" cy="17" r="1.5" />
+        <circle cx="18" cy="17" r="1.5" />
+        <path d="M10 10 7 8M14 10l3-2M10 14l-3 2M14 14l3 2" />
+      </svg>
+    );
+  }
+  if (mode === 'report') {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M7 4h7l4 4v12H7z" />
+        <path d="M14 4v4h4" />
+        <path d="M9 13h6M9 17h6M9 9h2" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M8 9h8M8 13h5" />
+    </svg>
+  );
+}
+
 export function WorkspaceShell({
   notebookId,
   initialTitle,
@@ -203,6 +250,41 @@ export function WorkspaceShell({
   };
 
   const readOnlySources = useMemo(() => !isOwner, [isOwner]);
+  const creationActions = useMemo(
+    () => [
+      {
+        mode: 'summary' as const,
+        label: '简化成摘要',
+        hint: '提炼关键信息',
+        className: 'bg-amber-50 text-amber-700 hover:bg-amber-100',
+      },
+      {
+        mode: 'infographic' as const,
+        label: '信息图',
+        hint: '适合快速展示',
+        className: 'bg-sky-50 text-sky-700 hover:bg-sky-100',
+      },
+      {
+        mode: 'mindmap' as const,
+        label: '思维导图',
+        hint: '梳理结构关系',
+        className: 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
+      },
+      {
+        mode: 'report' as const,
+        label: '生成报告',
+        hint: '整理成长文内容',
+        className: 'bg-rose-50 text-rose-700 hover:bg-rose-100',
+      },
+      {
+        mode: 'webpage' as const,
+        label: '互动PPT',
+        hint: '输出可演示页面',
+        className: 'bg-violet-50 text-violet-700 hover:bg-violet-100',
+      },
+    ],
+    []
+  );
 
   const handleSaveAsMine = async () => {
     if (savingFork) return;
@@ -311,8 +393,8 @@ export function WorkspaceShell({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[#f1f1f1]">
-      <div className="bg-[#f1f1f1] px-0 py-1">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[#f1f1f1] px-3 pb-3 pt-2">
+      <div className="shrink-0 bg-[#f1f1f1] px-0 py-1">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <Link
@@ -383,15 +465,15 @@ export function WorkspaceShell({
       </div>
 
       {(publishError || publishSuccess) && (
-        <div className="px-0 py-2">
+        <div className="shrink-0 px-0 py-2">
           {publishError ? <p className="text-xs text-red-600 dark:text-red-400">{publishError}</p> : null}
           {publishSuccess ? <p className="text-xs text-green-600 dark:text-green-400">{publishSuccess}</p> : null}
         </div>
       )}
 
-      <div ref={workspaceBodyRef} className="flex min-h-0 flex-1 overflow-hidden p-0">
+      <div ref={workspaceBodyRef} className="flex min-h-0 flex-1 overflow-hidden pt-2">
         <aside
-          className="shrink-0 overflow-hidden rounded-[20px] bg-white dark:bg-gray-950/50"
+          className="h-full shrink-0 overflow-hidden rounded-[20px] bg-white dark:bg-gray-950/50"
           style={{ width: LEFT_PANEL_WIDTH, marginRight: PANEL_GAP }}
         >
           <SourcesPanel
@@ -402,7 +484,7 @@ export function WorkspaceShell({
           />
         </aside>
 
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] bg-white dark:bg-gray-950/40">
+        <main className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] bg-white dark:bg-gray-950/40">
           <ChatPanel notebookId={notebookId} />
         </main>
 
@@ -424,7 +506,7 @@ export function WorkspaceShell({
         />
 
         <aside
-          className="relative flex min-h-0 shrink-0 flex-col overflow-hidden rounded-[20px] bg-white dark:bg-gray-950/50"
+          className="relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-[20px] bg-white dark:bg-gray-950/50"
           style={{ width: docCollapsed ? COLLAPSED_DOC_WIDTH : notesWidth ?? undefined }}
         >
           <KnowledgeDocPanel
@@ -488,41 +570,55 @@ export function WorkspaceShell({
       )}
 
       {creationOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-          <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">基于知识文档去创作</h3>
-              <button
-                type="button"
-                onClick={() => setCreationOpen(false)}
-                className="rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
-              >
-                关闭
-              </button>
-            </div>
-            {creationLoading ? (
-              <p className="py-4 text-center text-xs text-gray-500">加载文档中…</p>
-            ) : (
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { mode: 'summary' as const, label: '简化成摘要' },
-                  { mode: 'infographic' as const, label: '信息图' },
-                  { mode: 'mindmap' as const, label: '思维导图' },
-                  { mode: 'report' as const, label: '生成报告' },
-                  { mode: 'webpage' as const, label: '互动PPT' },
-                ].map(({ mode, label }) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => void runCreationGenerate(mode)}
-                    disabled={!!creationGenerating}
-                    className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-                  >
-                    {creationGenerating === mode ? '生成中…' : label}
-                  </button>
-                ))}
+        <div
+          className="fixed inset-0 z-50 bg-black/20"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setCreationOpen(false);
+            }
+          }}
+        >
+          <div className="absolute inset-x-0 bottom-0 flex justify-center px-3 pb-3 pt-16">
+            <div className="w-full max-w-3xl overflow-hidden rounded-[28px] bg-white shadow-[0_-24px_60px_rgba(15,23,42,0.16)] dark:bg-gray-900">
+              <div className="flex items-center justify-between px-5 pb-2 pt-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">基于知识文档去创作</h3>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">从当前知识文档快速生成结构化内容。</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCreationOpen(false)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                  aria-label="关闭创作抽屉"
+                  title="关闭"
+                >
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="m18 6-12 12M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
-            )}
+              {creationLoading ? (
+                <p className="px-5 py-5 text-center text-xs text-gray-500">加载文档中…</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 px-5 py-5 md:grid-cols-3">
+                  {creationActions.map(({ mode, label, hint, className }) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => void runCreationGenerate(mode)}
+                      disabled={!!creationGenerating}
+                      className={`flex min-h-[78px] flex-col items-start justify-between rounded-2xl px-4 py-3 text-left transition disabled:opacity-50 ${className}`}
+                    >
+                      <span className="inline-flex items-center gap-2 text-sm font-semibold">
+                        <CreationIcon mode={mode} />
+                        {creationGenerating === mode ? '生成中…' : label}
+                      </span>
+                      <span className="text-xs text-black/55 dark:text-white/60">{hint}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

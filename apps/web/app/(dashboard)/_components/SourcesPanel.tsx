@@ -553,8 +553,8 @@ export function SourcesPanel({
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex h-14 items-center justify-between border-b px-4">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-12 items-center justify-between px-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500">
           知识库
         </h2>
@@ -570,7 +570,7 @@ export function SourcesPanel({
         </div>
       </div>
 
-      <div className="space-y-2 p-3">
+      <div className="space-y-2 p-2.5">
         {readOnly && (
           <div className="rounded-md border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-[11px] text-amber-800">
             <div className="flex items-center justify-between gap-2">
@@ -686,7 +686,7 @@ export function SourcesPanel({
         )}
       </div>
 
-      <ScrollArea className="flex-1 p-2">
+      <ScrollArea className="flex-1 px-2.5 pb-2.5">
         {loading ? (
           <div className="p-2">
             <ShinyText text="Loading..." className="text-xs text-gray-500" />

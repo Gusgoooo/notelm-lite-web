@@ -17,12 +17,12 @@ body {
   height: 100%;
   margin: 0;
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
   color: hsl(var(--foreground));
-  background: radial-gradient(circle at top right, rgba(148, 163, 184, 0.12), transparent 40%),
-    hsl(var(--background));
+  background: #f1f1f1;
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   color-scheme: light;
 }
@@ -89,4 +89,52 @@ body {
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
   }
+}
+
+.knowledge-doc-editor {
+  max-width: none;
+  line-height: 1.75;
+}
+
+.knowledge-doc-editor h1,
+.knowledge-doc-editor h2,
+.knowledge-doc-editor h3,
+.knowledge-doc-editor p {
+  margin: 0;
+}
+
+.knowledge-doc-editor h1 + p,
+.knowledge-doc-editor h2 + p,
+.knowledge-doc-editor h3 + p,
+.knowledge-doc-editor p + p,
+.knowledge-doc-editor p + h1,
+.knowledge-doc-editor p + h2,
+.knowledge-doc-editor p + h3,
+.knowledge-doc-editor h1 + h2,
+.knowledge-doc-editor h2 + h3 {
+  margin-top: 12px;
+}
+
+.knowledge-doc-editor h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.knowledge-doc-editor h2 {
+  font-size: 1.125rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.knowledge-doc-editor h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.5;
+  color: rgb(75 85 99);
+}
+
+.knowledge-doc-editor p {
+  font-size: 0.95rem;
+  color: rgb(17 24 39);
 }
