@@ -15,8 +15,18 @@ import {
 } from 'db';
 import { createEmbeddings, chat } from 'shared';
 import { randomUUID } from 'crypto';
+import {
+  extractScenarioPromptAnchors,
+  getDefaultKnowledgeDocScenarioState,
+  normalizeKnowledgeDocScenarioState,
+  resolveKnowledgeDocScenario,
+  type KnowledgeDocScenario,
+} from '@/lib/knowledge-doc-scenarios';
 import { getNotebookAccess } from '@/lib/notebook-access';
-import { KNOWLEDGE_DOC_NOTE_TITLE } from '@/lib/knowledge-unit';
+import {
+  KNOWLEDGE_DOC_NOTE_TITLE,
+  KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE,
+} from '@/lib/knowledge-unit';
 import { getLatestResearchState } from '@/lib/research-state';
 
 const TOP_K = 8;
@@ -179,6 +189,15 @@ function hasMeaningfulKnowledgeDoc(content: string | null | undefined): boolean 
   return content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().length > 0;
 }
 
+function parseKnowledgeDocScenarioState(raw: string | null | undefined) {
+  if (!raw) return getDefaultKnowledgeDocScenarioState();
+  try {
+    return normalizeKnowledgeDocScenarioState(JSON.parse(raw));
+  } catch {
+    return getDefaultKnowledgeDocScenarioState();
+  }
+}
+
 type GuidanceScenario = 'okr' | 'prd' | 'prompt' | 'analysis' | 'learning' | 'general';
 
 function inferGuidanceScenario(topic: string, userMessage: string): GuidanceScenario {
@@ -191,7 +210,32 @@ function inferGuidanceScenario(topic: string, userMessage: string): GuidanceScen
   return 'general';
 }
 
-function buildGuidanceQuestion(topic: string, userMessage: string): string {
+function buildGuidanceQuestion(
+  topic: string,
+  userMessage: string,
+  activeScenario: KnowledgeDocScenario | null
+): string {
+  if (activeScenario?.presetKey === 'okr') {
+    return '为了把这份 OKR 补完整，你想先补充 O1 的目标描述、KR 的量化目标，还是负责人和时间周期？';
+  }
+  if (activeScenario?.presetKey === 'prd') {
+    return '为了把这份 PRD 写扎实，你想先补充目标用户、关键场景，还是成功指标和验证方式？';
+  }
+  if (activeScenario?.presetKey === 'prompt') {
+    return '为了把这份 Prompt 写完整，你想先补充输入信息、输出格式，还是必须遵守的约束条件？';
+  }
+  if (activeScenario?.presetKey === 'analysis') {
+    return '为了把这份分析报告补充完整，你想先补充分析对象、关键证据，还是风险与建议动作？';
+  }
+  if (activeScenario?.presetKey === 'learning') {
+    return '为了把这份学习笔记更完整，你想先补充核心概念、知识脉络，还是后续值得继续追问的问题？';
+  }
+  if (activeScenario?.presetKey === 'custom') {
+    const anchors = extractScenarioPromptAnchors(activeScenario.structure, 3);
+    if (anchors.length > 0) {
+      return `为了把「${activeScenario.label}」补完整，你想先补充「${anchors.join(' / ')}」中的哪一部分？`;
+    }
+  }
   const scenario = inferGuidanceScenario(topic, userMessage);
   if (scenario === 'okr') {
     return '你想先补充项目背景、时间周期，还是关键结果的目标值？';
@@ -216,12 +260,13 @@ function appendGuidanceTail(input: {
   topic: string;
   userMessage: string;
   hasKnowledgeDoc: boolean;
+  activeScenario: KnowledgeDocScenario | null;
 }): string {
   const base = input.answer.trim().replace(/\n{3,}/g, '\n\n');
   const docHint = input.hasKnowledgeDoc
     ? '如果这部分内容合适，我也可以帮你把它更新到知识文档。'
     : '如果这部分内容合适，我也可以帮你把它整理成知识文档。';
-  const question = buildGuidanceQuestion(input.topic, input.userMessage);
+  const question = buildGuidanceQuestion(input.topic, input.userMessage, input.activeScenario);
   const sections = [base];
   if (!/知识文档/.test(base)) {
     sections.push(docHint);
@@ -258,7 +303,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const [latestResearchState, knowledgeDocRow] = await Promise.all([
+    const [latestResearchState, knowledgeDocRow, knowledgeDocScenarioRow] = await Promise.all([
       getLatestResearchState(notebookId),
       db
         .select({ content: notes.content })
@@ -266,7 +311,18 @@ export async function POST(request: Request) {
         .where(and(eq(notes.notebookId, notebookId), eq(notes.title, KNOWLEDGE_DOC_NOTE_TITLE)))
         .limit(1)
         .then((rows) => rows[0] ?? null),
+      db
+        .select({ content: notes.content })
+        .from(notes)
+        .where(and(eq(notes.notebookId, notebookId), eq(notes.title, KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE)))
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
     ]);
+    const knowledgeDocScenarioState = parseKnowledgeDocScenarioState(knowledgeDocScenarioRow?.content);
+    const activeKnowledgeDocScenario =
+      knowledgeDocScenarioState.activeScenarioId != null
+        ? resolveKnowledgeDocScenario(knowledgeDocScenarioState, knowledgeDocScenarioState.activeScenarioId)
+        : null;
     const onboardingTopic = latestResearchState?.state.topic?.trim() ?? '';
     const shouldGuideForKnowledgeDoc =
       Boolean(onboardingTopic) && !hasMeaningfulKnowledgeDoc(knowledgeDocRow?.content);
@@ -699,7 +755,10 @@ export async function POST(request: Request) {
     const onboardingGuideRule = shouldGuideForKnowledgeDoc
       ? `\nCurrent notebook topic: ${onboardingTopic}.\nThe user is still clarifying information for a future knowledge document. Keep the answer aware of missing context and emphasize the most reusable points for later structuring into a knowledge document.`
       : '';
-    const systemPrompt = `You are a helpful assistant. Unless the user explicitly requests another language, always answer in Simplified Chinese. Answer based only on the provided sources and script insights. Always cite source numbers like [1] when using source chunks. If script insights are used, explicitly mention "脚本分析" in your answer. If the question cannot be answered from provided context, say so.${skillTemplateRule}${viralSkillRule}${paperInsightRule}${onboardingGuideRule}`;
+    const activeScenarioRule = activeKnowledgeDocScenario
+      ? `\nCurrent knowledge document scenario: ${activeKnowledgeDocScenario.label}.\nPreferred structure anchors: ${extractScenarioPromptAnchors(activeKnowledgeDocScenario.structure, 6).join(' / ') || activeKnowledgeDocScenario.structure.slice(0, 300)}.\nWhen helpful, steer the user to补充更适合写入该结构的事实、目标、指标、约束或证据。`
+      : '';
+    const systemPrompt = `You are a helpful assistant. Unless the user explicitly requests another language, always answer in Simplified Chinese. Answer based only on the provided sources and script insights. Always cite source numbers like [1] when using source chunks. If script insights are used, explicitly mention "脚本分析" in your answer. If the question cannot be answered from provided context, say so.${skillTemplateRule}${viralSkillRule}${paperInsightRule}${onboardingGuideRule}${activeScenarioRule}`;
     const userPrompt = `Notebook topic: ${onboardingTopic || access.notebook.title}\n\nSources:\n${context}\n\nScript Insights:\n${scriptContext || '(none)'}\n\nUser question: ${userMessage.trim()}`;
     const chatMessages = [
       { role: 'system' as const, content: systemPrompt },
@@ -723,6 +782,7 @@ export async function POST(request: Request) {
       topic: onboardingTopic || access.notebook.title,
       userMessage: userMessage.trim(),
       hasKnowledgeDoc: hasMeaningfulKnowledgeDoc(knowledgeDocRow?.content),
+      activeScenario: activeKnowledgeDocScenario,
     });
     const hasWebSummaryCitations =
       rowsForCitations.length > 0 && rowsForCitations.some(({ row }) => isWebSearchMime(row.mime));

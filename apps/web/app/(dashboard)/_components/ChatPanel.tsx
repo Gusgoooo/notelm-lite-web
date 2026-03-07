@@ -572,7 +572,6 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     window.dispatchEvent(
       new CustomEvent('knowledge-doc-generate-request', {
         detail: {
-          scenario: 'auto',
           mode: knowledgeDocState.exists ? 'update' : 'create',
         },
       })

@@ -5,6 +5,7 @@ import {
   KNOWLEDGE_UNIT_NOTE_TITLE,
   KNOWLEDGE_UNIT_TEMP_NOTE_PREFIX,
   KNOWLEDGE_DOC_NOTE_TITLE,
+  KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE,
 } from '@/lib/knowledge-unit';
 
 export async function GET(
@@ -30,6 +31,7 @@ export async function GET(
         (item) =>
           item.title !== KNOWLEDGE_UNIT_NOTE_TITLE &&
           item.title !== KNOWLEDGE_DOC_NOTE_TITLE &&
+          item.title !== KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE &&
           !item.title.startsWith(KNOWLEDGE_UNIT_TEMP_NOTE_PREFIX)
       )
     );

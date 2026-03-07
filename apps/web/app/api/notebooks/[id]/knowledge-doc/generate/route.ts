@@ -1,50 +1,28 @@
 import { NextResponse } from 'next/server';
 import { and, db, eq, notes, sourceChunks, sources } from 'db';
 import { chat } from 'shared';
+import {
+  getDefaultKnowledgeDocScenarioState,
+  normalizeKnowledgeDocScenarioState,
+  resolveKnowledgeDocScenario,
+} from '@/lib/knowledge-doc-scenarios';
 import { getNotebookAccess } from '@/lib/notebook-access';
-import { KNOWLEDGE_DOC_NOTE_TITLE } from '@/lib/knowledge-unit';
-
-const DOC_SCENARIOS = {
-  auto: {
-    label: '自动选择',
-    instruction:
-      '请先判断这些来源更适合整理成哪种知识文档，再给出一份最适合继续工作和讨论的初稿。',
-  },
-  okr: {
-    label: 'OKR撰写',
-    instruction:
-      '请将来源整理成一份可直接讨论的 OKR 初稿，突出目标、关键结果、衡量方式和当前依据。',
-  },
-  prd: {
-    label: 'PRD撰写',
-    instruction:
-      '请将来源整理成一份偏产品需求文档的初稿，重点写清背景、目标用户、核心场景、功能方向和验证方式。',
-  },
-  prompt: {
-    label: 'Prompt撰写',
-    instruction:
-      '请将来源整理成一份可执行的 Prompt 初稿，包含任务目标、输入信息、输出要求、约束条件和示例表达。',
-  },
-  analysis: {
-    label: '分析报告',
-    instruction:
-      '请将来源整理成一份分析报告初稿，强调核心结论、关键依据、主要分歧、风险和后续建议。',
-  },
-  learning: {
-    label: '知识学习',
-    instruction:
-      '请将来源整理成一份便于学习吸收的知识文档初稿，结构清晰，突出概念、脉络、重点结论和可继续追问的问题。',
-  },
-} as const;
-
-type DocScenarioKey = keyof typeof DOC_SCENARIOS;
-
-function isDocScenarioKey(value: string): value is DocScenarioKey {
-  return value in DOC_SCENARIOS;
-}
+import {
+  KNOWLEDGE_DOC_NOTE_TITLE,
+  KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE,
+} from '@/lib/knowledge-unit';
 
 function stripHtml(value: string): string {
   return value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function parseScenarioState(raw: string | null | undefined) {
+  if (!raw) return getDefaultKnowledgeDocScenarioState();
+  try {
+    return normalizeKnowledgeDocScenarioState(JSON.parse(raw));
+  } catch {
+    return getDefaultKnowledgeDocScenarioState();
+  }
 }
 
 export async function POST(
@@ -62,16 +40,31 @@ export async function POST(
     }
 
     const body = await request.json().catch(() => ({}));
-    const rawScenario = typeof body?.scenario === 'string' ? body.scenario.trim() : 'auto';
-    const scenario = isDocScenarioKey(rawScenario) ? rawScenario : 'auto';
+    const rawScenarioId = typeof body?.scenarioId === 'string' ? body.scenarioId.trim() : '';
+    const rawScenario = typeof body?.scenario === 'string' ? body.scenario.trim() : '';
     const rawMode = typeof body?.mode === 'string' ? body.mode.trim() : 'create';
     const mode = rawMode === 'update' ? 'update' : 'create';
 
-    const [docRow] = await db
-      .select({ content: notes.content })
-      .from(notes)
-      .where(and(eq(notes.notebookId, notebookId), eq(notes.title, KNOWLEDGE_DOC_NOTE_TITLE)))
-      .limit(1);
+    const [docRow, scenarioRow] = await Promise.all([
+      db
+        .select({ content: notes.content })
+        .from(notes)
+        .where(and(eq(notes.notebookId, notebookId), eq(notes.title, KNOWLEDGE_DOC_NOTE_TITLE)))
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
+      db
+        .select({ content: notes.content })
+        .from(notes)
+        .where(and(eq(notes.notebookId, notebookId), eq(notes.title, KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE)))
+        .limit(1)
+        .then((rows) => rows[0] ?? null),
+    ]);
+
+    const scenarioState = parseScenarioState(scenarioRow?.content);
+    const selectedScenario = resolveKnowledgeDocScenario(
+      scenarioState,
+      rawScenarioId || rawScenario || scenarioState.activeScenarioId
+    );
 
     const chunkLimit = mode === 'update' ? 72 : 56;
     const rows = await db
@@ -91,7 +84,6 @@ export async function POST(
       );
     }
 
-    const scenarioConfig = DOC_SCENARIOS[scenario];
     const currentContent = stripHtml(docRow?.content ?? '');
     const sourceContext = rows
       .map((row, index) => `[来源${index + 1}] ${row.sourceTitle}\n${row.content}`)
@@ -99,24 +91,25 @@ export async function POST(
       .slice(0, 24_000);
 
     const systemPrompt = `你是知识文档起草助手。
-你的任务是基于来源内容，生成一份结构清晰、可以直接继续编辑的知识文档初稿。
+你的任务是基于来源内容，按照给定结构，生成一份结构清晰、可直接继续编辑的知识文档。
 
 输出要求：
-1. 输出 Markdown，允许使用 #、##、### 标题和正文段落。
+1. 严格输出 Markdown，可使用 #、##、### 标题、段落和列表。
 2. 不要输出代码块，不要使用表格。
-3. 内容要具体，优先提炼来源里反复出现的结论、证据、争议和行动项。
-4. 不要编造来源中没有的信息。
-5. 文字风格偏工作文档，便于继续编辑，而不是写成聊天回复。`;
+3. 优先沿用指定结构，不要随意改写栏目顺序。
+4. 如果信息不足，也要保留结构，并使用“待补充”占位，不要省略关键栏目。
+5. 内容必须来自当前知识文档、来源和上下文，不要编造。
+6. 风格要偏工作文档，便于后续继续编辑。`;
 
     const userPrompt =
       `当前任务模式：${mode === 'update' ? '更新已有知识文档' : '生成新的知识文档初稿'}\n` +
-      `目标场景：${scenarioConfig.label}\n` +
-      `场景要求：${scenarioConfig.instruction}\n\n` +
+      `目标场景：${selectedScenario.label}\n` +
+      `必须遵循的输出结构：\n${selectedScenario.structure}\n\n` +
       `当前知识文档：\n${currentContent || '（空）'}\n\n` +
       `来源摘录：\n${sourceContext}\n\n` +
       (mode === 'update'
-        ? '请在保留当前知识文档主线的前提下，吸收新来源内容，输出更新后的完整知识文档。'
-        : '请直接生成一份可继续编辑的完整知识文档初稿。');
+        ? '请在保留当前知识文档主线的前提下，按照上述结构吸收新来源内容，输出更新后的完整知识文档。'
+        : '请直接按照上述结构生成一份可继续编辑的完整知识文档初稿。');
 
     const { content } = await chat([
       { role: 'system', content: systemPrompt },
@@ -130,8 +123,8 @@ export async function POST(
 
     return NextResponse.json({
       suggestedContent,
-      scenario,
-      scenarioLabel: scenarioConfig.label,
+      scenarioId: selectedScenario.id,
+      scenarioLabel: selectedScenario.label,
     });
   } catch (error) {
     console.error(error);

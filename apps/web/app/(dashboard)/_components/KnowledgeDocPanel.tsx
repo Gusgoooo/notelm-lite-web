@@ -4,6 +4,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import DiffMatchPatch from 'diff-match-patch';
+import {
+  extractScenarioPromptAnchors,
+  getDefaultKnowledgeDocScenarioState,
+  normalizeKnowledgeDocScenarioState,
+  summarizeScenarioStructure,
+  type BuiltinKnowledgeDocScenarioId,
+  type KnowledgeDocScenario,
+  type KnowledgeDocScenarioId,
+  type KnowledgeDocScenarioState,
+} from '@/lib/knowledge-doc-scenarios';
 import { KnowledgeDocCreateButton } from './KnowledgeDocCreateButton';
 
 type KnowledgeDocPanelProps = {
@@ -12,10 +22,10 @@ type KnowledgeDocPanelProps = {
   onToggleCollapse?: () => void;
 };
 
-type DraftScenarioKey = 'auto' | 'okr' | 'prd' | 'prompt' | 'analysis' | 'learning';
 type CreationMode = 'infographic' | 'summary' | 'mindmap' | 'report' | 'webpage';
 type SheetMode = 'draft' | 'create' | null;
 type HistoryMode = 'append' | 'merge-edit' | 'skip';
+type ScenarioEditorMode = 'create' | 'clone' | 'edit';
 
 type KnowledgeDocCitation = {
   sourceTitle: string;
@@ -114,7 +124,7 @@ function CreationIcon({ mode }: { mode: CreationMode }) {
   );
 }
 
-function DraftIcon({ scenario }: { scenario: DraftScenarioKey }) {
+function DraftIcon({ scenario }: { scenario: BuiltinKnowledgeDocScenarioId | 'custom' }) {
   if (scenario === 'auto') {
     return (
       <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
@@ -160,12 +170,62 @@ function DraftIcon({ scenario }: { scenario: DraftScenarioKey }) {
       </svg>
     );
   }
+  if (scenario === 'custom') {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M12 5v14M5 12h14" />
+        <rect x="4" y="4" width="16" height="16" rx="4" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M6 5h12v14H6z" />
       <path d="M9 9h6M9 13h6M9 17h4" />
     </svg>
   );
+}
+
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function AddScenarioIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function getScenarioCardClass(scenario: KnowledgeDocScenario): string {
+  if (!scenario.builtIn) {
+    return 'border border-gray-200 bg-white text-gray-800 hover:bg-gray-50';
+  }
+  if (scenario.accent === 'sky') return 'bg-sky-50 text-sky-700 hover:bg-sky-100';
+  if (scenario.accent === 'emerald') return 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100';
+  if (scenario.accent === 'amber') return 'bg-amber-50 text-amber-700 hover:bg-amber-100';
+  if (scenario.accent === 'violet') return 'bg-violet-50 text-violet-700 hover:bg-violet-100';
+  if (scenario.accent === 'rose') return 'bg-rose-50 text-rose-700 hover:bg-rose-100';
+  return 'bg-slate-100 text-slate-700 hover:bg-slate-200';
+}
+
+function getScenarioActiveBadgeClass(scenario: KnowledgeDocScenario): string {
+  if (scenario.accent === 'sky') return 'bg-sky-100 text-sky-700';
+  if (scenario.accent === 'emerald') return 'bg-emerald-100 text-emerald-700';
+  if (scenario.accent === 'amber') return 'bg-amber-100 text-amber-700';
+  if (scenario.accent === 'violet') return 'bg-violet-100 text-violet-700';
+  if (scenario.accent === 'rose') return 'bg-rose-100 text-rose-700';
+  return 'bg-slate-200 text-slate-700';
+}
+
+function buildScenarioPreview(structure: string): string {
+  return extractScenarioPromptAnchors(structure, 3).join(' / ') || summarizeScenarioStructure(structure);
 }
 
 function escapeHtml(value: string): string {
@@ -599,55 +659,26 @@ export function KnowledgeDocPanel({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [docHistory, setDocHistory] = useState<KnowledgeDocHistoryEntry[]>([]);
-  const [draftScenarioLoading, setDraftScenarioLoading] = useState<DraftScenarioKey | null>(null);
+  const [scenarioState, setScenarioState] = useState<KnowledgeDocScenarioState>(getDefaultKnowledgeDocScenarioState);
+  const [draftScenarioLoading, setDraftScenarioLoading] = useState<KnowledgeDocScenarioId | null>(null);
   const [creationGenerating, setCreationGenerating] = useState<CreationMode | null>(null);
   const [externalBusy, setExternalBusy] = useState(false);
   const [externalBusyLabel, setExternalBusyLabel] = useState('正在更新知识文档…');
+  const [scenarioEditorOpen, setScenarioEditorOpen] = useState(false);
+  const [scenarioEditorMode, setScenarioEditorMode] = useState<ScenarioEditorMode>('create');
+  const [scenarioEditorSourceId, setScenarioEditorSourceId] = useState<KnowledgeDocScenarioId | null>(null);
+  const [scenarioTitleDraft, setScenarioTitleDraft] = useState('');
+  const [scenarioStructureDraft, setScenarioStructureDraft] = useState('');
+  const [scenarioEditorSaving, setScenarioEditorSaving] = useState(false);
 
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialContentRef = useRef<string | null>(null);
   const docHistoryRef = useRef<KnowledgeDocHistoryEntry[]>([]);
 
-  const draftScenarios = useMemo(
-    () => [
-      {
-        key: 'auto' as const,
-        label: '自动选择',
-        hint: '根据来源自动归纳最适合的初稿结构',
-        className: 'bg-sky-50 text-sky-700 hover:bg-sky-100',
-      },
-      {
-        key: 'okr' as const,
-        label: 'OKR撰写',
-        hint: '整理目标、关键结果和衡量方式',
-        className: 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
-      },
-      {
-        key: 'prd' as const,
-        label: 'PRD撰写',
-        hint: '聚焦用户、场景、方案和验证',
-        className: 'bg-amber-50 text-amber-700 hover:bg-amber-100',
-      },
-      {
-        key: 'prompt' as const,
-        label: 'Prompt撰写',
-        hint: '沉淀任务目标、输入和输出约束',
-        className: 'bg-violet-50 text-violet-700 hover:bg-violet-100',
-      },
-      {
-        key: 'analysis' as const,
-        label: '分析报告',
-        hint: '提炼结论、依据、风险和建议',
-        className: 'bg-rose-50 text-rose-700 hover:bg-rose-100',
-      },
-      {
-        key: 'learning' as const,
-        label: '知识学习',
-        hint: '生成便于学习吸收的结构化笔记',
-        className: 'bg-slate-100 text-slate-700 hover:bg-slate-200',
-      },
-    ],
-    []
+  const draftScenarios = useMemo(() => scenarioState.scenarios, [scenarioState.scenarios]);
+  const activeScenario = useMemo(
+    () => draftScenarios.find((item) => item.id === scenarioState.activeScenarioId) ?? null,
+    [draftScenarios, scenarioState.activeScenarioId]
   );
 
   const creationActions = useMemo(
@@ -715,9 +746,11 @@ export function KnowledgeDocPanel({
       const nextContent = rawContent.includes('<') ? rawContent : markdownToHtml(rawContent);
       const nextId = typeof data?.id === 'string' ? data.id : null;
       const storedHistory = normalizeHistoryEntries(data?.history);
+      const nextScenarioState = normalizeKnowledgeDocScenarioState(data?.scenarioState);
       setDocId(nextId);
       setContent(nextContent || '<p></p>');
       initialContentRef.current = nextContent || '<p></p>';
+      setScenarioState(nextScenarioState);
       setDocHistory(
         storedHistory.length > 0
           ? storedHistory
@@ -754,10 +787,12 @@ export function KnowledgeDocPanel({
         const data = await res.json().catch(() => ({}));
         const next = typeof data?.content === 'string' ? data.content : html;
         const nextId = typeof data?.id === 'string' ? data.id : docId;
+        const nextScenarioState = normalizeKnowledgeDocScenarioState(data?.scenarioState);
         setDocHistory(normalizeHistoryEntries(data?.history).length > 0 ? normalizeHistoryEntries(data?.history) : nextHistory);
         initialContentRef.current = next;
         setDocId(nextId ?? null);
         setContent(next);
+        setScenarioState(nextScenarioState);
         emitDocStatus(nextId ?? null, next);
         return { id: nextId ?? null, content: next };
       } finally {
@@ -773,6 +808,24 @@ export function KnowledgeDocPanel({
     const saved = await saveDoc(currentHtml);
     return saved?.id ?? null;
   }, [content, docId, saveDoc]);
+
+  const saveScenarioState = useCallback(
+    async (nextScenarioState: KnowledgeDocScenarioState) => {
+      if (!notebookId) return;
+      const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenarioState: nextScenarioState }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error ?? '保存知识文档结构失败');
+      }
+      const data = await res.json().catch(() => ({}));
+      setScenarioState(normalizeKnowledgeDocScenarioState(data?.scenarioState));
+    },
+    [notebookId]
+  );
 
   const editor = useEditor({
     extensions: [StarterKit],
@@ -816,6 +869,91 @@ export function KnowledgeDocPanel({
   const docHasContent = hasMeaningfulHtml(currentHtml);
   const panelBusy = updatingFromChat || externalBusy;
 
+  const openScenarioEditor = useCallback(
+    (mode: ScenarioEditorMode, scenario?: KnowledgeDocScenario | null) => {
+      if (mode === 'create') {
+        setScenarioEditorMode('create');
+        setScenarioEditorSourceId(null);
+        setScenarioTitleDraft('');
+        setScenarioStructureDraft(
+          '# 自定义结构\n## 模块一\n- 待补充\n\n## 模块二\n- 待补充'
+        );
+      } else if (scenario) {
+        setScenarioEditorMode(mode);
+        setScenarioEditorSourceId(scenario.id);
+        setScenarioTitleDraft(mode === 'clone' ? `${scenario.label} 自定义版` : scenario.label);
+        setScenarioStructureDraft(scenario.structure);
+      }
+      setScenarioEditorOpen(true);
+    },
+    []
+  );
+
+  const closeScenarioEditor = useCallback((force = false) => {
+    if (scenarioEditorSaving && !force) return;
+    setScenarioEditorOpen(false);
+    setScenarioEditorSourceId(null);
+    setScenarioTitleDraft('');
+    setScenarioStructureDraft('');
+  }, [scenarioEditorSaving]);
+
+  const handleSaveScenario = useCallback(async () => {
+    const nextTitle = scenarioTitleDraft.trim().slice(0, 40);
+    const nextStructure = scenarioStructureDraft.trim().slice(0, 12000);
+    if (!nextTitle || !nextStructure) return;
+
+    const nextScenario: KnowledgeDocScenario = {
+      id:
+        scenarioEditorMode === 'edit' && scenarioEditorSourceId
+          ? scenarioEditorSourceId
+          : (`custom-${Date.now().toString(36)}` as KnowledgeDocScenarioId),
+      presetKey: 'custom',
+      label: nextTitle,
+      hint: summarizeScenarioStructure(nextStructure),
+      structure: nextStructure,
+      builtIn: false,
+      accent: 'slate',
+    };
+
+    const nextScenarioState: KnowledgeDocScenarioState =
+      scenarioEditorMode === 'edit' && scenarioEditorSourceId
+        ? {
+            ...scenarioState,
+            scenarios: scenarioState.scenarios.map((item) =>
+              item.id === scenarioEditorSourceId ? nextScenario : item
+            ),
+            activeScenarioId:
+              scenarioState.activeScenarioId === scenarioEditorSourceId
+                ? nextScenario.id
+                : scenarioState.activeScenarioId,
+          }
+        : {
+            ...scenarioState,
+            scenarios: [...scenarioState.scenarios, nextScenario],
+            activeScenarioId: scenarioState.activeScenarioId,
+          };
+
+      setScenarioEditorSaving(true);
+    try {
+      setScenarioState(nextScenarioState);
+      await saveScenarioState(nextScenarioState);
+      closeScenarioEditor(true);
+    } catch (error) {
+      setScenarioState(scenarioState);
+      alert(error instanceof Error ? error.message : '保存场景失败');
+    } finally {
+      setScenarioEditorSaving(false);
+    }
+  }, [
+    closeScenarioEditor,
+    saveScenarioState,
+    scenarioEditorMode,
+    scenarioEditorSourceId,
+    scenarioState,
+    scenarioStructureDraft,
+    scenarioTitleDraft,
+  ]);
+
   const applyGeneratedText = useCallback(
     async (nextText: string, options: SaveDocOptions = {}) => {
       const newHtml = markdownToHtml(nextText);
@@ -826,24 +964,33 @@ export function KnowledgeDocPanel({
   );
 
   const runDraftGeneration = useCallback(
-    async (scenario: DraftScenarioKey, mode: 'create' | 'update') => {
+    async (scenarioId: KnowledgeDocScenarioId, mode: 'create' | 'update') => {
       if (!notebookId || draftScenarioLoading) return;
-      const noticeId = `draft-${Date.now()}-${scenario}`;
+      const scenarioConfig = draftScenarios.find((item) => item.id === scenarioId);
+      if (!scenarioConfig) return;
+      const noticeId = `draft-${Date.now()}-${scenarioId}`;
       setSheetMode(null);
-      setDraftScenarioLoading(scenario);
-      const scenarioLabel = draftScenarios.find((item) => item.key === scenario)?.label ?? '当前场景';
+      setDraftScenarioLoading(scenarioId);
+      const scenarioLabel = scenarioConfig.label;
       emitArtifactNotice({
         id: noticeId,
         state: 'running',
         title: mode === 'update' ? `正在更新${scenarioLabel}` : `正在生成${scenarioLabel}`,
         description: '已转为后台生成，你可以继续浏览和对话。',
       });
+      const previousScenarioState = scenarioState;
       try {
         await ensureDocExists();
+        const nextScenarioState: KnowledgeDocScenarioState = {
+          ...scenarioState,
+          activeScenarioId: scenarioConfig.id,
+        };
+        setScenarioState(nextScenarioState);
+        await saveScenarioState(nextScenarioState);
         const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc/generate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scenario, mode }),
+          body: JSON.stringify({ scenarioId: scenarioConfig.id, mode }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || typeof data?.suggestedContent !== 'string') {
@@ -861,6 +1008,7 @@ export function KnowledgeDocPanel({
           description: '右侧知识文档已完成更新。',
         });
       } catch (error) {
+        setScenarioState(previousScenarioState);
         emitArtifactNotice({
           id: noticeId,
           state: 'error',
@@ -871,7 +1019,7 @@ export function KnowledgeDocPanel({
         setDraftScenarioLoading(null);
       }
     },
-    [applyGeneratedText, draftScenarioLoading, draftScenarios, ensureDocExists, notebookId]
+    [applyGeneratedText, draftScenarioLoading, draftScenarios, ensureDocExists, notebookId, saveScenarioState, scenarioState]
   );
 
   const runCreationGenerate = useCallback(
@@ -1048,8 +1196,11 @@ export function KnowledgeDocPanel({
     };
 
     const onGenerateRequest = (event: Event) => {
-      const detail = (event as CustomEvent<{ scenario?: DraftScenarioKey; mode?: 'create' | 'update' }>).detail;
-      void runDraftGeneration(detail?.scenario ?? 'auto', detail?.mode ?? (docHasContent ? 'update' : 'create'));
+      const detail = (event as CustomEvent<{ scenarioId?: string; scenario?: string; mode?: 'create' | 'update' }>).detail;
+      void runDraftGeneration(
+        (detail?.scenarioId ?? detail?.scenario ?? 'auto') as KnowledgeDocScenarioId,
+        detail?.mode ?? (docHasContent ? 'update' : 'create')
+      );
     };
 
     const onOpenCreationDrawer = () => {
@@ -1321,9 +1472,14 @@ export function KnowledgeDocPanel({
                 </h3>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   {sheetMode === 'draft'
-                    ? '先生成一版可继续编辑的知识文档初稿。'
+                    ? '先选择一个结构模板，系统会按该结构自动填充内容。'
                     : '从当前知识文档快速生成结构化内容。'}
                 </p>
+                {sheetMode === 'draft' && activeScenario ? (
+                  <p className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                    当前生效结构：{activeScenario.label}
+                  </p>
+                ) : null}
               </div>
               <button
                 type="button"
@@ -1340,21 +1496,79 @@ export function KnowledgeDocPanel({
 
             {sheetMode === 'draft' ? (
               <div className="grid grid-cols-2 gap-3 px-1 py-5">
-                {draftScenarios.map(({ key, label, hint, className }) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => void runDraftGeneration(key, docHasContent ? 'update' : 'create')}
-                    disabled={draftScenarioLoading != null}
-                    className={`flex min-h-[82px] flex-col items-start justify-between rounded-[18px] px-4 py-3 text-left transition disabled:opacity-50 ${className}`}
-                  >
-                    <span className="inline-flex items-center gap-2 text-sm font-semibold">
-                      <DraftIcon scenario={key} />
-                      {draftScenarioLoading === key ? '生成中…' : label}
+                {draftScenarios.map((scenario) => {
+                  const isActive = scenarioState.activeScenarioId === scenario.id;
+                  const isLoading = draftScenarioLoading === scenario.id;
+                  const preview = buildScenarioPreview(scenario.structure);
+                  return (
+                    <div
+                      key={scenario.id}
+                      className={`group relative min-h-[128px] rounded-[18px] transition ${draftScenarioLoading != null ? 'opacity-50' : ''}`}
+                    >
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          openScenarioEditor(scenario.builtIn ? 'clone' : 'edit', scenario);
+                        }}
+                        className="absolute right-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-white/88 text-gray-700 opacity-0 shadow-sm transition hover:bg-white group-hover:opacity-100 dark:border-white/10 dark:bg-gray-900/90 dark:text-gray-100"
+                        aria-label={scenario.builtIn ? '另存为新场景' : '编辑场景'}
+                      >
+                        <EditIcon />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void runDraftGeneration(scenario.id, docHasContent ? 'update' : 'create')}
+                        disabled={draftScenarioLoading != null}
+                        className={`flex h-full w-full min-h-[128px] flex-col items-start justify-between rounded-[18px] px-4 py-3 text-left transition ${getScenarioCardClass(scenario)}`}
+                      >
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-2 pr-8">
+                            <span className="inline-flex items-center gap-2 text-sm font-semibold">
+                              <DraftIcon scenario={scenario.presetKey} />
+                              {isLoading ? '生成中…' : scenario.label}
+                            </span>
+                            {isActive ? (
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${getScenarioActiveBadgeClass(scenario)}`}
+                              >
+                                当前结构
+                              </span>
+                            ) : null}
+                            {!scenario.builtIn ? (
+                              <span className="rounded-full bg-black/[0.06] px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-white/10 dark:text-gray-300">
+                                自定义
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="text-xs leading-5 text-black/55 dark:text-white/60">{scenario.hint}</p>
+                        </div>
+                        <div className="w-full rounded-[14px] bg-white/58 px-3 py-2 text-[11px] leading-5 text-black/60 dark:bg-black/10 dark:text-white/70">
+                          {preview}
+                        </div>
+                      </button>
+                    </div>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => openScenarioEditor('create')}
+                  className="flex min-h-[128px] flex-col items-start justify-between rounded-[18px] border border-dashed border-gray-300 bg-white px-4 py-3 text-left transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+                >
+                  <div className="space-y-2">
+                    <span className="inline-flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100">
+                      <AddScenarioIcon />
+                      新增自定义结构
                     </span>
-                    <span className="text-xs text-black/55 dark:text-white/60">{hint}</span>
-                  </button>
-                ))}
+                    <p className="text-xs leading-5 text-gray-500 dark:text-gray-400">
+                      自定义标题和输出结构，保存后会作为一个新的场景卡片。
+                    </p>
+                  </div>
+                  <div className="rounded-[14px] border border-dashed border-gray-300 px-3 py-2 text-[11px] leading-5 text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                    自定义结构 / 模块 / 提示语
+                  </div>
+                </button>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3 px-1 py-5">
@@ -1375,6 +1589,93 @@ export function KnowledgeDocPanel({
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      ) : null}
+
+      {scenarioEditorOpen ? (
+        <div
+          className="app-modal-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeScenarioEditor();
+            }
+          }}
+        >
+          <div className="w-full max-w-2xl rounded-[24px] bg-white p-5 shadow-xl dark:bg-gray-900">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  {scenarioEditorMode === 'edit' ? '编辑自定义场景' : '配置场景结构'}
+                </h3>
+                <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                  {scenarioEditorMode === 'clone'
+                    ? '基于当前预置场景调整标题和输出结构，保存后会生成一个新的自定义场景。'
+                    : scenarioEditorMode === 'edit'
+                      ? '修改这个自定义场景的标题和结构。'
+                      : '新增一个自定义场景，系统会按你定义的结构生成和更新知识文档。'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => closeScenarioEditor()}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                aria-label="关闭场景编辑"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="m18 6-12 12M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-gray-600 dark:text-gray-300">场景标题</label>
+                <input
+                  value={scenarioTitleDraft}
+                  onChange={(event) => setScenarioTitleDraft(event.target.value)}
+                  maxLength={40}
+                  className="h-10 w-full rounded-[14px] border border-gray-200 bg-white px-3 text-sm text-gray-900 outline-none transition focus:border-gray-300 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+                  placeholder="例如：团队 OKR / 活动复盘框架"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-gray-600 dark:text-gray-300">输出结构</label>
+                <textarea
+                  value={scenarioStructureDraft}
+                  onChange={(event) => setScenarioStructureDraft(event.target.value)}
+                  className="min-h-[320px] w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-sm leading-6 text-gray-900 outline-none transition focus:border-gray-300 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+                  placeholder={`# 结构标题\n## 模块一\n- 待补充\n\n## 模块二\n- 待补充`}
+                />
+                <p className="text-[11px] leading-5 text-gray-500 dark:text-gray-400">
+                  这里可以直接写成类似 Prompt 的结构说明。生成和更新知识文档时，系统会尽量严格按这个结构填充内容。
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => closeScenarioEditor()}
+                className="inline-flex h-9 items-center rounded-[12px] border border-gray-300 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSaveScenario()}
+                disabled={!scenarioTitleDraft.trim() || !scenarioStructureDraft.trim() || scenarioEditorSaving}
+                className="inline-flex h-9 items-center rounded-[12px] bg-black px-3 text-xs font-medium text-white transition hover:bg-black/92 disabled:opacity-60"
+              >
+                {scenarioEditorSaving
+                  ? '保存中…'
+                  : scenarioEditorMode === 'clone'
+                    ? '保存为新场景'
+                    : scenarioEditorMode === 'edit'
+                      ? '保存场景'
+                      : '保存新场景'}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

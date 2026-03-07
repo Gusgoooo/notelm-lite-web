@@ -1,7 +1,16 @@
 import { NextResponse } from 'next/server';
 import { db, notes, eq, and } from 'db';
 import { getNotebookAccess } from '@/lib/notebook-access';
-import { KNOWLEDGE_DOC_HISTORY_NOTE_TITLE, KNOWLEDGE_DOC_NOTE_TITLE } from '@/lib/knowledge-unit';
+import {
+  getDefaultKnowledgeDocScenarioState,
+  normalizeKnowledgeDocScenarioState,
+  type KnowledgeDocScenarioState,
+} from '@/lib/knowledge-doc-scenarios';
+import {
+  KNOWLEDGE_DOC_HISTORY_NOTE_TITLE,
+  KNOWLEDGE_DOC_NOTE_TITLE,
+  KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE,
+} from '@/lib/knowledge-unit';
 
 type KnowledgeDocHistoryEntry = {
   id: string;
@@ -36,6 +45,15 @@ function parseStoredHistory(raw: string | null | undefined): KnowledgeDocHistory
   }
 }
 
+function parseStoredScenarioState(raw: string | null | undefined): KnowledgeDocScenarioState {
+  if (!raw) return getDefaultKnowledgeDocScenarioState();
+  try {
+    return normalizeKnowledgeDocScenarioState(JSON.parse(raw));
+  } catch {
+    return getDefaultKnowledgeDocScenarioState();
+  }
+}
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -63,10 +81,18 @@ export async function GET(
         and(eq(notes.notebookId, notebookId), eq(notes.title, KNOWLEDGE_DOC_HISTORY_NOTE_TITLE))
       )
       .limit(1);
+    const [scenarioRow] = await db
+      .select()
+      .from(notes)
+      .where(
+        and(eq(notes.notebookId, notebookId), eq(notes.title, KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE))
+      )
+      .limit(1);
     return NextResponse.json({
       content: row?.content ?? '',
       id: row?.id ?? null,
       history: parseStoredHistory(historyRow?.content),
+      scenarioState: parseStoredScenarioState(scenarioRow?.content),
     });
   } catch (e) {
     console.error(e);
@@ -91,8 +117,14 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     const body = await request.json();
-    const content = typeof body?.content === 'string' ? body.content : '';
-    const history = normalizeHistoryEntries(body?.history);
+    const hasContent = typeof body?.content === 'string';
+    const hasHistory = body?.history !== undefined;
+    const hasScenarioState = body?.scenarioState !== undefined;
+    const content = hasContent ? body.content : '';
+    const history = hasHistory ? normalizeHistoryEntries(body?.history) : [];
+    const scenarioState = hasScenarioState
+      ? normalizeKnowledgeDocScenarioState(body?.scenarioState)
+      : getDefaultKnowledgeDocScenarioState();
     const [existing] = await db
       .select()
       .from(notes)
@@ -107,13 +139,20 @@ export async function PATCH(
         and(eq(notes.notebookId, notebookId), eq(notes.title, KNOWLEDGE_DOC_HISTORY_NOTE_TITLE))
       )
       .limit(1);
+    const [existingScenarioState] = await db
+      .select()
+      .from(notes)
+      .where(
+        and(eq(notes.notebookId, notebookId), eq(notes.title, KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE))
+      )
+      .limit(1);
     const now = new Date();
     if (existing) {
       await db
         .update(notes)
-        .set({ content, updatedAt: now })
+        .set({ content: hasContent ? content : existing.content, updatedAt: now })
         .where(eq(notes.id, existing.id));
-      if (body?.history !== undefined) {
+      if (hasHistory) {
         if (existingHistory) {
           await db
             .update(notes)
@@ -130,7 +169,29 @@ export async function PATCH(
           });
         }
       }
-      return NextResponse.json({ id: existing.id, content, history });
+      if (hasScenarioState) {
+        if (existingScenarioState) {
+          await db
+            .update(notes)
+            .set({ content: JSON.stringify(scenarioState), updatedAt: now })
+            .where(eq(notes.id, existingScenarioState.id));
+        } else {
+          await db.insert(notes).values({
+            id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+            notebookId,
+            title: KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE,
+            content: JSON.stringify(scenarioState),
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+      }
+      return NextResponse.json({
+        id: existing.id,
+        content: hasContent ? content : existing.content,
+        history: hasHistory ? history : parseStoredHistory(existingHistory?.content),
+        scenarioState: hasScenarioState ? scenarioState : parseStoredScenarioState(existingScenarioState?.content),
+      });
     }
     const id = `note_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     await db.insert(notes).values({
@@ -141,7 +202,7 @@ export async function PATCH(
       createdAt: now,
       updatedAt: now,
     });
-    if (body?.history !== undefined) {
+    if (hasHistory) {
       await db.insert(notes).values({
         id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
         notebookId,
@@ -151,7 +212,22 @@ export async function PATCH(
         updatedAt: now,
       });
     }
-    return NextResponse.json({ id, content, history });
+    if (hasScenarioState) {
+      await db.insert(notes).values({
+        id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        notebookId,
+        title: KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE,
+        content: JSON.stringify(scenarioState),
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    return NextResponse.json({
+      id,
+      content,
+      history,
+      scenarioState,
+    });
   } catch (e) {
     console.error(e);
     return NextResponse.json(
