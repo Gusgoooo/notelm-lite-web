@@ -252,10 +252,24 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chatContentRef = useRef<HTMLDivElement>(null);
+  const selectionToastRef = useRef<HTMLDivElement>(null);
   const selectionTimerRef = useRef<number | null>(null);
   const selectionRangeRef = useRef<Range | null>(null);
   const composingRef = useRef(false);
   const bootstrapGuideTopicRef = useRef('');
+
+  const restoreSelectionRange = useCallback(() => {
+    const selection = window.getSelection();
+    const savedRange = selectionRangeRef.current?.cloneRange();
+    if (!selection || !savedRange) return;
+    try {
+      selection.removeAllRanges();
+      selection.addRange(savedRange);
+      selectionRangeRef.current = savedRange.cloneRange();
+    } catch {
+      selectionRangeRef.current = null;
+    }
+  }, []);
 
   const fetchHistoryPage = useCallback(
     async (page: number, reset: boolean) => {
@@ -636,7 +650,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         selectionTimerRef.current = null;
         const latest = getSelectionCandidate();
         setSelectionToast(latest);
-      }, 300);
+      }, 140);
     };
 
     const clearSelectionToast = () => {
@@ -657,17 +671,25 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
 
   useEffect(() => {
     if (!selectionToast || !selectionRangeRef.current) return;
-    const restoreSelection = () => {
-      const selection = window.getSelection();
-      if (!selection) return;
-      if (selection.rangeCount === 0 || selection.isCollapsed) {
-        selection.removeAllRanges();
-        selection.addRange(selectionRangeRef.current!);
-      }
+    let frameA = 0;
+    let frameB = 0;
+    const timer = window.setTimeout(() => {
+      restoreSelectionRange();
+    }, 90);
+
+    frameA = window.requestAnimationFrame(() => {
+      restoreSelectionRange();
+      frameB = window.requestAnimationFrame(() => {
+        restoreSelectionRange();
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameA);
+      window.cancelAnimationFrame(frameB);
+      window.clearTimeout(timer);
     };
-    const frame = window.requestAnimationFrame(restoreSelection);
-    return () => window.cancelAnimationFrame(frame);
-  }, [selectionToast]);
+  }, [restoreSelectionRange, selectionToast]);
 
   useEffect(() => {
     if (!selectionCopied) return;
@@ -1027,14 +1049,22 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       </ScrollArea>
       {selectionToast ? (
         <div
+          ref={selectionToastRef}
           className="fixed z-50 flex items-center gap-2 rounded-[14px] border border-gray-200 bg-white/96 p-1.5 shadow-lg backdrop-blur-sm dark:border-gray-700 dark:bg-gray-900/96"
           style={{ left: selectionToast.x, top: selectionToast.y }}
-          onMouseDown={(event) => event.preventDefault()}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            restoreSelectionRange();
+          }}
+          onMouseEnter={() => restoreSelectionRange()}
         >
           <button
             type="button"
-            className="inline-flex h-8 items-center rounded-[10px] bg-black px-3 text-[11px] font-medium text-white transition hover:bg-black/90 disabled:opacity-60 dark:bg-white dark:text-black dark:hover:bg-white/90"
-            onMouseDown={(event) => event.preventDefault()}
+            className="inline-flex h-8 items-center rounded-[10px] border border-gray-200 bg-white px-3 text-[11px] font-medium text-gray-900 transition hover:bg-gray-50 disabled:opacity-60 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              restoreSelectionRange();
+            }}
             onClick={async () => {
               if (savingSelection) return;
               setSavingSelection(true);
@@ -1060,8 +1090,11 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           </button>
           <button
             type="button"
-            className="inline-flex h-8 items-center rounded-[10px] bg-[#f4f4f5] px-3 text-[11px] font-medium text-gray-700 transition hover:bg-[#ebebed] disabled:opacity-60 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
-            onMouseDown={(event) => event.preventDefault()}
+            className="inline-flex h-8 items-center rounded-[10px] border border-gray-200 bg-white px-3 text-[11px] font-medium text-gray-900 transition hover:bg-gray-50 disabled:opacity-60 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              restoreSelectionRange();
+            }}
             onClick={async () => {
               const content =
                 (selectionRangeRef.current?.cloneContents().textContent ?? selectionToast.text).trim();
