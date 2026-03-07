@@ -802,8 +802,8 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
 
   if (!notebookId) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex h-14 items-center border-b px-4">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex h-12 items-center px-3">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
             知识库问答
           </h2>
@@ -816,13 +816,13 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-14 items-center border-b px-4">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex h-12 shrink-0 items-center px-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
           知识库问答
         </h2>
       </div>
-      <ScrollArea className="flex-1 p-4 pb-36">
+      <ScrollArea className="min-h-0 flex-1 px-3 pb-2 pt-1">
         <div ref={chatContentRef} className="mx-auto flex w-full max-w-[680px] flex-col gap-4">
           {renderResearchSection()}
           {loadingHistory ? (
@@ -1052,7 +1052,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           {savingSelection ? '更新中…' : '更新知识文档'}
         </button>
       ) : null}
-      <div className="px-4 pb-4">
+      <div className="shrink-0 bg-[#f1f1f1] px-0 pb-0 pt-0">
         <div className="mx-auto w-full max-w-[680px]">
           <form
             onSubmit={(e) => {
@@ -1073,7 +1073,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               }}
               placeholder="请输入你的问题..."
               disabled={loading}
-              className="h-[108px] w-full resize-none rounded-[20px] border border-gray-200 bg-gray-50 px-4 pb-12 pt-4 text-sm text-gray-900 shadow-sm outline-none transition focus:border-gray-300 focus:bg-white dark:border-gray-700 dark:bg-gray-900/80 dark:text-gray-100 dark:focus:border-gray-600 dark:focus:bg-gray-900"
+              className="h-[108px] w-full resize-none rounded-[20px] border border-transparent bg-white px-4 pb-12 pt-4 text-sm text-gray-900 shadow-sm outline-none transition focus:bg-white dark:bg-gray-900/80 dark:text-gray-100 dark:focus:bg-gray-900"
             />
             <button
               type="submit"

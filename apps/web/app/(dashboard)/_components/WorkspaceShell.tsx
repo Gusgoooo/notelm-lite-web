@@ -312,7 +312,7 @@ export function WorkspaceShell({
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[#f1f1f1]">
-      <div className="bg-[#f1f1f1] px-3 py-1">
+      <div className="bg-[#f1f1f1] px-0 py-1">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <Link
@@ -322,7 +322,7 @@ export function WorkspaceShell({
               <svg viewBox="0 0 24 24" className="mr-1 h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="m15 18-6-6 6-6" />
               </svg>
-              返回首页
+              返回
             </Link>
             {editingHeaderTitle ? (
               <input
@@ -383,15 +383,15 @@ export function WorkspaceShell({
       </div>
 
       {(publishError || publishSuccess) && (
-        <div className="px-3 py-2">
+        <div className="px-0 py-2">
           {publishError ? <p className="text-xs text-red-600 dark:text-red-400">{publishError}</p> : null}
           {publishSuccess ? <p className="text-xs text-green-600 dark:text-green-400">{publishSuccess}</p> : null}
         </div>
       )}
 
-      <div ref={workspaceBodyRef} className="flex min-h-0 flex-1 overflow-hidden p-3">
+      <div ref={workspaceBodyRef} className="flex min-h-0 flex-1 overflow-hidden p-0">
         <aside
-          className="shrink-0 overflow-hidden rounded-[20px] border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-950/50"
+          className="shrink-0 overflow-hidden rounded-[20px] bg-white dark:bg-gray-950/50"
           style={{ width: LEFT_PANEL_WIDTH, marginRight: PANEL_GAP }}
         >
           <SourcesPanel
@@ -402,7 +402,7 @@ export function WorkspaceShell({
           />
         </aside>
 
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-950/40">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] bg-white dark:bg-gray-950/40">
           <ChatPanel notebookId={notebookId} />
         </main>
 
@@ -410,7 +410,7 @@ export function WorkspaceShell({
           role="separator"
           aria-orientation="vertical"
           aria-label="调整知识库问答和知识文档宽度"
-          className={`relative shrink-0 ${resizing ? 'bg-blue-500/20' : 'bg-transparent'} ${docCollapsed ? 'cursor-default' : 'cursor-col-resize'}`}
+          className={`relative shrink-0 transition-colors ${resizing ? 'bg-blue-500/20' : 'bg-transparent'} ${docCollapsed ? 'cursor-default' : 'cursor-col-resize hover:bg-black/5'}`}
           style={{ width: PANEL_GAP }}
           onMouseDown={(event) => {
             if (docCollapsed) return;
@@ -421,12 +421,10 @@ export function WorkspaceShell({
             resizeStartRef.current = { startX: event.clientX, startWidth: currentWidth };
             setResizing(true);
           }}
-        >
-          <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-gray-200 dark:bg-gray-800" />
-        </div>
+        />
 
         <aside
-          className="relative flex min-h-0 shrink-0 flex-col overflow-hidden rounded-[20px] border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-950/50"
+          className="relative flex min-h-0 shrink-0 flex-col overflow-hidden rounded-[20px] bg-white dark:bg-gray-950/50"
           style={{ width: docCollapsed ? COLLAPSED_DOC_WIDTH : notesWidth ?? undefined }}
         >
           <KnowledgeDocPanel

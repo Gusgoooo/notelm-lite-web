@@ -12,6 +12,13 @@
   border-color: hsl(var(--border));
 }
 
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
 body {
   color: hsl(var(--foreground));
   background: radial-gradient(circle at top right, rgba(148, 163, 184, 0.12), transparent 40%),
