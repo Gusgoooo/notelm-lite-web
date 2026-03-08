@@ -4,7 +4,7 @@ import { getServerSession } from 'next-auth';
 import { db, notebooks, eq } from 'db';
 import { authOptions } from '@/lib/auth';
 import { saveResearchState } from '@/lib/research-state';
-import { ingestWebSources, searchWebViaOpenRouter } from '@/lib/web-research';
+import { FIXED_WEB_SOURCE_LIMIT, ingestWebSources, searchWebViaOpenRouter } from '@/lib/web-research';
 import { normalizeNotebookTitle } from '@/lib/notebook-title';
 
 function normalizeTopic(value: unknown): string {
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
 
     const session = await getServerSession(authOptions);
     const userId = session?.user?.id ?? null;
-    const targetSourceCount = 15;
+    const targetSourceCount = FIXED_WEB_SOURCE_LIMIT;
 
     const fetched = await searchWebViaOpenRouter({
       topic,

@@ -2,10 +2,9 @@ import { NextResponse } from 'next/server';
 import { and, cosineDistance, db, eq, inArray, sourceChunks, sources, sql } from 'db';
 import { createEmbeddings } from 'shared';
 import { getNotebookAccess } from '@/lib/notebook-access';
-import { ingestWebSources, searchWebViaOpenRouter } from '@/lib/web-research';
+import { FIXED_WEB_SOURCE_LIMIT, ingestWebSources, searchWebViaOpenRouter } from '@/lib/web-research';
 
 const WEB_SOURCE_MIME = 'application/x-web-source';
-const DEFAULT_ADD_LIMIT = 8;
 const MAX_KEEP_WEB_SOURCES = 18;
 const HARD_REMOVE_DISTANCE = 0.52;
 const SOFT_REMOVE_DISTANCE = 0.34;
@@ -19,10 +18,7 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const notebookId = typeof body?.notebookId === 'string' ? body.notebookId.trim() : '';
     const topic = normalizeTopic(body?.topic);
-    const addLimitRaw = Number.parseInt(String(body?.addLimit ?? ''), 10);
-    const addLimit = Number.isFinite(addLimitRaw)
-      ? Math.max(3, Math.min(12, addLimitRaw))
-      : DEFAULT_ADD_LIMIT;
+    const addLimit = FIXED_WEB_SOURCE_LIMIT;
 
     if (!notebookId || !topic) {
       return NextResponse.json({ error: 'notebookId and topic are required' }, { status: 400 });
