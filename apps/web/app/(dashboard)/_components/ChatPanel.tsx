@@ -1,5 +1,6 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -175,48 +176,87 @@ function hasKnowledgeDocContent(content: string | undefined): boolean {
   return content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().length > 0;
 }
 
+function compactMarkdown(value: string): string {
+  return value.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function splitSuggestionSection(content: string): {
+  mainContent: string;
+  suggestionContent: string;
+} {
+  const lines = content.split('\n');
+  const suggestionHeadingIndex = lines.findIndex((line) => /^#{1,3}\s*下一步建议\s*$/.test(line.trim()));
+  if (suggestionHeadingIndex === -1) {
+    return { mainContent: content, suggestionContent: '' };
+  }
+
+  let sectionEndIndex = lines.length;
+  for (let index = suggestionHeadingIndex + 1; index < lines.length; index += 1) {
+    if (/^#{1,3}\s+/.test(lines[index].trim())) {
+      sectionEndIndex = index;
+      break;
+    }
+  }
+
+  const mainLines = [...lines.slice(0, suggestionHeadingIndex), ...lines.slice(sectionEndIndex)];
+  const suggestionLines = lines.slice(suggestionHeadingIndex + 1, sectionEndIndex);
+
+  return {
+    mainContent: compactMarkdown(mainLines.join('\n')),
+    suggestionContent: compactMarkdown(suggestionLines.join('\n')),
+  };
+}
+
 function MarkdownContent({ content }: { content: string }) {
+  const { mainContent, suggestionContent } = splitSuggestionSection(content);
+
+  const markdownComponents = {
+    p: ({ children }: { children?: ReactNode }) => <p className="my-1 leading-6">{children}</p>,
+    ul: ({ children }: { children?: ReactNode }) => <ul className="my-1 list-disc space-y-1 pl-5">{children}</ul>,
+    ol: ({ children }: { children?: ReactNode }) => <ol className="my-1 list-decimal space-y-1 pl-5">{children}</ol>,
+    li: ({ children }: { children?: ReactNode }) => <li>{children}</li>,
+    h1: ({ children }: { children?: ReactNode }) => <h1 className="mb-1 mt-2 text-base font-semibold">{children}</h1>,
+    h2: ({ children }: { children?: ReactNode }) => <h2 className="mb-1 mt-2 text-sm font-semibold">{children}</h2>,
+    h3: ({ children }: { children?: ReactNode }) => <h3 className="mb-1 mt-2 text-sm font-semibold">{children}</h3>,
+    table: ({ children }: { children?: ReactNode }) => (
+      <div className="my-2 overflow-x-auto rounded-md border border-gray-200">
+        <table className="min-w-full border-collapse text-xs">{children}</table>
+      </div>
+    ),
+    thead: ({ children }: { children?: ReactNode }) => <thead className="bg-gray-50">{children}</thead>,
+    th: ({ children }: { children?: ReactNode }) => (
+      <th className="border-b border-gray-200 px-2 py-1 text-left font-semibold text-gray-700">{children}</th>
+    ),
+    td: ({ children }: { children?: ReactNode }) => <td className="border-b border-gray-100 px-2 py-1 align-top">{children}</td>,
+    a: ({ children, href }: { children?: ReactNode; href?: string }) => (
+      <a href={href} target="_blank" rel="noreferrer" className="text-blue-600 underline">
+        {children}
+      </a>
+    ),
+    code: ({ children }: { children?: ReactNode }) => (
+      <code className="rounded bg-gray-100 px-1 py-0.5 text-[12px]">{children}</code>
+    ),
+    pre: ({ children }: { children?: ReactNode }) => (
+      <pre className="my-2 overflow-auto rounded bg-gray-100 p-2 text-xs">{children}</pre>
+    ),
+  };
+
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        p: ({ children }) => <p className="my-1 leading-6">{children}</p>,
-        ul: ({ children }) => <ul className="my-1 list-disc space-y-1 pl-5">{children}</ul>,
-        ol: ({ children }) => <ol className="my-1 list-decimal space-y-1 pl-5">{children}</ol>,
-        li: ({ children }) => <li>{children}</li>,
-        h1: ({ children }) => <h1 className="mb-1 mt-2 text-base font-semibold">{children}</h1>,
-        h2: ({ children }) => <h2 className="mb-1 mt-2 text-sm font-semibold">{children}</h2>,
-        h3: ({ children }) => <h3 className="mb-1 mt-2 text-sm font-semibold">{children}</h3>,
-        table: ({ children }) => (
-          <div className="my-2 overflow-x-auto rounded-md border border-gray-200">
-            <table className="min-w-full border-collapse text-xs">{children}</table>
-          </div>
-        ),
-        thead: ({ children }) => <thead className="bg-gray-50">{children}</thead>,
-        th: ({ children }) => (
-          <th className="border-b border-gray-200 px-2 py-1 text-left font-semibold text-gray-700">{children}</th>
-        ),
-        td: ({ children }) => <td className="border-b border-gray-100 px-2 py-1 align-top">{children}</td>,
-        a: ({ children, href }) => (
-          <a
-            href={href}
-            target="_blank"
-            rel="noreferrer"
-            className="text-blue-600 underline"
-          >
-            {children}
-          </a>
-        ),
-        code: ({ children }) => <code className="rounded bg-gray-100 px-1 py-0.5 text-[12px]">{children}</code>,
-        pre: ({ children }) => (
-          <pre className="my-2 overflow-auto rounded bg-gray-100 p-2 text-xs">
-            {children}
-          </pre>
-        ),
-      }}
-    >
-      {content}
-    </ReactMarkdown>
+    <div className="space-y-3">
+      {mainContent ? (
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+          {mainContent}
+        </ReactMarkdown>
+      ) : null}
+      {suggestionContent ? (
+        <div className="rounded-[14px] border border-gray-200 bg-gray-50 px-3 py-2.5">
+          <p className="mb-1 text-[11px] font-medium text-gray-500">下一步建议</p>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {suggestionContent}
+          </ReactMarkdown>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

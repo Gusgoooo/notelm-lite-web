@@ -179,11 +179,6 @@ function shouldRunBuiltinPaperStats(question: string): boolean {
   return /来源洞察|知识库论文对比洞察|论文对比洞察|文论对比洞察|频繁研究|研究空白|方法争议|变量被反复验证/i.test(question);
 }
 
-function isWebSearchMime(mime: string | null | undefined): boolean {
-  const value = (mime ?? '').toLowerCase();
-  return value.includes('application/x-web-source') || value.includes('application/x-websearch-source');
-}
-
 function hasMeaningfulKnowledgeDoc(content: string | null | undefined): boolean {
   if (!content) return false;
   return content.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().length > 0;
@@ -784,14 +779,6 @@ export async function POST(request: Request) {
       hasKnowledgeDoc: hasMeaningfulKnowledgeDoc(knowledgeDocRow?.content),
       activeScenario: activeKnowledgeDocScenario,
     });
-    const hasWebSummaryCitations =
-      rowsForCitations.length > 0 && rowsForCitations.some(({ row }) => isWebSearchMime(row.mime));
-    const hasNonWebCitations = rowsForCitations.some(({ row }) => !isWebSearchMime(row.mime));
-    if (hasWebSummaryCitations && !hasNonWebCitations) {
-      answer +=
-        '\n\n> 提示：当前引用多为联网检索摘要。若需更深入分析，建议打开对应论文来源下载全文后上传到知识库，再继续提问。';
-    }
-
     const pythonToolUsed = needBuiltinPaperStats && realtimeScriptOutputs.length > 0;
     const pythonRefNumber = pythonToolUsed ? rowsForCitations.length + 1 : null;
     if (pythonRefNumber != null) {

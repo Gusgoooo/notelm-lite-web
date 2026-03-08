@@ -1277,8 +1277,10 @@ export function KnowledgeDocPanel({
         </div>
       ) : docHasContent ? (
         <div className="relative z-10 min-h-0 flex-1 overflow-auto px-2 pb-5">
-          <div className="min-h-full rounded-[8px] bg-white dark:bg-gray-900">
-            <EditorContent editor={editor} />
+          <div className="rounded-[14px] border border-gray-200 bg-white p-1 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-gray-800 dark:bg-gray-900">
+            <div className="min-h-full rounded-[10px] bg-white dark:bg-gray-900">
+              <EditorContent editor={editor} />
+            </div>
           </div>
           {saving ? <p className="px-3 pb-2 pt-2 text-[10px] text-gray-400 dark:text-gray-500">保存中…</p> : null}
         </div>
