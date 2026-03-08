@@ -187,6 +187,7 @@ export function ProjectPanel() {
       }
       try {
         window.sessionStorage.setItem(`notebook-entry:${String(data.id)}`, 'blank');
+        window.sessionStorage.setItem(`notebook-doc-collapse-once:${String(data.id)}`, '1');
       } catch {
         // Ignore sessionStorage failures and continue to workspace.
       }
@@ -244,6 +245,7 @@ export function ProjectPanel() {
       const notebookId = String(createData.id);
       try {
         window.sessionStorage.setItem(`notebook-entry:${notebookId}`, 'bootstrap');
+        window.sessionStorage.setItem(`notebook-doc-collapse-once:${notebookId}`, '1');
         window.sessionStorage.setItem(`notebook-bootstrap-start:${notebookId}`, 'pending');
         window.sessionStorage.setItem(`notebook-bootstrap-topic:${notebookId}`, topic);
       } catch {

@@ -49,6 +49,11 @@ export function NotebookSidebar() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         const nb = data;
+        try {
+          window.sessionStorage.setItem(`notebook-doc-collapse-once:${String(nb.id)}`, '1');
+        } catch {
+          // Ignore sessionStorage failures and continue to workspace.
+        }
         setNotebooks((prev) => [nb, ...prev]);
         setSelectedId(nb.id);
         router.push(`/?notebookId=${encodeURIComponent(nb.id)}`);

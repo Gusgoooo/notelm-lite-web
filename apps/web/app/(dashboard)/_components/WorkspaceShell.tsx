@@ -308,8 +308,16 @@ export function WorkspaceShell({
   useLayoutEffect(() => {
     let nextDocCollapsed = false;
     try {
+      const collapseKey = `notebook-doc-collapse-once:${notebookId}`;
+      const collapseOnce = window.sessionStorage.getItem(collapseKey);
+      if (collapseOnce === '1') {
+        nextDocCollapsed = true;
+        window.sessionStorage.removeItem(collapseKey);
+      }
       const entryMode = window.sessionStorage.getItem(`notebook-entry:${notebookId}`);
-      nextDocCollapsed = entryMode === 'bootstrap' || entryMode === 'blank';
+      if (!nextDocCollapsed) {
+        nextDocCollapsed = entryMode === 'bootstrap' || entryMode === 'blank';
+      }
     } catch {
       nextDocCollapsed = false;
     }
