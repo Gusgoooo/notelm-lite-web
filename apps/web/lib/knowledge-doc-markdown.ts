@@ -59,7 +59,8 @@ function getHeadingText(line: string): string {
 
 function normalizeHeadingLabel(text: string): string {
   return text
-    .replace(/[：:]\s*$/, '')
+    .replace(/^[#\s]+/, '')
+    .replace(/[：:。！？.!?；;、，,]\s*$/g, '')
     .replace(/\s+/g, '')
     .trim()
     .toLowerCase();
@@ -77,15 +78,23 @@ function isLikelySectionLabel(line: string): boolean {
 function enforceProgressiveHeadingStructure(lines: string[]): string[] {
   const normalized = [...lines];
   let previousHeadingLevel: number | null = null;
+  let seenH1 = false;
 
   for (let index = 0; index < normalized.length; index += 1) {
     const current = normalized[index] ?? '';
     const level = getHeadingLevel(current);
     if (level == null) continue;
     let nextLevel = level;
-    if (previousHeadingLevel == null && level > 1) {
+    if (level === 1) {
+      if (seenH1) {
+        nextLevel = 2;
+      }
+      seenH1 = true;
+    } else if (!seenH1) {
       nextLevel = 1;
-    } else if (previousHeadingLevel != null && level > previousHeadingLevel + 1) {
+      seenH1 = true;
+    }
+    if (previousHeadingLevel != null && nextLevel > previousHeadingLevel + 1) {
       nextLevel = previousHeadingLevel + 1;
     }
     if (nextLevel !== level) {
@@ -94,10 +103,8 @@ function enforceProgressiveHeadingStructure(lines: string[]): string[] {
     previousHeadingLevel = nextLevel;
   }
 
-  const output: string[] = [];
   for (let index = 0; index < normalized.length; index += 1) {
     const line = normalized[index] ?? '';
-    output.push(line);
     if (getHeadingLevel(line) !== 1) continue;
     const h1Label = normalizeHeadingLabel(getHeadingText(line));
 
@@ -116,9 +123,7 @@ function enforceProgressiveHeadingStructure(lines: string[]): string[] {
             normalized[cursor] = `## ${label}`;
           }
         } else {
-          if (output.at(-1) !== '') output.push('');
-          output.push('## 核心要点');
-          output.push('');
+          normalized.splice(cursor, 0, '## 核心要点', '');
         }
       } else if (candidateHeadingLevel === 2) {
         const h2Label = normalizeHeadingLabel(getHeadingText(candidate));
@@ -132,7 +137,25 @@ function enforceProgressiveHeadingStructure(lines: string[]): string[] {
     }
   }
 
-  return output;
+  for (let index = 1; index < normalized.length; index += 1) {
+    const current = normalized[index] ?? '';
+    if (!current.trim() || getHeadingLevel(current) != null) continue;
+    let prevIndex = index - 1;
+    while (prevIndex >= 0 && !(normalized[prevIndex] ?? '').trim()) {
+      prevIndex -= 1;
+    }
+    if (prevIndex < 0) continue;
+    const previous = normalized[prevIndex] ?? '';
+    if (getHeadingLevel(previous) == null) continue;
+    const headingLabel = normalizeHeadingLabel(getHeadingText(previous));
+    const paragraphLabel = normalizeHeadingLabel(current);
+    if (headingLabel && paragraphLabel && headingLabel === paragraphLabel) {
+      normalized.splice(index, 1);
+      index -= 1;
+    }
+  }
+
+  return normalized;
 }
 
 export function normalizeKnowledgeDocMarkdown(raw: string): string {
