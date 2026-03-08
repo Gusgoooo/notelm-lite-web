@@ -1210,10 +1210,6 @@ export function KnowledgeDocPanel({
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="absolute inset-x-0 top-16 z-0 flex justify-center pointer-events-none">
-        <div className="knowledge-doc-flow h-40 w-[82%] rounded-full bg-gradient-to-r from-sky-100/0 via-sky-100/55 to-violet-100/0 blur-3xl" />
-      </div>
-
       <div className="relative z-10 flex h-12 shrink-0 items-center justify-between gap-2 px-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
           知识文档
@@ -1222,12 +1218,12 @@ export function KnowledgeDocPanel({
           <button
             type="button"
             onClick={() => setHistoryOpen(true)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-[12px] bg-black/[0.04] px-3 text-xs font-medium text-gray-700 transition hover:bg-black/[0.07] dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/15"
+            className="inline-flex h-8 items-center gap-1.5 rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
           >
             <HistoryIcon />
             历史
           </button>
-          <label className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-[12px] bg-black/[0.04] px-2.5 text-xs text-gray-700 transition hover:bg-black/[0.07] dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/15">
+          <label className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-[12px] bg-gray-100 px-2.5 text-xs text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
             <span className="font-medium text-gray-600 dark:text-gray-300">自动更新</span>
             <input
               type="checkbox"
@@ -1281,7 +1277,7 @@ export function KnowledgeDocPanel({
         </div>
       ) : docHasContent ? (
         <div className="relative z-10 min-h-0 flex-1 overflow-auto px-2 pb-5">
-          <div className="min-h-full rounded-[8px] bg-white/55 dark:bg-gray-900/60">
+          <div className="min-h-full rounded-[8px] bg-white dark:bg-gray-900">
             <EditorContent editor={editor} />
           </div>
           {saving ? <p className="px-3 pb-2 pt-2 text-[10px] text-gray-400 dark:text-gray-500">保存中…</p> : null}
@@ -1346,8 +1342,8 @@ export function KnowledgeDocPanel({
       ) : null}
 
       {draftDialog ? (
-        <div className="absolute inset-x-0 bottom-0 top-12 z-20 flex items-center justify-center bg-white/78 px-4 backdrop-blur-[2px] dark:bg-gray-950/74">
-          <div className="relative w-full max-w-[320px] overflow-hidden rounded-[22px] border border-white/70 bg-white/92 px-5 py-4 text-center shadow-lg dark:border-gray-800 dark:bg-gray-900/92">
+        <div className="absolute inset-x-0 bottom-0 top-12 z-20 flex items-center justify-center bg-white/82 px-4 dark:bg-gray-950/82">
+          <div className="relative w-full max-w-[320px] overflow-hidden rounded-[22px] border border-gray-200 bg-white px-5 py-4 text-center shadow-lg dark:border-gray-800 dark:bg-gray-900">
             {draftDialog.kind === 'loading' ? <div className="knowledge-doc-busy absolute inset-0" /> : null}
             <div className="relative z-10 space-y-3">
               {draftDialog.kind === 'loading' ? (
@@ -1380,8 +1376,8 @@ export function KnowledgeDocPanel({
       ) : null}
 
       {panelBusy ? (
-        <div className="absolute inset-x-0 bottom-0 top-12 z-20 flex items-center justify-center bg-white/76 px-4 backdrop-blur-[2px] dark:bg-gray-950/72">
-          <div className="relative overflow-hidden rounded-[22px] border border-white/70 bg-white/90 px-5 py-4 text-center shadow-lg dark:border-gray-800 dark:bg-gray-900/90">
+        <div className="absolute inset-x-0 bottom-0 top-12 z-20 flex items-center justify-center bg-white/82 px-4 dark:bg-gray-950/82">
+          <div className="relative overflow-hidden rounded-[22px] border border-gray-200 bg-white px-5 py-4 text-center shadow-lg dark:border-gray-800 dark:bg-gray-900">
             <div className="knowledge-doc-busy absolute inset-0" />
             <div className="relative z-10 space-y-2">
               <div className="mx-auto h-9 w-9 rounded-full border-2 border-gray-200 border-t-gray-700 animate-spin dark:border-gray-700 dark:border-t-gray-100" />
@@ -1448,7 +1444,7 @@ export function KnowledgeDocPanel({
                           event.stopPropagation();
                           openScenarioEditor(scenario.builtIn ? 'clone' : 'edit', scenario);
                         }}
-                        className="absolute right-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-white/88 text-gray-700 opacity-0 shadow-sm transition hover:bg-white group-hover:opacity-100 dark:border-white/10 dark:bg-gray-900/90 dark:text-gray-100"
+                        className="absolute right-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-white text-gray-700 opacity-0 shadow-sm transition hover:bg-gray-50 group-hover:opacity-100 dark:border-white/10 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
                         aria-label={scenario.builtIn ? '另存为新场景' : '编辑场景'}
                       >
                         <EditIcon />
@@ -1473,14 +1469,14 @@ export function KnowledgeDocPanel({
                               </span>
                             ) : null}
                             {!scenario.builtIn ? (
-                              <span className="rounded-full bg-black/[0.06] px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-white/10 dark:text-gray-300">
+                              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
                                 自定义
                               </span>
                             ) : null}
                           </div>
                           <p className="text-xs leading-5 text-black/55 dark:text-white/60">{scenario.hint}</p>
                         </div>
-                        <div className="w-full rounded-[14px] bg-white/58 px-3 py-2 text-[11px] leading-5 text-black/60 dark:bg-black/10 dark:text-white/70">
+                        <div className="w-full rounded-[14px] bg-white px-3 py-2 text-[11px] leading-5 text-black/60 dark:bg-gray-950 dark:text-white/70">
                           {preview}
                         </div>
                       </button>

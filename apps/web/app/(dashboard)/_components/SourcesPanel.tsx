@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
-import ShinyText from '@/components/ShinyText';
 
 type Source = {
   id: string;
@@ -586,7 +585,7 @@ export function SourcesPanel({
 
       <div className="space-y-2 px-2.5 pb-2.5 pt-0">
         {readOnly && (
-          <div className="rounded-[12px] border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-[11px] text-amber-800">
+          <div className="rounded-[12px] border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
             <div className="flex items-center justify-between gap-2">
               <span>当前为共享知识库，保存为我的 notebook 后可修改 sources。</span>
               {onSaveAsMine && (
@@ -703,7 +702,7 @@ export function SourcesPanel({
       <ScrollArea className="flex-1 px-2.5 pb-2.5">
         {loading ? (
           <div className="p-2">
-            <ShinyText text="Loading..." className="text-xs text-gray-500" />
+            <p className="text-xs text-gray-500">Loading...</p>
           </div>
         ) : sources.length === 0 && !pendingUpload ? (
           <p className="p-2 text-xs text-gray-500">
@@ -713,7 +712,7 @@ export function SourcesPanel({
           <ul className="space-y-2">
             {pendingUpload ? (
               <li key={pendingUpload.id}>
-                <Card className="group border-gray-200/80 bg-white/70 p-2">
+                <Card className="group border-gray-200 bg-white p-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-1.5">
                       <span className="h-2 w-2 shrink-0 rounded-full bg-gray-400" />
@@ -741,8 +740,8 @@ export function SourcesPanel({
             {displayedSources.map((s) => (
               <li key={s.id}>
                 <Card
-                  className={`group border-gray-200/80 bg-white/70 p-2 ${
-                    hydratingSourceId === s.id ? 'border-blue-200 bg-blue-50/40' : ''
+                  className={`group border-gray-200 bg-white p-2 ${
+                    hydratingSourceId === s.id ? 'border-blue-200 bg-blue-50' : ''
                   }`}
                 >
                   {(() => {

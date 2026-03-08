@@ -9,7 +9,6 @@ import { normalizeNotebookTitle, stripResearchSuffix } from '@/lib/notebook-titl
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import ShinyText from '@/components/ShinyText';
 
 type Notebook = {
   id: string;
@@ -314,7 +313,7 @@ export function ProjectPanel() {
               </form>
               <div className="mt-3 flex flex-wrap justify-center gap-2">
                 {loadingSuggestedTopics ? (
-                  <ShinyText text="正在生成推荐主题..." className="text-xs text-gray-500 dark:text-gray-400" />
+                  <p className="text-xs text-gray-500 dark:text-gray-400">正在生成推荐主题...</p>
                 ) : (
                   suggestedTopics.map((preset) => (
                   <button
@@ -331,7 +330,7 @@ export function ProjectPanel() {
             </div>
           </section>
 
-          <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-4 dark:border-gray-800 dark:bg-gray-900/40">
+          <section className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">我的Notebook</h2>
               <Button size="sm" onClick={createNotebook} disabled={creating}>
@@ -340,9 +339,9 @@ export function ProjectPanel() {
             </div>
 
             {loadingMine ? (
-              <ShinyText text="Loading notebooks..." className="text-sm text-gray-500 dark:text-gray-400" />
+              <p className="text-sm text-gray-500 dark:text-gray-400">Loading notebooks...</p>
             ) : notebooks.length === 0 ? (
-              <Card className="border-dashed bg-white/60 dark:bg-gray-900/40">
+              <Card className="border-dashed bg-white dark:bg-gray-900">
                 <CardContent className="p-10 text-center text-sm text-gray-500 dark:text-gray-400">
                   还没有 notebook，先创建一个开始使用。
                 </CardContent>
@@ -433,13 +432,13 @@ export function ProjectPanel() {
             )}
           </section>
 
-          <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-4 dark:border-gray-800 dark:bg-gray-900/40">
+          <section className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900">
             <div className="mb-3">
               <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">知识库市场</h2>
             </div>
 
             {loadingMarket ? (
-              <ShinyText text="Loading market..." className="text-sm text-gray-500 dark:text-gray-400" />
+              <p className="text-sm text-gray-500 dark:text-gray-400">Loading market...</p>
             ) : market.length === 0 ? (
               <p className="text-sm text-gray-500 dark:text-gray-400">市场里还没有可浏览的公开 notebook。</p>
             ) : (

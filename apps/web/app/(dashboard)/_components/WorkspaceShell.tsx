@@ -774,7 +774,7 @@ export function WorkspaceShell({
             <button
               type="button"
               onClick={() => setWorksOpen(true)}
-              className="inline-flex h-7 items-center gap-1.5 rounded-[12px] bg-black/[0.05] px-3 text-xs font-medium text-gray-700 transition hover:bg-black/[0.08] dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/15"
+              className="inline-flex h-7 items-center gap-1.5 rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
             >
               <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M7 5h10l2 2v12H5V5h2Z" />
@@ -863,7 +863,7 @@ export function WorkspaceShell({
             {artifactNotices.map((notice) => (
               <div
                 key={notice.id}
-                className="pointer-events-auto overflow-hidden rounded-[18px] border border-black/10 bg-white/96 shadow-[0_20px_40px_rgba(15,23,42,0.12)] backdrop-blur dark:border-white/10 dark:bg-gray-900/96"
+                className="pointer-events-auto overflow-hidden rounded-[18px] border border-black/10 bg-white shadow-[0_20px_40px_rgba(15,23,42,0.12)] dark:border-white/10 dark:bg-gray-900"
               >
                 {notice.state === 'running' ? (
                   <div className="app-slow-loading-bar relative h-[3px] w-full overflow-hidden bg-black/8 dark:bg-white/10" />
@@ -1069,7 +1069,7 @@ export function WorkspaceShell({
                   <button
                     type="button"
                     onClick={() => setWorksOpen(false)}
-                    className="inline-flex h-8 items-center rounded-[12px] bg-black/[0.05] px-3 text-xs font-medium text-gray-700 transition hover:bg-black/[0.08] dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/15"
+                    className="inline-flex h-8 items-center rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
                   >
                     关闭
                   </button>

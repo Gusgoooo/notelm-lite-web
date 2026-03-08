@@ -11,7 +11,8 @@ export const KNOWLEDGE_DOC_MARKDOWN_GUIDE = `知识文档 Markdown 规范：
 4. 需要表达对比、状态、计划、指标时，可以使用 Markdown 表格；表头要明确，单元格尽量短句化。
 5. 信息不足时保留原结构，并明确写“待补充”，不要删掉关键栏目。
 6. 输出面向继续编辑的工作文档，不写寒暄、总结感想、额外说明或代码块。
-7. 来源依据应放到对应小节内，优先整理成要点或简短表格，不要堆砌长段原文。`;
+7. 来源依据应放到对应小节内，优先整理成要点或简短表格，不要堆砌长段原文。
+8. 更新已有知识文档时，默认优先改写、合并、删除和替换现有内容，不要在末尾不断追加新段落。`;
 
 const MARKDOWN_FENCE_PATTERN = /```(?:markdown|md)?\s*([\s\S]*?)```/i;
 
@@ -77,6 +78,25 @@ export function normalizeKnowledgeDocMarkdown(raw: string): string {
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+export function stripKnowledgeDocMarkdown(raw: string): string {
+  return normalizeKnowledgeDocMarkdown(raw)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!\[[^\]]*]\(([^)]+)\)/g, ' ')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^>\s?/gm, '')
+    .replace(/^[-*+]\s+/gm, '')
+    .replace(/^\d+\.\s+/gm, '')
+    .replace(/\|/g, ' ')
+    .replace(/[*_`~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function countKnowledgeDocUnits(raw: string): number {
+  return stripKnowledgeDocMarkdown(raw).replace(/\s+/g, '').length;
 }
 
 export function markdownToKnowledgeDocHtml(raw: string): string {

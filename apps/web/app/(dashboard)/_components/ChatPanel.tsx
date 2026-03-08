@@ -6,7 +6,6 @@ import remarkGfm from 'remark-gfm';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import ShinyText from '@/components/ShinyText';
 import { KnowledgeDocCreateButton } from './KnowledgeDocCreateButton';
 
 type Citation = {
@@ -799,7 +798,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     if (loadingResearchState || bootstrapGuideLoading) {
       return (
         <div className="rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-500 dark:border-gray-800 dark:bg-gray-900">
-          <ShinyText text="正在准备引导问题..." className="text-xs text-gray-500 dark:text-gray-400" />
+          <p className="text-xs text-gray-500 dark:text-gray-400">正在准备引导问题...</p>
         </div>
       );
     }
@@ -819,7 +818,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     }
     if (researchState && (researchState.phase === 'collecting' || researchState.phase === 'analyzing')) {
       return (
-        <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950/20 dark:text-blue-300">
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300">
           正在联网检索首批来源…
         </div>
       );
@@ -842,7 +841,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                 type="button"
                 onClick={() => void askBootstrapGuideQuestion(question)}
                 disabled={loading}
-                className="rounded-[12px] border border-gray-200 bg-gray-50 px-3 py-1.5 text-left text-xs text-gray-700 transition hover:border-gray-300 hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800/70 dark:text-gray-200 dark:hover:border-gray-600"
+                className="rounded-[12px] border border-gray-200 bg-gray-50 px-3 py-1.5 text-left text-xs text-gray-700 transition hover:border-gray-300 hover:bg-white disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-gray-600"
               >
                 {question}
               </button>
@@ -881,9 +880,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         <div ref={chatContentRef} className="mx-auto flex w-full max-w-[680px] flex-col gap-4">
           {renderResearchSection()}
           {loadingHistory ? (
-            <div className="text-center">
-              <ShinyText text="Loading chat history..." className="text-xs text-gray-500 dark:text-gray-400" />
-            </div>
+            <div className="text-center text-xs text-gray-500 dark:text-gray-400">Loading chat history...</div>
           ) : (
             <>
               {hasMore && (
@@ -1033,14 +1030,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           )}
           {loading && (
             <div className="ml-0 mr-auto w-full max-w-[680px] rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-500 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-              <ShinyText
-                text={`Thinking... ${thinkingSeconds}s`}
-                speed={2}
-                spread={100}
-                color="#9ca3af"
-                shineColor="#ffffff"
-                className="text-sm font-medium"
-              />
+              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{`Thinking... ${thinkingSeconds}s`}</p>
             </div>
           )}
           <div ref={bottomRef} />
@@ -1049,7 +1039,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       {selectionToast ? (
         <div
           ref={selectionToastRef}
-          className="fixed z-50 flex items-center gap-2 rounded-[14px] border border-gray-200 bg-white/96 p-1.5 shadow-lg backdrop-blur-sm dark:border-gray-700 dark:bg-gray-900/96"
+          className="fixed z-50 flex items-center gap-2 rounded-[14px] border border-gray-200 bg-white p-1.5 shadow-lg dark:border-gray-700 dark:bg-gray-900"
           style={{ left: selectionToast.x, top: selectionToast.y }}
           onMouseDown={(event) => {
             event.preventDefault();
