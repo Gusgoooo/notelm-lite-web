@@ -7,6 +7,7 @@ import remarkGfm from 'remark-gfm';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import ShinyText from '@/components/ShinyText';
 import { isImeCommitRecentlyEnded, shouldIgnoreEnterForIme } from '@/lib/ime';
 import { KnowledgeDocCreateButton } from './KnowledgeDocCreateButton';
 
@@ -1044,7 +1045,13 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           )}
           {loading && (
             <div className="ml-0 mr-auto w-full max-w-[680px] py-1 text-sm text-gray-500 dark:text-gray-400">
-              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{`Thinking... ${thinkingSeconds}s`}</p>
+              <ShinyText
+                text={`Thinking... ${thinkingSeconds}s`}
+                className="text-sm font-medium text-gray-500 dark:text-gray-400"
+                speed={2.2}
+                color="#9ca3af"
+                shineColor="#ffffff"
+              />
             </div>
           )}
           <div ref={bottomRef} />
