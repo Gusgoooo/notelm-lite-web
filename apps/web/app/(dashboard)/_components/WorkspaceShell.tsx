@@ -238,20 +238,19 @@ export function WorkspaceShell({
   const PANEL_GAP = 12;
   const MIN_CENTER_WIDTH = 320;
   const MIN_RIGHT_WIDTH = 320;
+  const DEFAULT_RIGHT_WIDTH = 400;
   const docCollapseStorageKey = `notebook-doc-collapsed:${notebookId}`;
-
-  const getBalancedNotesWidth = (totalWidth: number): number | null => {
-    const available = totalWidth - LEFT_PANEL_WIDTH - PANEL_GAP - PANEL_GAP;
-    if (available <= 0) return null;
-    const target = Math.floor(available / 2);
-    const maxRightWidth = Math.max(MIN_RIGHT_WIDTH, available - MIN_CENTER_WIDTH);
-    return Math.min(maxRightWidth, Math.max(MIN_RIGHT_WIDTH, target));
-  };
 
   const clampNotesWidth = (totalWidth: number, desired: number): number => {
     const available = totalWidth - LEFT_PANEL_WIDTH - PANEL_GAP - PANEL_GAP;
     const maxRightWidth = Math.max(MIN_RIGHT_WIDTH, available - MIN_CENTER_WIDTH);
     return Math.min(maxRightWidth, Math.max(MIN_RIGHT_WIDTH, desired));
+  };
+
+  const getDefaultNotesWidth = (totalWidth: number): number | null => {
+    const available = totalWidth - LEFT_PANEL_WIDTH - PANEL_GAP - PANEL_GAP;
+    if (available <= 0) return null;
+    return clampNotesWidth(totalWidth, DEFAULT_RIGHT_WIDTH);
   };
 
   useEffect(() => {
@@ -287,12 +286,12 @@ export function WorkspaceShell({
       const totalWidth = element.clientWidth;
       if (totalWidth <= 0) return;
       if (!hasManualResizeRef.current) {
-        const balanced = getBalancedNotesWidth(totalWidth);
-        if (balanced != null) setNotesWidth(balanced);
+        const defaultWidth = getDefaultNotesWidth(totalWidth);
+        if (defaultWidth != null) setNotesWidth(defaultWidth);
         return;
       }
       setNotesWidth((current) => {
-        if (current == null) return getBalancedNotesWidth(totalWidth);
+        if (current == null) return getDefaultNotesWidth(totalWidth);
         return clampNotesWidth(totalWidth, current);
       });
     };
@@ -418,9 +417,9 @@ export function WorkspaceShell({
     const onWidenDoc = () => {
       const totalWidth = workspaceBodyRef.current?.clientWidth ?? 0;
       if (totalWidth <= 0) return;
-      const balanced = getBalancedNotesWidth(totalWidth);
-      if (balanced != null) {
-        setNotesWidth((current) => current ?? balanced);
+      const defaultWidth = getDefaultNotesWidth(totalWidth);
+      if (defaultWidth != null) {
+        setNotesWidth((current) => current ?? defaultWidth);
       }
     };
     onWidenDoc();
