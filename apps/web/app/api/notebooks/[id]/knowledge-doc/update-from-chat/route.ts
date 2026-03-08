@@ -27,13 +27,33 @@ function stripHtml(value: string): string {
   return value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function getKnowledgeDocLengthBudget(currentContent: string, structure: string) {
+function hasExplicitCondenseIntent(text: string): boolean {
+  if (!text.trim()) return false;
+  return /精简|精炼|缩短|压缩|删减|减少|简化|浓缩|更短|简洁一点|控制字数|少写|短一点/i.test(text);
+}
+
+function getKnowledgeDocLengthBudget(
+  currentContent: string,
+  structure: string,
+  preferCondense: boolean
+) {
   const currentUnits = countKnowledgeDocUnits(stripHtml(currentContent));
   if (currentUnits > 0) {
+    if (preferCondense) {
+      const min = Math.max(120, Math.round(currentUnits * 0.72));
+      const max = Math.max(min + 40, Math.round(currentUnits * 0.96));
+      return {
+        baseline: currentUnits,
+        min,
+        max,
+      };
+    }
+    const min = currentUnits + Math.max(18, Math.round(currentUnits * 0.03));
+    const max = currentUnits + Math.max(56, Math.round(currentUnits * 0.09));
     return {
       baseline: currentUnits,
-      min: Math.max(120, Math.round(currentUnits * 0.78)),
-      max: Math.max(220, Math.round(currentUnits * 1.12)),
+      min,
+      max: Math.max(min + 24, max),
     };
   }
 
@@ -82,6 +102,43 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`,
   return normalizeKnowledgeDocMarkdown(content ?? '') || normalized;
 }
 
+async function enrichKnowledgeDocToBudget(input: {
+  markdown: string;
+  structure: string;
+  minUnits: number;
+  maxUnits: number;
+}): Promise<string> {
+  const normalized = normalizeKnowledgeDocMarkdown(input.markdown);
+  if (!normalized) return normalized;
+  if (countKnowledgeDocUnits(normalized) >= input.minUnits) return normalized;
+
+  const { content } = await chat([
+    {
+      role: 'system',
+      content: `你是知识文档增量补全助手。
+请在不改变结构顺序和标题层级的前提下，适度补充当前文档。
+
+要求：
+1. 严格输出 Markdown。
+2. 必须沿用既有结构，禁止新增结构外章节。
+3. 只补充高价值信息：关键事实、判断依据、执行细节、风险与待补充项。
+4. 句子保持简洁，不要空话或重复。
+5. 输出长度目标：${input.minUnits}-${input.maxUnits} 字符单元。
+
+${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`,
+    },
+    {
+      role: 'user',
+      content:
+        `【必须遵循的结构】\n${input.structure}\n\n` +
+        `【待补全文档】\n${normalized}\n\n` +
+        `请输出补全后的完整知识文档。`,
+    },
+  ]);
+
+  return normalizeKnowledgeDocMarkdown(content ?? '') || normalized;
+}
+
 /**
  * Given current doc content and recent conversation, ask LLM to produce
  * an updated knowledge document in structured Markdown.
@@ -108,6 +165,7 @@ export async function POST(
       typeof body?.highlightedMaterials === 'string' ? body.highlightedMaterials : '';
     const userEditedHint =
       typeof body?.userEditedHint === 'string' ? body.userEditedHint : '';
+    const preferCondense = hasExplicitCondenseIntent(lastUserMessage);
 
     const [scenarioRow] = await db
       .select({ content: notes.content })
@@ -124,7 +182,11 @@ export async function POST(
       );
     }
 
-    const lengthBudget = getKnowledgeDocLengthBudget(currentContent, activeScenario.structure);
+    const lengthBudget = getKnowledgeDocLengthBudget(
+      currentContent,
+      activeScenario.structure,
+      preferCondense
+    );
 
     const systemPrompt = `你是一个知识文档整理助手。根据用户与 AI 的对话内容，更新「当前知识文档」。
 要求：
@@ -137,7 +199,7 @@ export async function POST(
 7. 当前文档中已有内容视为用户撰写或修改过的，请尽量保留并在其基础上补充、替换、合并或删除，避免大段重写。
 8. 优先整理成适合右侧知识文档面板直接渲染的结构化内容，例如标题、小节、要点列表。
 9. 如果存在项目说明，请先从项目说明中推断最合适的章节结构，再严格按该结构进行增量更新；项目说明也会决定回答风格、重点和引导方式。
-10. 除非用户明确要求扩写，否则总字数应尽量控制在当前版本附近，默认通过润色、替换、压缩和去重来更新，不要越写越长。
+10. 默认采用“缓慢增量”策略：除非用户明确要求精简，否则更新后总长度应较当前版本小幅增加（建议增加 3%-9%），优先补充关键依据和可执行细节。
 11. 如果新信息与旧信息重复或冲突，优先合并或替换旧内容；如果某段已经过时或弱相关，应删除而不是保留。
 12. 每个二级模块优先控制在 2-4 条要点或 1-2 个短段落内，句子尽量短。${
   userEditedHint
@@ -151,7 +213,11 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
       `【当前知识文档（可能是 HTML）】\n${currentContent || '(空)'}\n\n` +
       `【当前场景】\n${activeScenario.label}\n\n` +
       `【当前项目说明】\n${activeScenario.structure}\n\n` +
-      `【当前长度基线】\n当前版本约 ${lengthBudget.baseline} 个字符单元，本次更新尽量控制在 ${lengthBudget.min}-${lengthBudget.max} 之间。\n\n` +
+      `【当前长度基线】\n${
+        preferCondense
+          ? `用户明确要求精简：当前版本约 ${lengthBudget.baseline} 个字符单元，本次控制在 ${lengthBudget.min}-${lengthBudget.max} 之间。`
+          : `默认缓慢增量：当前版本约 ${lengthBudget.baseline} 个字符单元，本次尽量控制在 ${lengthBudget.min}-${lengthBudget.max} 之间。`
+      }\n\n` +
       `【用户问题 / 用户要求】\n${lastUserMessage || '(空)'}\n\n` +
       `【助手回答】\n${lastAssistantMessage || '(空)'}\n\n` +
       `【突出资料】\n${highlightedMaterials || '(空)'}\n\n` +
@@ -159,9 +225,9 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
 操作优先级：
 1. 先根据项目说明确定最合适的章节结构，再定位应修改的模块。
 2. 优先改写、替换、合并已有内容。
-3. 只有结构中缺少必要信息时，才新增少量内容。
+3. 只有结构中缺少必要信息时，才新增内容；若无“精简”要求，应做小幅增量补充。
 4. 删除重复、过时、冲突或弱相关内容。
-5. 让文档比当前版本更准、更紧凑，而不是更长。`;
+5. 在保证准确前提下，默认让文档比当前版本更完整；仅当用户明确要求精简时才缩短。`;
 
     const { content: suggestedContent } = await chat([
       { role: 'system', content: systemPrompt },
@@ -170,7 +236,17 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
 
     let trimmed = normalizeKnowledgeDocMarkdown(suggestedContent ?? '');
     if (trimmed) {
-      trimmed = await compressKnowledgeDocToBudget(trimmed, activeScenario.structure, lengthBudget.max);
+      if (!preferCondense && countKnowledgeDocUnits(trimmed) < lengthBudget.min) {
+        trimmed = await enrichKnowledgeDocToBudget({
+          markdown: trimmed,
+          structure: activeScenario.structure,
+          minUnits: lengthBudget.min,
+          maxUnits: lengthBudget.max,
+        });
+      }
+      if (countKnowledgeDocUnits(trimmed) > lengthBudget.max) {
+        trimmed = await compressKnowledgeDocToBudget(trimmed, activeScenario.structure, lengthBudget.max);
+      }
     }
     return NextResponse.json({
       suggestedContent: trimmed || currentContent,

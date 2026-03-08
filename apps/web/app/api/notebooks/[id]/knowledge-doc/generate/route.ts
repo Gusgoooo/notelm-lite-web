@@ -30,13 +30,33 @@ function parseScenarioState(raw: string | null | undefined) {
   }
 }
 
-function getKnowledgeDocLengthBudget(currentContent: string, structure: string) {
+function hasExplicitCondenseIntent(text: string): boolean {
+  if (!text.trim()) return false;
+  return /精简|精炼|缩短|压缩|删减|减少|简化|浓缩|更短|简洁一点|控制字数|少写|短一点/i.test(text);
+}
+
+function getKnowledgeDocLengthBudget(
+  currentContent: string,
+  structure: string,
+  preferCondense: boolean
+) {
   const currentUnits = countKnowledgeDocUnits(stripHtml(currentContent));
   if (currentUnits > 0) {
+    if (preferCondense) {
+      const min = Math.max(120, Math.round(currentUnits * 0.72));
+      const max = Math.max(min + 40, Math.round(currentUnits * 0.96));
+      return {
+        baseline: currentUnits,
+        min,
+        max,
+      };
+    }
+    const min = currentUnits + Math.max(18, Math.round(currentUnits * 0.03));
+    const max = currentUnits + Math.max(56, Math.round(currentUnits * 0.09));
     return {
       baseline: currentUnits,
-      min: Math.max(120, Math.round(currentUnits * 0.78)),
-      max: Math.max(220, Math.round(currentUnits * 1.12)),
+      min,
+      max: Math.max(min + 24, max),
     };
   }
 
@@ -85,6 +105,43 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`,
   return normalizeKnowledgeDocMarkdown(content ?? '') || normalized;
 }
 
+async function enrichKnowledgeDocToBudget(input: {
+  markdown: string;
+  structure: string;
+  minUnits: number;
+  maxUnits: number;
+}): Promise<string> {
+  const normalized = normalizeKnowledgeDocMarkdown(input.markdown);
+  if (!normalized) return normalized;
+  if (countKnowledgeDocUnits(normalized) >= input.minUnits) return normalized;
+
+  const { content } = await chat([
+    {
+      role: 'system',
+      content: `你是知识文档增量补全助手。
+请在不改变结构顺序和标题层级的前提下，适度补充当前文档。
+
+要求：
+1. 严格输出 Markdown。
+2. 必须沿用既有结构，禁止新增结构外章节。
+3. 只补充高价值信息：关键事实、判断依据、执行细节、风险与待补充项。
+4. 句子保持简洁，不要空话或重复。
+5. 输出长度目标：${input.minUnits}-${input.maxUnits} 字符单元。
+
+${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`,
+    },
+    {
+      role: 'user',
+      content:
+        `【必须遵循的结构】\n${input.structure}\n\n` +
+        `【待补全文档】\n${normalized}\n\n` +
+        `请输出补全后的完整知识文档。`,
+    },
+  ]);
+
+  return normalizeKnowledgeDocMarkdown(content ?? '') || normalized;
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -103,7 +160,9 @@ export async function POST(
     const rawScenarioId = typeof body?.scenarioId === 'string' ? body.scenarioId.trim() : '';
     const rawScenario = typeof body?.scenario === 'string' ? body.scenario.trim() : '';
     const rawMode = typeof body?.mode === 'string' ? body.mode.trim() : 'create';
+    const rawUserIntent = typeof body?.userIntent === 'string' ? body.userIntent.trim() : '';
     const mode = rawMode === 'update' ? 'update' : 'create';
+    const preferCondense = hasExplicitCondenseIntent(rawUserIntent);
 
     const [docRow, scenarioRow] = await Promise.all([
       db
@@ -145,7 +204,11 @@ export async function POST(
     }
 
     const currentContent = docRow?.content ?? '';
-    const lengthBudget = getKnowledgeDocLengthBudget(currentContent, selectedScenario.structure);
+    const lengthBudget = getKnowledgeDocLengthBudget(
+      currentContent,
+      selectedScenario.structure,
+      preferCondense
+    );
     const sourceContext = rows
       .map((row, index) => `[来源${index + 1}] ${row.sourceTitle}\n${row.content}`)
       .join('\n\n')
@@ -163,7 +226,7 @@ export async function POST(
 6. 如需表达对比、状态、指标、计划，可使用 Markdown 表格。
 7. 不要输出代码块，不要输出任何额外解释。
 8. 更新已有知识文档时，必须把当前知识文档视为当前版本下的权威版本，优先做替换、合并、删除和润色，不要只是在后面不断加字。
-9. 除非用户明确要求扩写，更新模式下的总长度应尽量控制在当前版本附近，通过去重和压缩保证文档更紧凑。
+9. 默认采用“缓慢增量”策略：除非用户明确要求精简，更新模式下总长度应较当前版本小幅增加（建议增加 3%-9%），优先补充关键依据和可执行细节。
 10. 项目说明不只是文档结构要求，也包含回答风格、重点和引导方式；输出时要一并遵守。
 
 ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
@@ -173,10 +236,16 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
       `目标场景：${selectedScenario.label}\n` +
       `必须遵循的项目说明：\n${selectedScenario.structure}\n\n` +
       `当前知识文档：\n${currentContent || '（空）'}\n\n` +
-      `长度目标：\n${mode === 'update' ? `当前版本约 ${lengthBudget.baseline} 个字符单元，本次尽量控制在 ${lengthBudget.min}-${lengthBudget.max} 之间。` : `请尽量控制在 ${lengthBudget.min}-${lengthBudget.max} 个字符单元之间。`}\n\n` +
+      `长度目标：\n${
+        mode === 'update'
+          ? preferCondense
+            ? `用户明确要求精简：当前版本约 ${lengthBudget.baseline} 个字符单元，本次控制在 ${lengthBudget.min}-${lengthBudget.max} 之间。`
+            : `默认缓慢增量：当前版本约 ${lengthBudget.baseline} 个字符单元，本次尽量控制在 ${lengthBudget.min}-${lengthBudget.max} 之间。`
+          : `请尽量控制在 ${lengthBudget.min}-${lengthBudget.max} 个字符单元之间。`
+      }\n\n` +
       `来源摘录：\n${sourceContext}\n\n` +
       (mode === 'update'
-        ? '请在保留当前知识文档主线的前提下，按照上述项目说明吸收新来源内容，先确定最合适的章节结构，再输出更新后的完整知识文档。优先改写、替换、合并和删除已有内容，不要简单追加新段落。'
+        ? '请在保留当前知识文档主线的前提下，按照上述项目说明吸收新来源内容，先确定最合适的章节结构，再输出更新后的完整知识文档。优先改写、替换、合并和删除已有内容。若无“精简”要求，应进行小幅增量补充，而不是越改越短。'
         : '请直接根据上述项目说明，先确定最合适的章节结构，再生成一份可继续编辑的完整知识文档初稿。');
 
     const { content } = await chat([
@@ -186,11 +255,22 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
 
     let suggestedContent = normalizeKnowledgeDocMarkdown(content ?? '');
     if (mode === 'update' && suggestedContent) {
-      suggestedContent = await compressKnowledgeDocToBudget(
-        suggestedContent,
-        selectedScenario.structure,
-        lengthBudget.max
-      );
+      const currentUnits = countKnowledgeDocUnits(suggestedContent);
+      if (!preferCondense && currentUnits < lengthBudget.min) {
+        suggestedContent = await enrichKnowledgeDocToBudget({
+          markdown: suggestedContent,
+          structure: selectedScenario.structure,
+          minUnits: lengthBudget.min,
+          maxUnits: lengthBudget.max,
+        });
+      }
+      if (countKnowledgeDocUnits(suggestedContent) > lengthBudget.max) {
+        suggestedContent = await compressKnowledgeDocToBudget(
+          suggestedContent,
+          selectedScenario.structure,
+          lengthBudget.max
+        );
+      }
     }
     if (!suggestedContent) {
       return NextResponse.json({ error: '知识文档生成失败，请稍后重试。' }, { status: 500 });
