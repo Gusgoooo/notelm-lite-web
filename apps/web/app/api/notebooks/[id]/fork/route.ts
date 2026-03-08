@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
-import { db, eq, notebooks, sources } from 'db';
+import { conversations, db, eq, inArray, messages, notebooks, sources } from 'db';
 import { getNotebookAccess } from '@/lib/notebook-access';
 
 function cloneTitle(title: string): string {
@@ -43,6 +43,50 @@ export async function POST(
         forkedFromNotebookId: access.notebook!.id,
         createdAt: now,
       });
+
+      const originalConversations = await tx
+        .select()
+        .from(conversations)
+        .where(eq(conversations.notebookId, access.notebook!.id));
+
+      if (originalConversations.length > 0) {
+        const conversationIdMap = new Map<string, string>();
+        const clonedConversations = originalConversations.map((row) => {
+          const clonedId = `conv_${randomUUID()}`;
+          conversationIdMap.set(row.id, clonedId);
+          return {
+            id: clonedId,
+            notebookId: forkNotebookId,
+            createdAt: row.createdAt,
+          };
+        });
+        await tx.insert(conversations).values(clonedConversations);
+
+        const originalMessages = await tx
+          .select()
+          .from(messages)
+          .where(inArray(messages.conversationId, originalConversations.map((row) => row.id)));
+
+        if (originalMessages.length > 0) {
+          const clonedMessages = originalMessages
+            .map((row) => {
+              const clonedConversationId = conversationIdMap.get(row.conversationId);
+              if (!clonedConversationId) return null;
+              return {
+                id: `msg_${randomUUID()}`,
+                conversationId: clonedConversationId,
+                role: row.role,
+                content: row.content,
+                citations: row.citations,
+                createdAt: row.createdAt,
+              };
+            })
+            .filter((row): row is NonNullable<typeof row> => Boolean(row));
+          if (clonedMessages.length > 0) {
+            await tx.insert(messages).values(clonedMessages);
+          }
+        }
+      }
 
       const originalSources = await tx
         .select()
