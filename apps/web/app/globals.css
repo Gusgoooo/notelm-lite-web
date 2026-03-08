@@ -224,7 +224,8 @@ body {
 .knowledge-doc-editor table {
   width: auto;
   max-width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   border: 1px solid rgb(229 231 235);
   border-radius: 0.65rem;
   overflow: hidden;
@@ -234,7 +235,9 @@ body {
 
 .knowledge-doc-editor th,
 .knowledge-doc-editor td {
-  border: 1px solid rgb(229 231 235);
+  border: 0;
+  border-right: 1px solid rgb(229 231 235);
+  border-bottom: 1px solid rgb(229 231 235);
   padding: 0.38rem 0.5rem;
   text-align: left;
   vertical-align: top;
@@ -253,6 +256,15 @@ body {
 .knowledge-doc-editor td {
   color: currentColor;
   background: transparent;
+}
+
+.knowledge-doc-editor th:last-child,
+.knowledge-doc-editor td:last-child {
+  border-right: 0;
+}
+
+.knowledge-doc-editor tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .knowledge-doc-editor .selectedCell::after {
