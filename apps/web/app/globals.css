@@ -154,7 +154,7 @@ body {
 }
 
 .knowledge-doc-editor h1 {
-  font-size: 1.125rem;
+  font-size: 1.0625rem;
   font-weight: 700;
   line-height: 1.3;
 }
@@ -222,40 +222,37 @@ body {
 }
 
 .knowledge-doc-editor table {
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   border-collapse: collapse;
   border: 1px solid rgb(229 231 235);
-  border-radius: 0.9rem;
+  border-radius: 0.65rem;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.88);
-  table-layout: fixed;
+  background: transparent;
+  table-layout: auto;
 }
 
 .knowledge-doc-editor th,
 .knowledge-doc-editor td {
   border: 1px solid rgb(229 231 235);
-  padding: 0.7rem 0.8rem;
+  padding: 0.38rem 0.5rem;
   text-align: left;
   vertical-align: top;
-  font-size: 0.795rem;
-  line-height: 1.65;
+  font-size: 0.75rem;
+  line-height: 1.45;
   word-break: break-word;
   position: relative;
 }
 
 .knowledge-doc-editor th {
-  background: rgb(249 250 251);
+  background: transparent;
   color: currentColor;
   font-weight: 600;
 }
 
 .knowledge-doc-editor td {
   color: currentColor;
-  background: rgba(255, 255, 255, 0.92);
-}
-
-.knowledge-doc-editor tr:nth-child(even) td {
-  background: rgba(249, 250, 251, 0.9);
+  background: transparent;
 }
 
 .knowledge-doc-editor .selectedCell::after {

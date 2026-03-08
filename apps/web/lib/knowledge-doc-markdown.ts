@@ -5,7 +5,7 @@ import remarkRehype from 'remark-rehype';
 import rehypeStringify from 'rehype-stringify';
 
 export const KNOWLEDGE_DOC_MARKDOWN_GUIDE = `知识文档 Markdown 规范：
-1. 全文最多保留一个一级标题（#），正文层级统一使用 ## 和 ###。
+1. 全文最多保留一个一级标题（#）；每个一级标题下必须先有二级标题（##）再进入正文，不允许出现“# 标题”后直接正文。
 2. 段落、列表、表格、引用之间保留空行，不要把不同模块粘在一段里。
 3. 列表统一优先使用 "-"，每条只表达一个要点，避免过深嵌套。
 4. 需要表达对比、状态、计划、指标时，可以使用 Markdown 表格；表头要明确，单元格尽量短句化。
@@ -43,6 +43,60 @@ function isMarkdownTableLine(line: string): boolean {
   return /^\|?.+\|.+\|?$/.test(trimmed);
 }
 
+function getHeadingLevel(line: string): number | null {
+  const match = line.match(/^\s*(#{1,6})\s+/);
+  return match ? match[1]!.length : null;
+}
+
+function normalizeHeadingLevel(line: string, level: number): string {
+  return line.replace(/^(\s*)#{1,6}(\s+)/, `$1${'#'.repeat(Math.max(1, Math.min(6, level)))}$2`);
+}
+
+function enforceProgressiveHeadingStructure(lines: string[]): string[] {
+  const normalized = [...lines];
+  let previousHeadingLevel: number | null = null;
+
+  for (let index = 0; index < normalized.length; index += 1) {
+    const current = normalized[index] ?? '';
+    const level = getHeadingLevel(current);
+    if (level == null) continue;
+    let nextLevel = level;
+    if (previousHeadingLevel == null && level > 1) {
+      nextLevel = 1;
+    } else if (previousHeadingLevel != null && level > previousHeadingLevel + 1) {
+      nextLevel = previousHeadingLevel + 1;
+    }
+    if (nextLevel !== level) {
+      normalized[index] = normalizeHeadingLevel(current, nextLevel);
+    }
+    previousHeadingLevel = nextLevel;
+  }
+
+  const output: string[] = [];
+  for (let index = 0; index < normalized.length; index += 1) {
+    const line = normalized[index] ?? '';
+    output.push(line);
+    if (getHeadingLevel(line) !== 1) continue;
+
+    for (let cursor = index + 1; cursor < normalized.length; cursor += 1) {
+      const candidate = normalized[cursor] ?? '';
+      if (getHeadingLevel(candidate) === 1) break;
+      if (!candidate.trim()) continue;
+      const candidateHeadingLevel = getHeadingLevel(candidate);
+      if (candidateHeadingLevel == null) {
+        if (output.at(-1) !== '') output.push('');
+        output.push('## 概要');
+        output.push('');
+      } else if (candidateHeadingLevel > 2) {
+        normalized[cursor] = normalizeHeadingLevel(candidate, 2);
+      }
+      break;
+    }
+  }
+
+  return output;
+}
+
 export function normalizeKnowledgeDocMarkdown(raw: string): string {
   const unwrapped = unwrapMarkdownFence(raw);
   if (!unwrapped) return '';
@@ -52,13 +106,14 @@ export function normalizeKnowledgeDocMarkdown(raw: string): string {
     .replace(/\t/g, '  ')
     .split('\n')
     .map((line) => normalizeMarkdownLine(line));
+  const progressiveLines = enforceProgressiveHeadingStructure(normalizedLines);
 
   const spacedLines: string[] = [];
 
-  for (let index = 0; index < normalizedLines.length; index += 1) {
-    const line = normalizedLines[index] ?? '';
-    const previous = normalizedLines[index - 1] ?? '';
-    const next = normalizedLines[index + 1] ?? '';
+  for (let index = 0; index < progressiveLines.length; index += 1) {
+    const line = progressiveLines[index] ?? '';
+    const previous = progressiveLines[index - 1] ?? '';
+    const next = progressiveLines[index + 1] ?? '';
     const currentIsTable = isMarkdownTableLine(line);
     const previousIsTable = isMarkdownTableLine(previous);
     const nextIsTable = isMarkdownTableLine(next);
