@@ -35,37 +35,94 @@ function hasExplicitCondenseIntent(text: string): boolean {
   return /精简|精炼|缩短|压缩|删减|减少|简化|浓缩|更短|简洁一点|控制字数|少写|短一点/i.test(text);
 }
 
+function hasExplicitExpandIntent(text: string): boolean {
+  if (!text.trim()) return false;
+  const hasExpandSignal =
+    /补充|补全|扩写|展开|详细|深入|更完整|更全面|丰富|增加内容|多写|写长一点|详细一点|展开说|再补一些/i.test(
+      text
+    );
+  const hasNegation =
+    /(不要|不用|无需|别)(?:.{0,4})(补充|补全|扩写|展开|详细|深入|增加|多写|写长|丰富)/i.test(text);
+  return hasExpandSignal && !hasNegation;
+}
+
+type KnowledgeDocLengthMode = 'condense' | 'balanced' | 'expand';
+
+function resolveKnowledgeDocLengthMode(text: string): KnowledgeDocLengthMode {
+  const preferCondense = hasExplicitCondenseIntent(text);
+  const preferExpand = hasExplicitExpandIntent(text);
+  if (preferCondense && !preferExpand) return 'condense';
+  if (preferExpand && !preferCondense) return 'expand';
+  return 'balanced';
+}
+
 function getKnowledgeDocLengthBudget(
   currentContent: string,
   structure: string,
-  preferCondense: boolean
+  mode: KnowledgeDocLengthMode
 ) {
   const currentUnits = countKnowledgeDocUnits(stripHtml(currentContent));
   if (currentUnits > 0) {
-    if (preferCondense) {
-      const min = Math.max(120, Math.round(currentUnits * 0.72));
-      const max = Math.max(min + 40, Math.round(currentUnits * 0.96));
+    if (mode === 'condense') {
+      const min = Math.max(120, Math.round(currentUnits * 0.68));
+      const max = Math.max(min + 32, Math.round(currentUnits * 0.94));
       return {
         baseline: currentUnits,
         min,
         max,
+        hardMax: max,
       };
     }
-    const min = currentUnits + Math.max(18, Math.round(currentUnits * 0.03));
-    const max = currentUnits + Math.max(56, Math.round(currentUnits * 0.09));
+    if (mode === 'expand') {
+      const min = currentUnits + Math.max(48, Math.round(currentUnits * 0.1));
+      const max = currentUnits + Math.max(220, Math.round(currentUnits * 0.42));
+      const hardMax = max + Math.max(180, Math.round(currentUnits * 0.28));
+      return {
+        baseline: currentUnits,
+        min,
+        max: Math.max(min + 80, max),
+        hardMax: Math.max(max + 120, hardMax),
+      };
+    }
+    const min = currentUnits + Math.max(24, Math.round(currentUnits * 0.05));
+    const max = currentUnits + Math.max(120, Math.round(currentUnits * 0.18));
+    const hardMax = max + Math.max(140, Math.round(currentUnits * 0.2));
     return {
       baseline: currentUnits,
       min,
-      max: Math.max(min + 24, max),
+      max: Math.max(min + 48, max),
+      hardMax: Math.max(max + 100, hardMax),
     };
   }
 
   const structureUnits = countKnowledgeDocUnits(structure);
-  const baseline = Math.max(260, Math.min(620, Math.round(structureUnits * 2.1)));
+  const baseline = Math.max(300, Math.min(820, Math.round(structureUnits * 2.3)));
+  if (mode === 'condense') {
+    const min = Math.max(180, Math.round(baseline * 0.7));
+    const max = Math.max(260, Math.round(baseline * 0.95));
+    return {
+      baseline,
+      min,
+      max,
+      hardMax: max,
+    };
+  }
+  if (mode === 'expand') {
+    const min = Math.max(260, Math.round(baseline * 1.0));
+    const max = Math.max(420, Math.round(baseline * 1.5));
+    const hardMax = Math.max(540, Math.round(baseline * 1.8));
+    return {
+      baseline,
+      min,
+      max,
+      hardMax,
+    };
+  }
   return {
     baseline,
-    min: Math.max(200, Math.round(baseline * 0.74)),
-    max: Math.max(340, Math.round(baseline * 1.1)),
+    min: Math.max(240, Math.round(baseline * 0.9)),
+    max: Math.max(380, Math.round(baseline * 1.24)),
+    hardMax: Math.max(460, Math.round(baseline * 1.42)),
   };
 }
 
@@ -162,7 +219,7 @@ export async function POST(
     const rawMode = typeof body?.mode === 'string' ? body.mode.trim() : 'create';
     const rawUserIntent = typeof body?.userIntent === 'string' ? body.userIntent.trim() : '';
     const mode = rawMode === 'update' ? 'update' : 'create';
-    const preferCondense = hasExplicitCondenseIntent(rawUserIntent);
+    const lengthMode = resolveKnowledgeDocLengthMode(rawUserIntent);
 
     const [docRow, scenarioRow] = await Promise.all([
       db
@@ -207,7 +264,7 @@ export async function POST(
     const lengthBudget = getKnowledgeDocLengthBudget(
       currentContent,
       selectedScenario.structure,
-      preferCondense
+      lengthMode
     );
     const sourceContext = rows
       .map((row, index) => `[来源${index + 1}] ${row.sourceTitle}\n${row.content}`)
@@ -226,7 +283,7 @@ export async function POST(
 6. 如需表达对比、状态、指标、计划，可使用 Markdown 表格。
 7. 不要输出代码块，不要输出任何额外解释。
 8. 更新已有知识文档时，必须把当前知识文档视为当前版本下的权威版本，优先做替换、合并、删除和润色，不要只是在后面不断加字。
-9. 默认采用“缓慢增量”策略：除非用户明确要求精简，更新模式下总长度应较当前版本小幅增加（建议增加 3%-9%），优先补充关键依据和可执行细节。
+9. 字数策略必须与用户意图一致：明确要求精简时再压缩；默认做平衡优化；明确要求补充/扩写时允许明显增量。
 10. 项目说明不只是文档结构要求，也包含回答风格、重点和引导方式；输出时要一并遵守。
 
 ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
@@ -238,14 +295,20 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
       `当前知识文档：\n${currentContent || '（空）'}\n\n` +
       `长度目标：\n${
         mode === 'update'
-          ? preferCondense
-            ? `用户明确要求精简：当前版本约 ${lengthBudget.baseline} 个字符单元，本次控制在 ${lengthBudget.min}-${lengthBudget.max} 之间。`
-            : `默认缓慢增量：当前版本约 ${lengthBudget.baseline} 个字符单元，本次尽量控制在 ${lengthBudget.min}-${lengthBudget.max} 之间。`
-          : `请尽量控制在 ${lengthBudget.min}-${lengthBudget.max} 个字符单元之间。`
+          ? lengthMode === 'condense'
+            ? `用户明确要求精简：当前版本约 ${lengthBudget.baseline} 个字符单元，本次建议控制在 ${lengthBudget.min}-${lengthBudget.max} 之间，超过 ${lengthBudget.hardMax} 将触发压缩。`
+            : lengthMode === 'expand'
+              ? `用户明确要求补充：当前版本约 ${lengthBudget.baseline} 个字符单元，本次建议扩展到 ${lengthBudget.min}-${lengthBudget.max} 之间，仅在超过 ${lengthBudget.hardMax} 时压缩。`
+              : `默认平衡策略：当前版本约 ${lengthBudget.baseline} 个字符单元，本次建议在 ${lengthBudget.min}-${lengthBudget.max} 之间，允许自然波动，仅在超过 ${lengthBudget.hardMax} 时压缩。`
+          : lengthMode === 'condense'
+            ? `用户希望更精简：建议控制在 ${lengthBudget.min}-${lengthBudget.max} 个字符单元。`
+            : lengthMode === 'expand'
+              ? `用户希望更完整：建议扩展到 ${lengthBudget.min}-${lengthBudget.max} 个字符单元。`
+              : `请在 ${lengthBudget.min}-${lengthBudget.max} 个字符单元内完成平衡输出。`
       }\n\n` +
       `来源摘录：\n${sourceContext}\n\n` +
       (mode === 'update'
-        ? '请在保留当前知识文档主线的前提下，按照上述项目说明吸收新来源内容，先确定最合适的章节结构，再输出更新后的完整知识文档。优先改写、替换、合并和删除已有内容。若无“精简”要求，应进行小幅增量补充，而不是越改越短。'
+        ? '请在保留当前知识文档主线的前提下，按照上述项目说明吸收新来源内容，先确定最合适的章节结构，再输出更新后的完整知识文档。优先改写、替换、合并和删除已有内容。若用户要求补充/扩写，应优先补齐依据、细节和待办。'
         : '请直接根据上述项目说明，先确定最合适的章节结构，再生成一份可继续编辑的完整知识文档初稿。');
 
     const { content } = await chat([
@@ -256,7 +319,7 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
     let suggestedContent = normalizeKnowledgeDocMarkdown(content ?? '');
     if (mode === 'update' && suggestedContent) {
       const currentUnits = countKnowledgeDocUnits(suggestedContent);
-      if (!preferCondense && currentUnits < lengthBudget.min) {
+      if (lengthMode !== 'condense' && currentUnits < lengthBudget.min) {
         suggestedContent = await enrichKnowledgeDocToBudget({
           markdown: suggestedContent,
           structure: selectedScenario.structure,
@@ -264,11 +327,12 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
           maxUnits: lengthBudget.max,
         });
       }
-      if (countKnowledgeDocUnits(suggestedContent) > lengthBudget.max) {
+      const compressThreshold = lengthMode === 'condense' ? lengthBudget.max : lengthBudget.hardMax;
+      if (countKnowledgeDocUnits(suggestedContent) > compressThreshold) {
         suggestedContent = await compressKnowledgeDocToBudget(
           suggestedContent,
           selectedScenario.structure,
-          lengthBudget.max
+          compressThreshold
         );
       }
     }
