@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -302,7 +302,7 @@ export function WorkspaceShell({
     return () => observer.disconnect();
   }, [notebookId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let nextDocCollapsed = false;
     try {
       const entryMode = window.sessionStorage.getItem(`notebook-entry:${notebookId}`);
@@ -310,7 +310,10 @@ export function WorkspaceShell({
     } catch {
       nextDocCollapsed = false;
     }
+    setDocCollapsed(nextDocCollapsed);
+  }, [notebookId]);
 
+  useEffect(() => {
     // Keep local UI state in sync when switching notebooks (e.g. fork/save-as-mine).
     setHeaderTitle(initialTitle);
     setHeaderTitleDraft(initialTitle);
@@ -321,7 +324,6 @@ export function WorkspaceShell({
     setPublishOpen(false);
     setPublishError('');
     setPublishSuccess('');
-    setDocCollapsed(nextDocCollapsed);
     setBootstrapOpen(false);
     setBootstrapHint('');
     setBootstrapError('');

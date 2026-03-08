@@ -1209,7 +1209,7 @@ export function KnowledgeDocPanel({
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden pt-2">
+    <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       <div className="relative z-10 flex h-12 shrink-0 items-center justify-between gap-2 px-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
           知识文档
@@ -1344,7 +1344,7 @@ export function KnowledgeDocPanel({
       ) : null}
 
       {draftDialog ? (
-        <div className="absolute inset-x-0 bottom-0 top-14 z-20 flex items-center justify-center bg-white/82 px-4 dark:bg-gray-950/82">
+        <div className="absolute inset-x-0 bottom-0 top-12 z-20 flex items-center justify-center bg-white/82 px-4 dark:bg-gray-950/82">
           <div className="relative w-full max-w-[320px] overflow-hidden rounded-[22px] border border-gray-200 bg-white px-5 py-4 text-center shadow-lg dark:border-gray-800 dark:bg-gray-900">
             {draftDialog.kind === 'loading' ? <div className="knowledge-doc-busy absolute inset-0" /> : null}
             <div className="relative z-10 space-y-3">
@@ -1378,7 +1378,7 @@ export function KnowledgeDocPanel({
       ) : null}
 
       {panelBusy ? (
-        <div className="absolute inset-x-0 bottom-0 top-14 z-20 flex items-center justify-center bg-white/82 px-4 dark:bg-gray-950/82">
+        <div className="absolute inset-x-0 bottom-0 top-12 z-20 flex items-center justify-center bg-white/82 px-4 dark:bg-gray-950/82">
           <div className="relative overflow-hidden rounded-[22px] border border-gray-200 bg-white px-5 py-4 text-center shadow-lg dark:border-gray-800 dark:bg-gray-900">
             <div className="knowledge-doc-busy absolute inset-0" />
             <div className="relative z-10 space-y-2">
@@ -1391,7 +1391,7 @@ export function KnowledgeDocPanel({
 
       {sheetMode ? (
         <div
-          className="app-modal-backdrop absolute inset-x-0 bottom-0 top-14 z-30 flex items-end"
+          className="app-modal-backdrop absolute inset-x-0 bottom-0 top-12 z-30 flex items-end"
           onClick={(event) => {
             if (event.target === event.currentTarget) {
               setSheetMode(null);
