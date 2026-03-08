@@ -24,6 +24,10 @@ export type KnowledgeDocScenarioState = {
 };
 
 export const KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE = '__KNOWLEDGE_DOC_SCENARIOS__';
+export const KNOWLEDGE_DOC_SCENARIO_INSTRUCTION_PLACEHOLDER =
+  '例如“参考来源，确定科学的OKR撰写结构，并引导我一步一步回答撰写OKR所需要的内容。回答需要简洁且突出重点“。';
+export const KNOWLEDGE_DOC_SCENARIO_EDITOR_HINT =
+  '设置此项目的背景信息并自定义NotebookGo 的回复方式。';
 
 export const DEFAULT_KNOWLEDGE_DOC_SCENARIOS: KnowledgeDocScenario[] = [
   {
@@ -33,27 +37,8 @@ export const DEFAULT_KNOWLEDGE_DOC_SCENARIOS: KnowledgeDocScenario[] = [
     hint: '根据来源自动归纳最适合的初稿结构',
     accent: 'sky',
     builtIn: true,
-    structure: `# 文档目标
-- 这份文档要解决什么问题
-- 适用对象是谁
-
-## 核心结论
-- 结论 1：
-- 结论 2：
-- 结论 3：
-
-## 关键依据
-- 依据 1：
-- 依据 2：
-- 依据 3：
-
-## 待确认问题
-- 还缺什么信息
-- 哪些判断仍需验证
-
-## 下一步建议
-- 建议动作 1：
-- 建议动作 2：`,
+    structure:
+      '参考来源，自动判断这个项目最适合怎样的知识文档结构。优先整理项目目标、核心结论、关键依据、待确认问题和下一步建议，并在对话中持续引导我补充最关键的信息。回答需要简洁、清楚、突出重点。',
   },
   {
     id: 'okr',
@@ -62,41 +47,8 @@ export const DEFAULT_KNOWLEDGE_DOC_SCENARIOS: KnowledgeDocScenario[] = [
     hint: '整理目标、关键结果和衡量方式',
     accent: 'emerald',
     builtIn: true,
-    structure: `# OKR草案
-## 基本信息
-- 周期：
-- 负责人：
-- 背景：
-
-## O1：目标一
-- 目标说明：
-- 为什么做：
-- 成功标志：
-
-### KR1：
-- 当前基线：
-- 目标值：
-- 衡量口径：
-- 关键举措：
-
-### KR2：
-- 当前基线：
-- 目标值：
-- 衡量口径：
-- 关键举措：
-
-### KR3：
-- 当前基线：
-- 目标值：
-- 衡量口径：
-- 关键举措：
-
-## 风险与依赖
-- 风险：
-- 外部依赖：
-
-## 待补充信息
-- 还缺哪些业务事实或资源信息：`,
+    structure:
+      '参考来源，确定科学、可执行的OKR撰写结构。优先整理周期、负责人、业务背景、目标、关键结果、衡量方式、风险和依赖，并引导我一步一步回答完成OKR所需要的内容。回答需要简洁且突出重点。',
   },
   {
     id: 'prd',
@@ -105,40 +57,8 @@ export const DEFAULT_KNOWLEDGE_DOC_SCENARIOS: KnowledgeDocScenario[] = [
     hint: '聚焦用户、场景、方案和验证',
     accent: 'amber',
     builtIn: true,
-    structure: `# PRD初稿
-## 1. 背景与目标
-- 背景：
-- 要解决的问题：
-- 业务目标：
-
-## 2. 目标用户
-- 主要用户：
-- 关键痛点：
-- 使用环境：
-
-## 3. 核心场景
-### 场景 1
-- 触发条件：
-- 用户任务：
-- 当前问题：
-
-### 场景 2
-- 触发条件：
-- 用户任务：
-- 当前问题：
-
-## 4. 方案设计
-- 功能模块：
-- 核心流程：
-- 关键规则：
-
-## 5. 指标与验证
-- 成功指标：
-- 验证方式：
-
-## 6. 风险与待确认
-- 风险：
-- 待确认问题：`,
+    structure:
+      '参考来源，确定清晰的PRD撰写结构。优先整理背景、目标、目标用户、核心场景、方案设计、关键规则、成功指标、风险和待确认问题，并持续引导我补充写PRD所需要的关键信息。回答需要简洁、面向产品决策。',
   },
   {
     id: 'prompt',
@@ -147,35 +67,8 @@ export const DEFAULT_KNOWLEDGE_DOC_SCENARIOS: KnowledgeDocScenario[] = [
     hint: '沉淀任务目标、输入和输出约束',
     accent: 'violet',
     builtIn: true,
-    structure: `# Prompt草案
-## 任务目标
-- 要完成什么任务：
-- 最终希望达到什么效果：
-
-## 角色设定
-- 模型应扮演的角色：
-- 回答风格：
-
-## 输入信息
-- 用户会提供什么信息：
-- 必填字段：
-- 可选字段：
-
-## 输出要求
-- 输出格式：
-- 输出结构：
-- 长度要求：
-
-## 约束条件
-- 必须遵守的限制：
-- 不允许出现的内容：
-
-## 示例
-### 输入示例
-- 
-
-### 输出示例
-- `,
+    structure:
+      '参考来源，确定高质量Prompt的撰写结构。优先整理任务目标、角色设定、输入信息、输出格式、约束条件和示例，并引导我补齐写Prompt所需要的关键信息。回答需要简洁、明确、可直接复用。',
   },
   {
     id: 'analysis',
@@ -184,37 +77,8 @@ export const DEFAULT_KNOWLEDGE_DOC_SCENARIOS: KnowledgeDocScenario[] = [
     hint: '提炼结论、依据、风险和建议',
     accent: 'rose',
     builtIn: true,
-    structure: `# 分析报告
-## 1. 结论摘要
-- 核心结论 1：
-- 核心结论 2：
-- 核心结论 3：
-
-## 2. 分析对象与范围
-- 分析对象：
-- 范围界定：
-- 关键假设：
-
-## 3. 关键发现
-### 发现 1
-- 现象：
-- 证据：
-- 影响：
-
-### 发现 2
-- 现象：
-- 证据：
-- 影响：
-
-## 4. 风险与争议
-- 风险：
-- 不确定性：
-- 争议点：
-
-## 5. 建议动作
-- 建议 1：
-- 建议 2：
-- 建议 3：`,
+    structure:
+      '参考来源，确定分析报告的最佳结构。优先整理结论摘要、分析对象、关键发现、证据、风险、争议和建议动作，并在对话中持续引导我补充分析所需要的事实、判断和约束。回答需要简洁、突出重点、方便决策。',
   },
   {
     id: 'learning',
@@ -223,36 +87,8 @@ export const DEFAULT_KNOWLEDGE_DOC_SCENARIOS: KnowledgeDocScenario[] = [
     hint: '生成便于学习吸收的结构化笔记',
     accent: 'slate',
     builtIn: true,
-    structure: `# 学习笔记
-## 学习目标
-- 这次要学会什么：
-- 学完后能解决什么问题：
-
-## 核心概念
-### 概念 1
-- 定义：
-- 为什么重要：
-- 示例：
-
-### 概念 2
-- 定义：
-- 为什么重要：
-- 示例：
-
-## 知识脉络
-- 主题之间的关系：
-- 关键前提：
-- 常见误区：
-
-## 重点结论
-- 结论 1：
-- 结论 2：
-- 结论 3：
-
-## 继续追问的问题
-- 问题 1：
-- 问题 2：
-- 问题 3：`,
+    structure:
+      '参考来源，确定适合学习吸收的知识笔记结构。优先整理学习目标、核心概念、知识脉络、重点结论和后续问题，并引导我补充背景、难点和想重点掌握的内容。回答需要简洁、易理解、方便继续学习。',
   },
 ];
 
@@ -290,13 +126,13 @@ function toUniqueScenarioId(value: string): KnowledgeDocScenarioId {
 }
 
 export function summarizeScenarioStructure(structure: string): string {
-  const lines = structure
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => line.replace(/^#+\s*/, '').replace(/^[-*+]\s*/, ''));
-  if (lines.length === 0) return '自定义结构';
-  return lines.slice(0, 2).join(' · ').slice(0, 34);
+  const compact = structure.replace(/\s+/g, ' ').trim();
+  if (!compact) return '自定义项目说明';
+  const sentences = compact
+    .split(/[。！？!?\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return (sentences[0] ?? compact).slice(0, 34);
 }
 
 function normalizeAccent(value: unknown): KnowledgeDocScenario['accent'] {
@@ -374,12 +210,22 @@ export function resolveKnowledgeDocScenario(
 }
 
 export function extractScenarioPromptAnchors(structure: string, limit = 3): string[] {
-  return structure
-    .split('\n')
-    .map((line) => line.trim())
+  const parts = structure
+    .replace(/[“”"']/g, '')
+    .split(/[。！？!?\n]/)
+    .flatMap((sentence) => sentence.split(/[，、；;]/))
+    .map((item) =>
+      item
+        .trim()
+        .replace(/^参考来源[,，]?/, '')
+        .replace(/^设置此项目的背景信息并自定义NotebookGo 的回复方式[,，]?/, '')
+        .replace(/^回答需要/, '')
+        .replace(/^并/, '')
+        .replace(/的内容$/, '')
+        .replace(/[:：]$/, '')
+        .trim()
+    )
     .filter(Boolean)
-    .filter((line) => /^#{1,3}\s+/.test(line) || /^[-*+]\s+/.test(line))
-    .map((line) => line.replace(/^#{1,3}\s+/, '').replace(/^[-*+]\s+/, '').replace(/[:：]$/, ''))
-    .filter(Boolean)
-    .slice(0, limit);
+    .filter((item) => item.length >= 4);
+  return parts.slice(0, limit);
 }

@@ -210,26 +210,30 @@ function buildGuidanceQuestion(
   userMessage: string,
   activeScenario: KnowledgeDocScenario | null
 ): string {
-  if (activeScenario?.presetKey === 'okr') {
+  const scenarioContext = activeScenario ? `${activeScenario.label}\n${activeScenario.structure}` : '';
+  const inferredFromScenario = activeScenario ? inferGuidanceScenario(scenarioContext, '') : null;
+
+  if (activeScenario?.presetKey === 'okr' || inferredFromScenario === 'okr') {
     return '这个 OKR 的目标、KR 和负责人可以再补充一下吗？';
   }
-  if (activeScenario?.presetKey === 'prd') {
+  if (activeScenario?.presetKey === 'prd' || inferredFromScenario === 'prd') {
     return '这个 PRD 的用户、场景和指标可以再补充一下吗？';
   }
-  if (activeScenario?.presetKey === 'prompt') {
+  if (activeScenario?.presetKey === 'prompt' || inferredFromScenario === 'prompt') {
     return '这个 Prompt 的输入、输出格式和约束可以再补充一下吗？';
   }
-  if (activeScenario?.presetKey === 'analysis') {
+  if (activeScenario?.presetKey === 'analysis' || inferredFromScenario === 'analysis') {
     return '分析对象、关键证据和建议动作可以再补充一下吗？';
   }
-  if (activeScenario?.presetKey === 'learning') {
+  if (activeScenario?.presetKey === 'learning' || inferredFromScenario === 'learning') {
     return '核心概念、知识脉络或后续问题可以再补充一下吗？';
   }
   if (activeScenario?.presetKey === 'custom') {
     const anchors = extractScenarioPromptAnchors(activeScenario.structure, 3);
     if (anchors.length > 0) {
-      return `「${activeScenario.label}」里的 ${anchors.join('、')} 可以再补充一下吗？`;
+      return `为了继续完善「${activeScenario.label}」，${anchors.slice(0, 2).join('和')}可以再补充一下吗？`;
     }
+    return `为了继续完善「${activeScenario.label}」，背景、目标和重点要求可以再补充一下吗？`;
   }
   const scenario = inferGuidanceScenario(topic, userMessage);
   if (scenario === 'okr') {
@@ -751,7 +755,7 @@ export async function POST(request: Request) {
       ? `\nCurrent notebook topic: ${onboardingTopic}.\nThe user is still clarifying information for a future knowledge document. Keep the answer aware of missing context and emphasize the most reusable points for later structuring into a knowledge document.`
       : '';
     const activeScenarioRule = activeKnowledgeDocScenario
-      ? `\nCurrent knowledge document scenario: ${activeKnowledgeDocScenario.label}.\nPreferred structure anchors: ${extractScenarioPromptAnchors(activeKnowledgeDocScenario.structure, 6).join(' / ') || activeKnowledgeDocScenario.structure.slice(0, 300)}.\nWhen helpful, steer the user to补充更适合写入该结构的事实、目标、指标、约束或证据。`
+      ? `\nCurrent project instruction for this notebook: ${activeKnowledgeDocScenario.label}.\nProject instruction details:\n${activeKnowledgeDocScenario.structure}\nTreat this like persistent project-level instructions. It should affect both the knowledge document organization and the way you answer in chat.\nWhen helpful, steer the user to补充更适合写入该项目的事实、目标、指标、约束、证据或偏好。\nIf the instruction asks for concise, focused, step-by-step or decision-oriented answers, keep that style consistently.`
       : '';
     const systemPrompt = `You are a helpful assistant. Unless the user explicitly requests another language, always answer in Simplified Chinese. Answer based only on the provided sources and script insights. Always cite source numbers like [1] when using source chunks. If script insights are used, explicitly mention "脚本分析" in your answer. If the question cannot be answered from provided context, say so.${skillTemplateRule}${viralSkillRule}${paperInsightRule}${onboardingGuideRule}${activeScenarioRule}`;
     const userPrompt = `Notebook topic: ${onboardingTopic || access.notebook.title}\n\nSources:\n${context}\n\nScript Insights:\n${scriptContext || '(none)'}\n\nUser question: ${userMessage.trim()}`;

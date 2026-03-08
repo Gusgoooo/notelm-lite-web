@@ -11,6 +11,8 @@ import DiffMatchPatch from 'diff-match-patch';
 import {
   extractScenarioPromptAnchors,
   getDefaultKnowledgeDocScenarioState,
+  KNOWLEDGE_DOC_SCENARIO_EDITOR_HINT,
+  KNOWLEDGE_DOC_SCENARIO_INSTRUCTION_PLACEHOLDER,
   normalizeKnowledgeDocScenarioState,
   summarizeScenarioStructure,
   type BuiltinKnowledgeDocScenarioId,
@@ -785,9 +787,7 @@ export function KnowledgeDocPanel({
         setScenarioEditorMode('create');
         setScenarioEditorSourceId(null);
         setScenarioTitleDraft('');
-        setScenarioStructureDraft(
-          '# 自定义结构\n## 模块一\n- 待补充\n\n## 模块二\n- 待补充'
-        );
+        setScenarioStructureDraft(KNOWLEDGE_DOC_SCENARIO_INSTRUCTION_PLACEHOLDER.replace(/^例如/, '').replace(/“|”/g, ''));
       } else if (scenario) {
         setScenarioEditorMode(mode);
         setScenarioEditorSourceId(scenario.id);
@@ -1406,12 +1406,12 @@ export function KnowledgeDocPanel({
                 </h3>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   {sheetMode === 'draft'
-                    ? '先选择一个结构模板，系统会按该结构自动填充内容。'
+                    ? '先选择一个项目说明，系统会根据它确定知识文档结构并调整对话方式。'
                     : '从当前知识文档快速生成结构化内容。'}
                 </p>
                 {sheetMode === 'draft' && activeScenario ? (
                   <p className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
-                    当前生效结构：{activeScenario.label}
+                    当前生效项目：{activeScenario.label}
                   </p>
                 ) : null}
               </div>
@@ -1467,7 +1467,7 @@ export function KnowledgeDocPanel({
                               <span
                                 className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${getScenarioActiveBadgeClass(scenario)}`}
                               >
-                                当前结构
+                                当前项目
                               </span>
                             ) : null}
                             {!scenario.builtIn ? (
@@ -1493,14 +1493,14 @@ export function KnowledgeDocPanel({
                   <div className="space-y-2">
                     <span className="inline-flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100">
                       <AddScenarioIcon />
-                      新增自定义结构
+                      新增自定义项目
                     </span>
                     <p className="text-xs leading-5 text-gray-500 dark:text-gray-400">
-                      自定义标题和输出结构，保存后会作为一个新的场景卡片。
+                      自定义项目说明和回复方式，保存后会作为一个新的场景卡片。
                     </p>
                   </div>
                   <div className="rounded-[14px] border border-dashed border-gray-300 px-3 py-2 text-[11px] leading-5 text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                    自定义结构 / 模块 / 提示语
+                    项目背景 / 回复方式 / 引导要求
                   </div>
                 </button>
               </div>
@@ -1540,14 +1540,14 @@ export function KnowledgeDocPanel({
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                  {scenarioEditorMode === 'edit' ? '编辑自定义场景' : '配置场景结构'}
+                  {scenarioEditorMode === 'edit' ? '编辑自定义项目' : '配置项目说明'}
                 </h3>
                 <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
                   {scenarioEditorMode === 'clone'
-                    ? '基于当前预置场景调整标题和输出结构，保存后会生成一个新的自定义场景。'
+                    ? '基于当前预置项目调整标题和项目说明，保存后会生成一个新的自定义场景。'
                     : scenarioEditorMode === 'edit'
-                      ? '修改这个自定义场景的标题和结构。'
-                      : '新增一个自定义场景，系统会按你定义的结构生成和更新知识文档。'}
+                      ? '修改这个自定义场景的标题和项目说明。'
+                      : '新增一个自定义场景，系统会按你定义的项目说明生成知识文档，并调整对话方式。'}
                 </p>
               </div>
               <button
@@ -1574,15 +1574,18 @@ export function KnowledgeDocPanel({
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-medium text-gray-600 dark:text-gray-300">输出结构</label>
+                <label className="text-xs font-medium text-gray-600 dark:text-gray-300">项目说明</label>
+                <p className="text-[11px] leading-5 text-gray-500 dark:text-gray-400">
+                  {KNOWLEDGE_DOC_SCENARIO_EDITOR_HINT}
+                </p>
                 <textarea
                   value={scenarioStructureDraft}
                   onChange={(event) => setScenarioStructureDraft(event.target.value)}
                   className="min-h-[320px] w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-sm leading-6 text-gray-900 outline-none transition focus:border-gray-300 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
-                  placeholder={`# 结构标题\n## 模块一\n- 待补充\n\n## 模块二\n- 待补充`}
+                  placeholder={KNOWLEDGE_DOC_SCENARIO_INSTRUCTION_PLACEHOLDER}
                 />
                 <p className="text-[11px] leading-5 text-gray-500 dark:text-gray-400">
-                  这里可以直接写成类似 Prompt 的结构说明。生成和更新知识文档时，系统会尽量严格按这个结构填充内容。
+                  这里直接输入自然语言即可。它会同时影响知识文档的组织方式，以及 NotebookGo 在对话中的追问和回答风格。
                 </p>
               </div>
             </div>
