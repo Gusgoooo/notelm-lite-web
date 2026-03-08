@@ -16,7 +16,6 @@ import {
 import { createEmbeddings, chat } from 'shared';
 import { randomUUID } from 'crypto';
 import {
-  extractScenarioPromptAnchors,
   getDefaultKnowledgeDocScenarioState,
   normalizeKnowledgeDocScenarioState,
   resolveKnowledgeDocScenario,
@@ -193,67 +192,6 @@ function parseKnowledgeDocScenarioState(raw: string | null | undefined) {
   }
 }
 
-type GuidanceScenario = 'okr' | 'prd' | 'prompt' | 'analysis' | 'learning' | 'general';
-
-function inferGuidanceScenario(topic: string, userMessage: string): GuidanceScenario {
-  const normalized = `${topic}\n${userMessage}`.toLowerCase();
-  if (/okr|目标|关键结果/.test(normalized)) return 'okr';
-  if (/prd|产品需求|需求文档|产品方案/.test(normalized)) return 'prd';
-  if (/prompt|提示词|指令/.test(normalized)) return 'prompt';
-  if (/报告|分析|洞察|研究|复盘/.test(normalized)) return 'analysis';
-  if (/学习|课程|知识|入门|教程/.test(normalized)) return 'learning';
-  return 'general';
-}
-
-function buildGuidanceQuestion(
-  topic: string,
-  userMessage: string,
-  activeScenario: KnowledgeDocScenario | null
-): string {
-  const scenarioContext = activeScenario ? `${activeScenario.label}\n${activeScenario.structure}` : '';
-  const inferredFromScenario = activeScenario ? inferGuidanceScenario(scenarioContext, '') : null;
-
-  if (activeScenario?.presetKey === 'okr' || inferredFromScenario === 'okr') {
-    return '这个 OKR 的目标、KR 和负责人可以再补充一下吗？';
-  }
-  if (activeScenario?.presetKey === 'prd' || inferredFromScenario === 'prd') {
-    return '这个 PRD 的用户、场景和指标可以再补充一下吗？';
-  }
-  if (activeScenario?.presetKey === 'prompt' || inferredFromScenario === 'prompt') {
-    return '这个 Prompt 的输入、输出格式和约束可以再补充一下吗？';
-  }
-  if (activeScenario?.presetKey === 'analysis' || inferredFromScenario === 'analysis') {
-    return '分析对象、关键证据和建议动作可以再补充一下吗？';
-  }
-  if (activeScenario?.presetKey === 'learning' || inferredFromScenario === 'learning') {
-    return '核心概念、知识脉络或后续问题可以再补充一下吗？';
-  }
-  if (activeScenario?.presetKey === 'custom') {
-    const anchors = extractScenarioPromptAnchors(activeScenario.structure, 3);
-    if (anchors.length > 0) {
-      return `为了继续完善「${activeScenario.label}」，${anchors.slice(0, 2).join('和')}可以再补充一下吗？`;
-    }
-    return `为了继续完善「${activeScenario.label}」，背景、目标和重点要求可以再补充一下吗？`;
-  }
-  const scenario = inferGuidanceScenario(topic, userMessage);
-  if (scenario === 'okr') {
-    return '项目背景、时间周期和关键结果目标值可以再补充一下吗？';
-  }
-  if (scenario === 'prd') {
-    return '目标用户、核心场景和成功指标可以再补充一下吗？';
-  }
-  if (scenario === 'prompt') {
-    return '输入条件、输出格式和约束要求可以再补充一下吗？';
-  }
-  if (scenario === 'analysis') {
-    return '分析对象、比较维度和决策目标可以再补充一下吗？';
-  }
-  if (scenario === 'learning') {
-    return '当前基础、学习目标和整理方式可以再补充一下吗？';
-  }
-  return '背景、目标、关键约束和预期产出可以再补充一下吗？';
-}
-
 function stripSectionsByHeading(content: string, headings: string[]): string {
   const headingSet = new Set(headings.map((item) => item.trim().toLowerCase()));
   const lines = content.split('\n');
@@ -290,17 +228,11 @@ function appendGuidanceTail(input: {
   hasKnowledgeDoc: boolean;
   activeScenario: KnowledgeDocScenario | null;
 }): string {
-  const base = stripSectionsByHeading(input.answer.trim(), ['下一步建议', '待确认问题']);
-  const docHint = input.hasKnowledgeDoc
-    ? '如果这部分内容合适，我也可以帮你把它更新到知识文档。'
-    : '如果这部分内容合适，我也可以帮你把它整理成知识文档。';
-  const question = buildGuidanceQuestion(input.topic, input.userMessage, input.activeScenario);
-  const sections = [base];
-  if (!/知识文档/.test(base)) {
-    sections.push(docHint);
-  }
-  sections.push(`### 待确认问题\n- ${question}`);
-  return sections.filter(Boolean).join('\n\n');
+  void input.topic;
+  void input.userMessage;
+  void input.hasKnowledgeDoc;
+  void input.activeScenario;
+  return stripSectionsByHeading(input.answer.trim(), ['下一步建议', '待确认问题']);
 }
 
 export async function POST(request: Request) {
@@ -772,7 +704,7 @@ export async function POST(request: Request) {
       ? `You may reference "脚本分析" only as an optional capability. If mentioning scripts, describe expected outputs in plain Chinese, never output shell commands.`
       : `No executable script capability is available in this notebook. Do not output script-running advice, terminal commands, or pseudo execution steps.`;
     const skillTemplateRule = useSkillPlanningTemplate
-      ? `\nWhen the user asks for creation/planning tasks, structure your answer with these exact sections in Chinese markdown:\n## 需求分析\n## 实现方式决策\n## Skill 定位\n## 更新计划\nRequirements:\n- Keep each section concise and actionable (2-5 bullets).\n- "更新计划" must be product actions, not shell commands.\n- If assumptions are needed, list them as "待确认".\n- Avoid filler, percentages without evidence, and avoid repeating source text verbatim.\n${skillExecutionRule}`
+      ? `\nWhen the user asks for creation/planning tasks, keep the answer practical but conversational in Chinese. Do not force fixed section templates unless the user explicitly asks for structured output. Prefer concise natural paragraphs with optional bullets only when they add clarity.\n${skillExecutionRule}`
       : '';
     const viralSkillRule = useDirectViralScript
       ? `\nViral-video-copywriting skill is active. Produce a complete, production-ready Chinese short-video script in one response. Do NOT ask users to choose options.\nOutput sections exactly:\n1) 标题\n2) 时长与受众定位\n3) 完整脚本（按秒段：开场/发展/高潮/结尾，每段含画面、字幕/旁白、音效）\n4) 视觉风格建议（配色/镜头/字幕）\n5) 音乐与音效建议\n6) 互动设计（评论区引导）\n7) 可直接拍摄的执行清单\nConstraints:\n- Content must be original, not copied from source text.\n- Include strong contrast, humor, and clear CTA.\n- No shell commands, no pseudo tool-execution steps.`
@@ -786,7 +718,7 @@ export async function POST(request: Request) {
     const activeScenarioRule = activeKnowledgeDocScenario
       ? `\nCurrent project instruction for this notebook: ${activeKnowledgeDocScenario.label}.\nProject instruction details:\n${activeKnowledgeDocScenario.structure}\nTreat this like persistent project-level instructions. It should affect both the knowledge document organization and the way you answer in chat.\nWhen helpful, steer the user to补充更适合写入该项目的事实、目标、指标、约束、证据或偏好。\nIf the instruction asks for concise, focused, step-by-step or decision-oriented answers, keep that style consistently.`
       : '';
-    const systemPrompt = `You are a helpful assistant. Unless the user explicitly requests another language, always answer in Simplified Chinese. Answer based only on the provided sources and script insights. Always cite source numbers like [1] when using source chunks. If script insights are used, explicitly mention "脚本分析" in your answer. If the question cannot be answered from provided context, say so.${skillTemplateRule}${viralSkillRule}${paperInsightRule}${onboardingGuideRule}${activeScenarioRule}`;
+    const systemPrompt = `You are a helpful assistant. Unless the user explicitly requests another language, always answer in Simplified Chinese. Keep responses natural and conversational like ChatGPT, and avoid rigid sectioned formatting unless the user explicitly asks for it. Answer based only on the provided sources and script insights. When you use evidence from source chunks, cite exact source numbers like [1]; do not cite numbers for unsupported claims. If evidence is insufficient, say it directly.${skillTemplateRule}${viralSkillRule}${paperInsightRule}${onboardingGuideRule}${activeScenarioRule}`;
     const userPrompt = `Notebook topic: ${onboardingTopic || access.notebook.title}\n\nSources:\n${context}\n\nScript Insights:\n${scriptContext || '(none)'}\n\nUser question: ${userMessage.trim()}`;
     const chatMessages = [
       { role: 'system' as const, content: systemPrompt },
@@ -803,7 +735,7 @@ export async function POST(request: Request) {
         ? citedNumbers
             .map((n) => ({ row: selected[n - 1], refNumber: n }))
             .filter((item) => Boolean(item.row))
-        : selected.map((row, idx) => ({ row, refNumber: idx + 1 }));
+        : [];
 
     let answer = appendGuidanceTail({
       answer: answerBase,
@@ -812,8 +744,6 @@ export async function POST(request: Request) {
       hasKnowledgeDoc: hasMeaningfulKnowledgeDoc(knowledgeDocRow?.content),
       activeScenario: activeKnowledgeDocScenario,
     });
-    const pythonToolUsed = needBuiltinPaperStats && realtimeScriptOutputs.length > 0;
-    const pythonRefNumber = pythonToolUsed ? rowsForCitations.length + 1 : null;
     if (needBuiltinPaperStats) {
       answer += `\n\n${REPORT_ACTION_MARKER}`;
     }
@@ -838,19 +768,6 @@ export async function POST(request: Request) {
         distance: dist,
       };
     });
-    if (pythonRefNumber != null) {
-      citationsForClient.push({
-        sourceId: `tool_python_${conversationId ?? 'chat'}`,
-        sourceTitle: 'Python工具调用',
-        pageStart: undefined,
-        pageEnd: undefined,
-        snippet: '已在沙箱执行统计分析（代码省略）。',
-        fullContent: '本回答包含 Python 沙箱统计结果，代码已隐藏。',
-        refNumber: pythonRefNumber,
-        score: undefined,
-        distance: undefined,
-      });
-    }
     const citationsForDb = citationsForClient.map(
       ({ sourceId, sourceTitle, pageStart, pageEnd, snippet, refNumber, score, distance }) => ({
         sourceId,

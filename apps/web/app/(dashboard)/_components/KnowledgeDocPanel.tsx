@@ -14,7 +14,6 @@ import {
   KNOWLEDGE_DOC_SCENARIO_INSTRUCTION_PLACEHOLDER,
   normalizeKnowledgeDocScenarioState,
   summarizeScenarioStructure,
-  type BuiltinKnowledgeDocScenarioId,
   type KnowledgeDocScenario,
   type KnowledgeDocScenarioId,
   type KnowledgeDocScenarioState,
@@ -134,68 +133,6 @@ function CreationIcon({ mode }: { mode: CreationMode }) {
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
       <rect x="4" y="5" width="16" height="14" rx="2" />
       <path d="M8 9h8M8 13h5" />
-    </svg>
-  );
-}
-
-function DraftIcon({ scenario }: { scenario: BuiltinKnowledgeDocScenarioId | 'custom' }) {
-  if (scenario === 'auto') {
-    return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M12 3v4M12 17v4M4.2 6.2l2.8 2.8M17 15l2.8 2.8M3 12h4M17 12h4M4.2 17.8 7 15M17 9l2.8-2.8" />
-        <circle cx="12" cy="12" r="4" />
-      </svg>
-    );
-  }
-  if (scenario === 'okr') {
-    return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M5 12h14" />
-        <path d="M5 7h8" />
-        <path d="M5 17h10" />
-        <circle cx="18" cy="7" r="2" />
-      </svg>
-    );
-  }
-  if (scenario === 'prd') {
-    return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M7 4h10l3 3v13H7z" />
-        <path d="M17 4v3h3" />
-        <path d="M10 12h7M10 16h7M10 8h2" />
-      </svg>
-    );
-  }
-  if (scenario === 'prompt') {
-    return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M8 8h8M8 12h6M8 16h4" />
-        <rect x="4" y="4" width="16" height="16" rx="3" />
-      </svg>
-    );
-  }
-  if (scenario === 'analysis') {
-    return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M5 18h14" />
-        <path d="M7 18v-4" />
-        <path d="M12 18V8" />
-        <path d="M17 18V5" />
-      </svg>
-    );
-  }
-  if (scenario === 'custom') {
-    return (
-      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M12 5v14M5 12h14" />
-        <rect x="4" y="4" width="16" height="16" rx="4" />
-      </svg>
-    );
-  }
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M6 5h12v14H6z" />
-      <path d="M9 9h6M9 13h6M9 17h4" />
     </svg>
   );
 }
@@ -1422,7 +1359,7 @@ export function KnowledgeDocPanel({
                   return (
                     <div
                       key={scenario.id}
-                      className={`group relative min-h-[128px] rounded-[18px] transition ${draftScenarioLoading != null ? 'opacity-50' : ''}`}
+                      className={`group relative h-[98px] rounded-[18px] transition ${draftScenarioLoading != null ? 'opacity-50' : ''}`}
                     >
                       <button
                         type="button"
@@ -1440,19 +1377,11 @@ export function KnowledgeDocPanel({
                         type="button"
                         onClick={() => void runDraftGeneration(scenario.id, docHasContent ? 'update' : 'create')}
                         disabled={draftScenarioLoading != null}
-                        className={`flex h-full w-full min-h-[128px] flex-col items-start justify-center rounded-[18px] px-4 py-3 text-left transition ${getScenarioCardClass(scenario)} ${
+                        className={`flex h-[98px] w-full items-center rounded-[18px] px-4 py-3 text-left transition ${getScenarioCardClass(scenario)} ${
                           isActive ? 'ring-1 ring-black/15 dark:ring-white/20' : ''
                         }`}
                       >
-                        <div className="space-y-1.5 pr-8">
-                          <span className="inline-flex items-center gap-2 text-sm font-semibold">
-                            <DraftIcon scenario={scenario.presetKey} />
-                            {isLoading ? '生成中…' : scenario.label}
-                          </span>
-                          <p className="line-clamp-1 text-xs leading-5 text-black/55 dark:text-white/60">
-                            {scenario.hint}
-                          </p>
-                        </div>
+                        <span className="pr-8 text-sm font-semibold">{isLoading ? '生成中…' : scenario.label}</span>
                       </button>
                     </div>
                   );
@@ -1460,9 +1389,9 @@ export function KnowledgeDocPanel({
                 <button
                   type="button"
                   onClick={() => openScenarioEditor('create')}
-                  className="flex min-h-[128px] flex-col items-start justify-between rounded-[18px] border border-dashed border-gray-300 bg-white px-4 py-3 text-left transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+                  className="col-span-2 flex h-[98px] flex-col items-start justify-center rounded-[18px] border border-dashed border-gray-300 bg-white px-4 py-3 text-left transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
                 >
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     <span className="inline-flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100">
                       <AddScenarioIcon />
                       新增自定义项目
@@ -1470,9 +1399,6 @@ export function KnowledgeDocPanel({
                     <p className="text-xs leading-5 text-gray-500 dark:text-gray-400">
                       自定义项目说明和回复方式，保存后会作为一个新的场景卡片。
                     </p>
-                  </div>
-                  <div className="rounded-[14px] border border-dashed border-gray-300 px-3 py-2 text-[11px] leading-5 text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                    项目背景 / 回复方式 / 引导要求
                   </div>
                 </button>
               </div>

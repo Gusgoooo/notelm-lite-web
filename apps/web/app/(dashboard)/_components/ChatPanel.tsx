@@ -181,37 +181,8 @@ function compactMarkdown(value: string): string {
   return value.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function splitSuggestionSection(content: string): {
-  mainContent: string;
-  suggestionContent: string;
-} {
-  const lines = content.split('\n');
-  const suggestionHeadingIndex = lines.findIndex((line) =>
-    /^#{1,3}\s*(待确认问题|下一步建议)\s*$/.test(line.trim())
-  );
-  if (suggestionHeadingIndex === -1) {
-    return { mainContent: content, suggestionContent: '' };
-  }
-
-  let sectionEndIndex = lines.length;
-  for (let index = suggestionHeadingIndex + 1; index < lines.length; index += 1) {
-    if (/^#{1,3}\s+/.test(lines[index].trim())) {
-      sectionEndIndex = index;
-      break;
-    }
-  }
-
-  const mainLines = [...lines.slice(0, suggestionHeadingIndex), ...lines.slice(sectionEndIndex)];
-  const suggestionLines = lines.slice(suggestionHeadingIndex + 1, sectionEndIndex);
-
-  return {
-    mainContent: compactMarkdown(mainLines.join('\n')),
-    suggestionContent: compactMarkdown(suggestionLines.join('\n')),
-  };
-}
-
 function MarkdownContent({ content }: { content: string }) {
-  const { mainContent, suggestionContent } = splitSuggestionSection(content);
+  const normalizedContent = compactMarkdown(content);
 
   const markdownComponents = {
     p: ({ children }: { children?: ReactNode }) => <p className="my-1 leading-6">{children}</p>,
@@ -246,18 +217,10 @@ function MarkdownContent({ content }: { content: string }) {
 
   return (
     <div className="space-y-3">
-      {mainContent ? (
+      {normalizedContent ? (
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-          {mainContent}
+          {normalizedContent}
         </ReactMarkdown>
-      ) : null}
-      {suggestionContent ? (
-        <div className="rounded-[14px] border border-gray-200 bg-gray-50 px-3 py-2.5">
-          <p className="mb-1 text-[11px] font-medium text-gray-500">待确认问题</p>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {suggestionContent}
-          </ReactMarkdown>
-        </div>
       ) : null}
     </div>
   );

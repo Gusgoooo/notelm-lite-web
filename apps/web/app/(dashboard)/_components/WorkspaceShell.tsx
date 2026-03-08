@@ -238,7 +238,7 @@ export function WorkspaceShell({
   const PANEL_GAP = 12;
   const MIN_CENTER_WIDTH = 320;
   const MIN_RIGHT_WIDTH = 320;
-  const DEFAULT_RIGHT_WIDTH = 400;
+  const DEFAULT_RIGHT_WIDTH = 480;
   const docCollapseStorageKey = `notebook-doc-collapsed:${notebookId}`;
 
   const clampNotesWidth = (totalWidth: number, desired: number): number => {
