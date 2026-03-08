@@ -238,6 +238,7 @@ export function WorkspaceShell({
   const PANEL_GAP = 12;
   const MIN_CENTER_WIDTH = 320;
   const MIN_RIGHT_WIDTH = 320;
+  const docCollapseStorageKey = `notebook-doc-collapsed:${notebookId}`;
 
   const getBalancedNotesWidth = (totalWidth: number): number | null => {
     const available = totalWidth - LEFT_PANEL_WIDTH - PANEL_GAP - PANEL_GAP;
@@ -307,22 +308,38 @@ export function WorkspaceShell({
 
   useLayoutEffect(() => {
     let nextDocCollapsed = false;
+    let hasPersistedState = false;
     try {
-      const collapseKey = `notebook-doc-collapse-once:${notebookId}`;
-      const collapseOnce = window.sessionStorage.getItem(collapseKey);
-      if (collapseOnce === '1') {
-        nextDocCollapsed = true;
-        window.sessionStorage.removeItem(collapseKey);
+      const persistedCollapse = window.localStorage.getItem(docCollapseStorageKey);
+      if (persistedCollapse === '1' || persistedCollapse === '0') {
+        nextDocCollapsed = persistedCollapse === '1';
+        hasPersistedState = true;
       }
-      const entryMode = window.sessionStorage.getItem(`notebook-entry:${notebookId}`);
-      if (!nextDocCollapsed) {
-        nextDocCollapsed = entryMode === 'bootstrap' || entryMode === 'blank';
+      const collapseKey = `notebook-doc-collapse-once:${notebookId}`;
+      if (!hasPersistedState) {
+        const collapseOnce = window.sessionStorage.getItem(collapseKey);
+        if (collapseOnce === '1') {
+          nextDocCollapsed = true;
+          window.sessionStorage.removeItem(collapseKey);
+        }
+        const entryMode = window.sessionStorage.getItem(`notebook-entry:${notebookId}`);
+        if (!nextDocCollapsed) {
+          nextDocCollapsed = entryMode === 'bootstrap' || entryMode === 'blank';
+        }
       }
     } catch {
       nextDocCollapsed = false;
     }
     setDocCollapsed(nextDocCollapsed);
-  }, [notebookId]);
+  }, [docCollapseStorageKey, notebookId]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(docCollapseStorageKey, docCollapsed ? '1' : '0');
+    } catch {
+      // ignore storage write failures
+    }
+  }, [docCollapseStorageKey, docCollapsed]);
 
   useEffect(() => {
     // Keep local UI state in sync when switching notebooks (e.g. fork/save-as-mine).
