@@ -32,6 +32,29 @@ type PendingWork = {
   description: string;
 };
 
+function parsePendingWorkNotice(notice: ArtifactNotice): PendingWork | null {
+  if (notice.state !== 'running') return null;
+  const titleMatch = notice.title.match(/^正在生成(.+)$/);
+  if (!titleMatch || !/作品列表/.test(notice.description)) return null;
+  return {
+    id: `pending:${notice.id}`,
+    title: titleMatch[1]?.trim() || '作品',
+    description: notice.description,
+  };
+}
+
+function getFinishedPendingWorkTitle(notice: ArtifactNotice): string | null {
+  if (notice.state === 'success') {
+    const match = notice.title.match(/^(.+?)已完成$/);
+    return match?.[1]?.trim() || null;
+  }
+  if (notice.state === 'error') {
+    const match = notice.title.match(/^(.+?)生成失败$/);
+    return match?.[1]?.trim() || null;
+  }
+  return null;
+}
+
 function extractWorkImage(content: string): string | null {
   const markdownImage = content.match(/!\[[^\]]*]\((data:image\/[^)]+|https?:\/\/[^)\s]+)\)/i);
   if (markdownImage?.[1]) return markdownImage[1];
@@ -193,6 +216,7 @@ export function WorkspaceShell({
   const [bootstrapHint, setBootstrapHint] = useState('');
   const [bootstrapError, setBootstrapError] = useState('');
   const [artifactNotices, setArtifactNotices] = useState<ArtifactNotice[]>([]);
+  const [pendingWorks, setPendingWorks] = useState<PendingWork[]>([]);
   const [worksOpen, setWorksOpen] = useState(false);
   const [worksLoading, setWorksLoading] = useState(false);
   const [worksError, setWorksError] = useState('');
@@ -302,6 +326,7 @@ export function WorkspaceShell({
     setBootstrapHint('');
     setBootstrapError('');
     setArtifactNotices([]);
+    setPendingWorks([]);
     setWorksOpen(false);
     setWorksLoading(false);
     setWorksError('');
@@ -340,26 +365,11 @@ export function WorkspaceShell({
     () => works.find((item) => item.id === selectedWorkId) ?? null,
     [selectedWorkId, works]
   );
-  const pendingWorks = useMemo<PendingWork[]>(
-    () =>
-      artifactNotices
-        .filter(
-          (notice) =>
-            notice.state === 'running' &&
-            /正在生成/.test(notice.title) &&
-            /作品列表/.test(notice.description)
-        )
-        .map((notice) => ({
-          id: `pending:${notice.id}`,
-          title: notice.title.replace(/^正在生成/, ''),
-          description: notice.description,
-        })),
-    [artifactNotices]
-  );
   const selectedPendingWork = useMemo(
     () => pendingWorks.find((item) => item.id === selectedWorkId) ?? null,
     [pendingWorks, selectedWorkId]
   );
+  const pendingPreviewActive = Boolean(selectedWorkId?.startsWith('pending:'));
   const selectedWorkImage = useMemo(
     () => (selectedWork ? extractWorkImage(selectedWork.content) : null),
     [selectedWork]
@@ -439,6 +449,7 @@ export function WorkspaceShell({
       setWorks(nextWorks);
       setSelectedWorkId((current) => {
         if (preferredId && nextWorks.some((item) => item.id === preferredId)) return preferredId;
+        if (current?.startsWith('pending:')) return current;
         if (current && nextWorks.some((item) => item.id === current)) return current;
         return nextWorks[0]?.id ?? null;
       });
@@ -500,11 +511,21 @@ export function WorkspaceShell({
     const onArtifactNotice = (event: Event) => {
       const detail = (event as CustomEvent<ArtifactNotice>).detail;
       if (!detail?.id || !detail?.title) return;
+      const pendingWork = parsePendingWorkNotice(detail);
+      if (pendingWork) {
+        setPendingWorks((prev) => [pendingWork, ...prev.filter((item) => item.id !== pendingWork.id)].slice(0, 6));
+      } else {
+        const finishedTitle = getFinishedPendingWorkTitle(detail);
+        if (finishedTitle && detail.state === 'error') {
+          setPendingWorks((prev) => prev.filter((item) => item.title !== finishedTitle));
+        }
+      }
       queueArtifactNotice(detail);
     };
 
     const onArtifactOutputCreated = (event: Event) => {
       const detail = (event as CustomEvent<{ noteId?: string }>).detail;
+      setPendingWorks((prev) => prev.slice(1));
       if (worksOpen) {
         void fetchWorks(typeof detail?.noteId === 'string' ? detail.noteId : null);
       }
@@ -533,11 +554,17 @@ export function WorkspaceShell({
 
   useEffect(() => {
     if (!worksOpen) return;
-    if (selectedWorkId) return;
     if (pendingWorks.length > 0) {
-      setSelectedWorkId(pendingWorks[0].id);
+      if (!selectedWorkId) {
+        setSelectedWorkId(pendingWorks[0].id);
+      }
+      return;
     }
-  }, [pendingWorks, selectedWorkId, worksOpen]);
+    if (selectedWorkId) return;
+    if (works.length > 0) {
+      setSelectedWorkId(works[0].id);
+    }
+  }, [pendingWorks, selectedWorkId, works, worksOpen]);
 
   useEffect(() => {
     if (!worksOpen) return;
@@ -774,7 +801,12 @@ export function WorkspaceShell({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setWorksOpen(true)}
+              onClick={() => {
+                if (pendingWorks.length > 0) {
+                  setSelectedWorkId(pendingWorks[0].id);
+                }
+                setWorksOpen(true);
+              }}
               className="inline-flex h-7 items-center gap-1.5 rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
             >
               <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1043,14 +1075,14 @@ export function WorkspaceShell({
               <div className="flex items-center justify-between gap-3 border-b border-black/6 px-5 py-4 dark:border-white/10">
                 <div className="min-w-0">
                   <h3 className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
-                    {selectedPendingWork
-                      ? selectedPendingWork.title
+                    {pendingPreviewActive
+                      ? selectedPendingWork?.title ?? '作品'
                       : selectedWork
                         ? formatWorkTitle(selectedWork)
                         : '作品预览'}
                   </h3>
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    {selectedPendingWork
+                    {pendingPreviewActive
                       ? '正在生成中'
                       : selectedWork
                         ? `更新于 ${formatWorkUpdatedAt(selectedWork.updatedAt)}`
@@ -1078,17 +1110,17 @@ export function WorkspaceShell({
               </div>
 
               <div className="min-h-0 flex-1 overflow-auto bg-[#f4f4f5] p-5 dark:bg-gray-950">
-                {selectedPendingWork ? (
-                  <div className="flex min-h-full items-center justify-center rounded-[20px] bg-white p-8 shadow-sm dark:bg-gray-900">
+                {pendingPreviewActive ? (
+                  <div className="flex min-h-full items-center justify-center rounded-[20px] border border-dashed border-black/8 bg-white/60 p-8 dark:border-white/10 dark:bg-gray-900/40">
                     <div className="text-center">
                       <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-black/[0.04] text-gray-700 dark:bg-white/10 dark:text-gray-100">
                         <SpinnerIcon className="h-6 w-6" />
                       </div>
                       <p className="mt-4 text-sm font-medium text-gray-900 dark:text-gray-100">
-                        {selectedPendingWork.title} 正在生成中
+                        {(selectedPendingWork?.title ?? '作品')} 正在生成中
                       </p>
                       <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                        结果返回后会自动出现在作品列表里。
+                        结果返回后会直接显示在这里。
                       </p>
                     </div>
                   </div>
