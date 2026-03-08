@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
+import { shouldIgnoreEnterForIme } from '@/lib/ime';
 
 type Source = {
   id: string;
@@ -167,6 +168,8 @@ export function SourcesPanel({
   savingAsMine?: boolean;
 }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const webTopicComposingRef = useRef(false);
+  const webTopicCompositionEndedAtRef = useRef(0);
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -623,7 +626,24 @@ export function SourcesPanel({
                 <input
                   value={webTopic}
                   onChange={(e) => setWebTopic(e.target.value)}
+                  onCompositionStart={() => {
+                    webTopicComposingRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    webTopicComposingRef.current = false;
+                    webTopicCompositionEndedAtRef.current = Date.now();
+                  }}
                   onKeyDown={(e) => {
+                    const nativeEvent = e.nativeEvent as KeyboardEvent & { isComposing?: boolean; keyCode?: number };
+                    if (
+                      shouldIgnoreEnterForIme({
+                        nativeEvent,
+                        composing: webTopicComposingRef.current,
+                        lastCompositionEndAt: webTopicCompositionEndedAtRef.current,
+                      })
+                    ) {
+                      return;
+                    }
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       void addWebSources();

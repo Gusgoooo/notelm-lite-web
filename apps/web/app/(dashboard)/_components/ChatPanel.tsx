@@ -7,6 +7,7 @@ import remarkGfm from 'remark-gfm';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { isImeCommitRecentlyEnded, shouldIgnoreEnterForIme } from '@/lib/ime';
 import { KnowledgeDocCreateButton } from './KnowledgeDocCreateButton';
 
 type Citation = {
@@ -295,6 +296,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const selectionTimerRef = useRef<number | null>(null);
   const selectionRangeRef = useRef<Range | null>(null);
   const composingRef = useRef(false);
+  const compositionEndedAtRef = useRef(0);
   const bootstrapGuideTopicRef = useRef('');
 
   const restoreSelectionRange = useCallback(() => {
@@ -1145,6 +1147,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           <form
             onSubmit={(e) => {
               e.preventDefault();
+              if (composingRef.current || isImeCommitRecentlyEnded(compositionEndedAtRef.current)) return;
               void send();
             }}
             className="relative rounded-[20px] bg-[#f1f1f1] p-2"
@@ -1158,11 +1161,19 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               }}
               onCompositionEnd={() => {
                 composingRef.current = false;
+                compositionEndedAtRef.current = Date.now();
               }}
               onKeyDown={(e) => {
                 const nativeEvent = e.nativeEvent as KeyboardEvent & { isComposing?: boolean; keyCode?: number };
-                const isComposing = composingRef.current || nativeEvent.isComposing || nativeEvent.keyCode === 229;
-                if (isComposing) return;
+                if (
+                  shouldIgnoreEnterForIme({
+                    nativeEvent,
+                    composing: composingRef.current,
+                    lastCompositionEndAt: compositionEndedAtRef.current,
+                  })
+                ) {
+                  return;
+                }
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   void send();

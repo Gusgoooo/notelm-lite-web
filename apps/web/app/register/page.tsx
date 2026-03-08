@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
+import { isImeCommitRecentlyEnded } from '@/lib/ime';
 
 export default function RegisterPage() {
   const [email, setEmail] = useState('');
@@ -10,9 +11,12 @@ export default function RegisterPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+  const composingRef = useRef(false);
+  const compositionEndedAtRef = useRef(0);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (composingRef.current || isImeCommitRecentlyEnded(compositionEndedAtRef.current)) return;
     setError('');
     setLoading(true);
     try {
@@ -67,6 +71,13 @@ export default function RegisterPage() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              onCompositionStart={() => {
+                composingRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                composingRef.current = false;
+                compositionEndedAtRef.current = Date.now();
+              }}
               required
               autoComplete="email"
               className="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
@@ -80,6 +91,13 @@ export default function RegisterPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              onCompositionStart={() => {
+                composingRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                composingRef.current = false;
+                compositionEndedAtRef.current = Date.now();
+              }}
               required
               minLength={6}
               autoComplete="new-password"
@@ -94,6 +112,13 @@ export default function RegisterPage() {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              onCompositionStart={() => {
+                composingRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                composingRef.current = false;
+                compositionEndedAtRef.current = Date.now();
+              }}
               autoComplete="name"
               className="w-full px-3 py-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
             />

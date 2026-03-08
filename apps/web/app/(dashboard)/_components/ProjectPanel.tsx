@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { isAdminEmail } from '@/lib/admin';
+import { shouldIgnoreEnterForIme } from '@/lib/ime';
 import { normalizeNotebookTitle, stripResearchSuffix } from '@/lib/notebook-title';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -95,6 +96,8 @@ export function ProjectPanel() {
     '新媒体传播',
   ]);
   const [loadingSuggestedTopics, setLoadingSuggestedTopics] = useState(false);
+  const renameComposingRef = useRef(false);
+  const renameCompositionEndedAtRef = useRef(0);
 
   const fetchMine = async () => {
     setLoadingMine(true);
@@ -366,8 +369,25 @@ export function ProjectPanel() {
                               <Input
                                 value={editTitle}
                                 onChange={(e) => setEditTitle(e.target.value)}
+                                onCompositionStart={() => {
+                                  renameComposingRef.current = true;
+                                }}
+                                onCompositionEnd={() => {
+                                  renameComposingRef.current = false;
+                                  renameCompositionEndedAtRef.current = Date.now();
+                                }}
                                 onBlur={() => void renameNotebook(nb.id, editTitle)}
                                 onKeyDown={(e) => {
+                                  const nativeEvent = e.nativeEvent as KeyboardEvent & { isComposing?: boolean; keyCode?: number };
+                                  if (
+                                    shouldIgnoreEnterForIme({
+                                      nativeEvent,
+                                      composing: renameComposingRef.current,
+                                      lastCompositionEndAt: renameCompositionEndedAtRef.current,
+                                    })
+                                  ) {
+                                    return;
+                                  }
                                   if (e.key === 'Enter') void renameNotebook(nb.id, editTitle);
                                   if (e.key === 'Escape') setEditingId(null);
                                 }}

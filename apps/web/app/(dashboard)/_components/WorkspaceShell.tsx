@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AnimatedList } from '@/components/ui/animated-list';
 import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
+import { shouldIgnoreEnterForIme } from '@/lib/ime';
 import { ChatPanel } from './ChatPanel';
 import { KnowledgeDocPanel } from './KnowledgeDocPanel';
 import { SourcesPanel } from './SourcesPanel';
@@ -225,6 +226,8 @@ export function WorkspaceShell({
 
   const workspaceBodyRef = useRef<HTMLDivElement | null>(null);
   const resizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const titleComposingRef = useRef(false);
+  const titleCompositionEndedAtRef = useRef(0);
   const hasManualResizeRef = useRef(false);
   const bootstrapControllerRef = useRef<AbortController | null>(null);
   const bootstrapStartedRef = useRef<string | null>(null);
@@ -769,8 +772,25 @@ export function WorkspaceShell({
               <input
                 value={headerTitleDraft}
                 onChange={(event) => setHeaderTitleDraft(event.target.value)}
+                onCompositionStart={() => {
+                  titleComposingRef.current = true;
+                }}
+                onCompositionEnd={() => {
+                  titleComposingRef.current = false;
+                  titleCompositionEndedAtRef.current = Date.now();
+                }}
                 onBlur={() => void saveHeaderTitle()}
                 onKeyDown={(event) => {
+                  const nativeEvent = event.nativeEvent as KeyboardEvent & { isComposing?: boolean; keyCode?: number };
+                  if (
+                    shouldIgnoreEnterForIme({
+                      nativeEvent,
+                      composing: titleComposingRef.current,
+                      lastCompositionEndAt: titleCompositionEndedAtRef.current,
+                    })
+                  ) {
+                    return;
+                  }
                   if (event.key === 'Enter') void saveHeaderTitle();
                   if (event.key === 'Escape') {
                     setHeaderTitleDraft(headerTitle);

@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
+import { shouldIgnoreEnterForIme } from '@/lib/ime';
 
 type Notebook = { id: string; title: string; createdAt: string };
 
@@ -21,6 +22,8 @@ export function NotebookSidebar() {
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
+  const renameComposingRef = useRef(false);
+  const renameCompositionEndedAtRef = useRef(0);
 
   const fetchNotebooks = async () => {
     const res = await fetch('/api/notebooks');
@@ -120,8 +123,25 @@ export function NotebookSidebar() {
                 className="flex-1 min-w-0 py-1.5 px-2 text-sm border rounded bg-white dark:bg-gray-800"
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
+                onCompositionStart={() => {
+                  renameComposingRef.current = true;
+                }}
+                onCompositionEnd={() => {
+                  renameComposingRef.current = false;
+                  renameCompositionEndedAtRef.current = Date.now();
+                }}
                 onBlur={() => submitEdit(nb.id)}
                 onKeyDown={(e) => {
+                  const nativeEvent = e.nativeEvent as KeyboardEvent & { isComposing?: boolean; keyCode?: number };
+                  if (
+                    shouldIgnoreEnterForIme({
+                      nativeEvent,
+                      composing: renameComposingRef.current,
+                      lastCompositionEndAt: renameCompositionEndedAtRef.current,
+                    })
+                  ) {
+                    return;
+                  }
                   if (e.key === 'Enter') submitEdit(nb.id);
                   if (e.key === 'Escape') setEditingId(null);
                 }}
