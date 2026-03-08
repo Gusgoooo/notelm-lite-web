@@ -16,8 +16,8 @@ const DEFAULT_SEARCH_MODELS = [
   'openai/gpt-4o-search-preview',
   'openai/gpt-4o-mini-search-preview',
 ] as const;
-const DEFAULT_TRANSLATE_MODEL = 'openai/gpt-4o-mini';
-export const FIXED_WEB_SOURCE_LIMIT = 12;
+const MAX_WEB_SNIPPET_CHARS = 420;
+export const FIXED_WEB_SOURCE_LIMIT = 10;
 
 export function getAdaptiveWebSourceCount(topic: string, requestedLimit?: number): number {
   void topic;
@@ -60,7 +60,7 @@ function normalizeTitle(value: string, fallbackUrl: string): string {
 }
 
 function normalizeSnippet(value: string): string {
-  return value.replace(/\s+/g, ' ').trim().slice(0, 1600);
+  return value.replace(/\s+/g, ' ').trim().slice(0, MAX_WEB_SNIPPET_CHARS);
 }
 
 function extractArxivId(urlValue: string): string | null {
@@ -114,22 +114,6 @@ async function filterReachableWebSources(items: WebSource[]): Promise<WebSource[
     }))
   );
   return validated.filter((row) => row.ok).map((row) => row.item);
-}
-
-function uniqueNonEmpty(values: Array<string | undefined>): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const value of values) {
-    const normalized = typeof value === 'string' ? value.trim() : '';
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    out.push(normalized);
-  }
-  return out;
-}
-
-function containsCjk(value: string): boolean {
-  return /[\u3400-\u9fff]/.test(value);
 }
 
 function tryParseJson(content: string): unknown {
@@ -287,60 +271,6 @@ async function requestOpenRouterText(input: {
   throw new Error(`[${input.model}] empty response`);
 }
 
-async function translateSnippetsToChinese(input: {
-  apiKey: string;
-  baseUrl: string;
-  sources: WebSource[];
-}): Promise<WebSource[]> {
-  const candidates = input.sources.filter((item) => item.snippet && !containsCjk(item.snippet));
-  if (candidates.length === 0) return input.sources;
-
-  try {
-    const model = (process.env.OPENROUTER_TRANSLATE_MODEL ?? DEFAULT_TRANSLATE_MODEL).trim() || DEFAULT_TRANSLATE_MODEL;
-    const text = await requestOpenRouterText({
-      apiKey: input.apiKey,
-      baseUrl: input.baseUrl,
-      model,
-      systemPrompt:
-        'You translate research snippets into concise Simplified Chinese. Return ONLY JSON: {"items":[{"url":"https://...","snippet":"中文摘要"}]}.',
-      userPrompt:
-        `Translate the following snippets into concise Simplified Chinese.\n` +
-        `Keep meanings accurate. If a snippet is too short, keep it short. Return JSON only.\n\n` +
-        JSON.stringify(
-          {
-            items: candidates.map((item) => ({
-              url: item.url,
-              snippet: item.snippet,
-            })),
-          },
-          null,
-          2
-        ),
-    });
-
-    const payload = tryParseJson(text);
-    const translated = Array.isArray((payload as { items?: unknown })?.items)
-      ? ((payload as { items: Array<Record<string, unknown>> }).items ?? [])
-      : [];
-    const translatedMap = new Map<string, string>();
-    for (const item of translated) {
-      if (!item || typeof item !== 'object') continue;
-      const url = typeof item.url === 'string' ? normalizeUrl(item.url) : null;
-      const snippet = typeof item.snippet === 'string' ? normalizeSnippet(item.snippet) : '';
-      if (!url || !snippet) continue;
-      translatedMap.set(url, snippet);
-    }
-
-    if (translatedMap.size === 0) return input.sources;
-    return input.sources.map((item) => ({
-      ...item,
-      snippet: translatedMap.get(item.url) ?? item.snippet,
-    }));
-  } catch {
-    return input.sources;
-  }
-}
-
 export async function searchWebViaOpenRouter(input: {
   topic: string;
   limit: number;
@@ -350,68 +280,40 @@ export async function searchWebViaOpenRouter(input: {
   const baseUrl = settings.openrouterBaseUrl.trim() || 'https://openrouter.ai/api/v1';
   if (!apiKey) throw new Error('OpenRouter API key is not configured');
 
-  const configuredPrimary = (process.env.OPENROUTER_SEARCH_MODEL ?? '').trim();
-  const configuredFallbacks = (process.env.OPENROUTER_SEARCH_FALLBACK_MODELS ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-  const models = uniqueNonEmpty([
-    configuredPrimary || DEFAULT_SEARCH_MODELS[0],
-    ...configuredFallbacks,
-    ...DEFAULT_SEARCH_MODELS,
-  ]);
+  const model = (process.env.OPENROUTER_SEARCH_MODEL ?? '').trim() || DEFAULT_SEARCH_MODELS[0];
+  let aggregated: WebSource[] = [];
 
-  const aggregated: WebSource[] = [];
-  const errors: string[] = [];
-
-  for (const model of models) {
-    try {
-      const messageContent = await requestOpenRouterText({
-        apiKey,
-        baseUrl,
-        model,
-        systemPrompt:
-          'You are a web research assistant. Prefer returning JSON with this shape: {"sources":[{"title":"...","url":"https://...","snippet":"..."}]}. If some fields are unavailable, keep them empty instead of omitting results. Prefer Chinese and English sources.',
-        userPrompt:
-          `Topic: ${input.topic}\n` +
-          `Find up to ${input.limit} reliable, diverse web sources.\n` +
-          `Requirements:\n` +
-          `1) URL should be a direct page URL.\n` +
-          `2) prioritize research papers / research reports when possible.\n` +
-          `3) strongly prefer sources with downloadable full text.\n` +
-          `4) prefer arXiv (arxiv.org) when relevant, because the paper can usually be downloaded.\n` +
-          `5) avoid duplicates and spam.\n` +
-          `6) return JSON if possible, but do not drop results only because formatting is difficult.\n` +
-          `7) if a snippet is unavailable, return an empty string instead of omitting the source.\n` +
-          `8) do not invent placeholder/example links; never return fake arXiv ids such as 2007.00000.`,
-      });
-      const fetched = extractSourcesFromContent(messageContent);
-      if (fetched.length === 0) {
-        errors.push(`[${model}] no parsable sources`);
-        continue;
-      }
-      aggregated.push(...fetched);
-      const uniqueCount = new Set(aggregated.map((item) => item.url)).size;
-      if (uniqueCount >= input.limit) break;
-    } catch (error) {
-      errors.push(error instanceof Error ? error.message : `[${model}] search failed`);
-    }
+  try {
+    const messageContent = await requestOpenRouterText({
+      apiKey,
+      baseUrl,
+      model,
+      systemPrompt:
+        'You are a web research assistant. Prefer returning JSON with this shape: {"sources":[{"title":"...","url":"https://...","snippet":"..."}]}. If some fields are unavailable, keep them empty instead of omitting results. Prefer Chinese and English sources.',
+      userPrompt:
+        `Topic: ${input.topic}\n` +
+        `Find up to ${input.limit} reliable, diverse web sources.\n` +
+        `Requirements:\n` +
+        `1) URL should be a direct page URL.\n` +
+        `2) prioritize research papers / research reports when possible.\n` +
+        `3) strongly prefer sources with downloadable full text.\n` +
+        `4) prefer arXiv (arxiv.org) when relevant, because the paper can usually be downloaded.\n` +
+        `5) avoid duplicates and spam.\n` +
+        `6) return JSON if possible, but do not drop results only because formatting is difficult.\n` +
+        `7) if a snippet is unavailable, return an empty string instead of omitting the source.\n` +
+        `8) do not invent placeholder/example links; never return fake arXiv ids such as 2007.00000.`,
+    });
+    aggregated = extractSourcesFromContent(messageContent);
+  } catch (error) {
+    const details = error instanceof Error ? error.message : `[${model}] search failed`;
+    throw new Error(`Web search failed: ${details}`);
   }
 
   if (aggregated.length === 0) {
-    throw new Error(
-      errors.length > 0
-        ? `Web search failed: ${errors.join(' | ')}`
-        : 'Web search failed: no sources returned'
-    );
+    throw new Error(`Web search failed: [${model}] no parsable sources`);
   }
 
-  const translated = await translateSnippetsToChinese({
-    apiKey,
-    baseUrl,
-    sources: aggregated,
-  });
-  const reachable = await filterReachableWebSources(translated);
+  const reachable = await filterReachableWebSources(aggregated);
 
   reachable.sort((a, b) => scoreWebSource(b) - scoreWebSource(a));
   const unique = new Map<string, WebSource>();
