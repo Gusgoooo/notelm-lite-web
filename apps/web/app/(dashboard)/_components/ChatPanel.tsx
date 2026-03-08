@@ -643,7 +643,16 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       } satisfies SelectionToastState;
     };
 
-    const updateSelectionToast = () => {
+    const updateSelectionToast = (event?: MouseEvent | KeyboardEvent) => {
+      const eventTarget = event?.target;
+      if (
+        eventTarget instanceof Node &&
+        selectionToastRef.current &&
+        selectionToastRef.current.contains(eventTarget)
+      ) {
+        restoreSelectionRange();
+        return;
+      }
       clearTimer();
       const candidate = getSelectionCandidate();
       if (!candidate) {
@@ -672,7 +681,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       document.removeEventListener('keyup', updateSelectionToast);
       window.removeEventListener('scroll', clearSelectionToast, true);
     };
-  }, []);
+  }, [restoreSelectionRange]);
 
   useEffect(() => {
     if (!selectionToast || !selectionRangeRef.current) return;
@@ -1046,6 +1055,10 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           ref={selectionToastRef}
           className="fixed z-50 flex items-center gap-2 rounded-[14px] border border-gray-200 bg-white p-1.5 shadow-lg dark:border-gray-700 dark:bg-gray-900"
           style={{ left: selectionToast.x, top: selectionToast.y }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            restoreSelectionRange();
+          }}
           onMouseDown={(event) => {
             event.preventDefault();
             restoreSelectionRange();
@@ -1055,6 +1068,10 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           <button
             type="button"
             className="inline-flex h-8 items-center rounded-[10px] border border-gray-200 bg-white px-3 text-[11px] font-medium text-gray-900 transition hover:bg-gray-50 disabled:opacity-60 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              restoreSelectionRange();
+            }}
             onMouseDown={(event) => {
               event.preventDefault();
               restoreSelectionRange();
@@ -1085,6 +1102,10 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           <button
             type="button"
             className="inline-flex h-8 items-center rounded-[10px] border border-gray-200 bg-white px-3 text-[11px] font-medium text-gray-900 transition hover:bg-gray-50 disabled:opacity-60 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              restoreSelectionRange();
+            }}
             onMouseDown={(event) => {
               event.preventDefault();
               restoreSelectionRange();
