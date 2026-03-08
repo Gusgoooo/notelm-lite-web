@@ -411,6 +411,7 @@ export function WorkspaceShell({
     () => (selectedWork ? extractWorkMermaid(selectedWork.content) : null),
     [selectedWork]
   );
+  const worksTotalCount = pendingWorks.length + works.length;
 
   useEffect(() => {
     if (!docCollapsed) return;
@@ -444,9 +445,6 @@ export function WorkspaceShell({
       const next = [notice, ...prev.filter((item) => item.id !== notice.id)];
       return next.slice(0, 4);
     });
-    noticeTimersRef.current[notice.id] = window.setTimeout(() => {
-      dismissArtifactNotice(notice.id);
-    }, 10_000);
   }, [clearNoticeTimer, dismissArtifactNotice]);
 
   const fetchWorks = useCallback(async (preferredId?: string | null) => {
@@ -860,6 +858,9 @@ export function WorkspaceShell({
                 <path d="M9 10h6M9 14h6" />
               </svg>
               作品列表
+              <span className="inline-flex min-w-[18px] items-center justify-center rounded-full bg-black/[0.08] px-1.5 py-0.5 text-[10px] font-semibold leading-none text-gray-700 dark:bg-white/15 dark:text-gray-100">
+                {worksTotalCount}
+              </span>
             </button>
             {!isOwner && (
               <button
@@ -1042,7 +1043,12 @@ export function WorkspaceShell({
           <div className="flex h-[min(80vh,760px)] w-full max-w-6xl overflow-hidden rounded-[24px] bg-white shadow-xl dark:bg-gray-900">
             <div className="flex w-[280px] shrink-0 flex-col border-r border-black/6 bg-[#f7f7f7] dark:border-white/10 dark:bg-gray-950">
               <div className="px-5 py-4">
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">作品列表</h3>
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  作品列表
+                  <span className="ml-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">
+                    {worksTotalCount}
+                  </span>
+                </h3>
               </div>
               <div className="min-h-0 flex-1 overflow-auto px-3 py-3">
                 {worksLoading ? (
