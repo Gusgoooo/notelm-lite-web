@@ -182,6 +182,11 @@ export function ProjectPanel() {
         setError([data?.error, data?.detail].filter(Boolean).join(' — ') || `创建失败 (${res.status})`);
         return;
       }
+      try {
+        window.sessionStorage.setItem(`notebook-entry:${String(data.id)}`, 'blank');
+      } catch {
+        // Ignore sessionStorage failures and continue to workspace.
+      }
       router.push(`/?notebookId=${encodeURIComponent(data.id)}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : '网络错误');

@@ -281,7 +281,8 @@ export function WorkspaceShell({
   useEffect(() => {
     let nextDocCollapsed = false;
     try {
-      nextDocCollapsed = window.sessionStorage.getItem(`notebook-entry:${notebookId}`) === 'bootstrap';
+      const entryMode = window.sessionStorage.getItem(`notebook-entry:${notebookId}`);
+      nextDocCollapsed = entryMode === 'bootstrap' || entryMode === 'blank';
     } catch {
       nextDocCollapsed = false;
     }
