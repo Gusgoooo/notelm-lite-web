@@ -233,7 +233,7 @@ export function WorkspaceShell({
   const bootstrapStartedRef = useRef<string | null>(null);
   const noticeTimersRef = useRef<Record<string, number>>({});
 
-  const LEFT_PANEL_WIDTH = 380;
+  const LEFT_PANEL_WIDTH = 340;
   const COLLAPSED_DOC_WIDTH = 48;
   const PANEL_GAP = 12;
   const MIN_CENTER_WIDTH = 320;
