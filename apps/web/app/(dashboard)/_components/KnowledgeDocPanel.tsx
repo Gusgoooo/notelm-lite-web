@@ -739,7 +739,7 @@ export function KnowledgeDocPanel({
     },
     editorProps: {
       attributes: {
-        class: 'knowledge-doc-editor min-h-[240px] px-4 py-3 text-gray-900 focus:outline-none dark:text-gray-100',
+        class: 'knowledge-doc-editor min-h-[240px] px-4 py-3 focus:outline-none',
       },
     },
   });
@@ -1263,8 +1263,8 @@ export function KnowledgeDocPanel({
         </div>
       ) : docHasContent ? (
         <div className="relative z-10 min-h-0 flex-1 overflow-auto px-2 pb-5">
-          <div className="rounded-[14px] border border-gray-200 bg-white p-1 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-gray-800 dark:bg-gray-900">
-            <div className="min-h-full rounded-[10px] bg-white dark:bg-gray-900">
+          <div className="rounded-[14px] border border-gray-200 bg-[#f8f7f1] p-1 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-gray-800 dark:bg-gray-900">
+            <div className="min-h-full rounded-[10px] bg-[#f8f7f1] dark:bg-gray-900">
               <EditorContent editor={editor} />
             </div>
           </div>
@@ -1616,7 +1616,7 @@ export function KnowledgeDocPanel({
             </div>
             <div className="min-h-0 flex-1 overflow-auto bg-[#f7f7f8] p-5 dark:bg-gray-950">
               <div
-                className="knowledge-doc-editor mx-auto min-h-[60vh] max-w-3xl rounded-[20px] bg-white px-8 py-8 shadow-sm dark:bg-gray-900"
+                className="knowledge-doc-editor mx-auto min-h-[60vh] max-w-3xl rounded-[20px] bg-[#f8f7f1] px-8 py-8 shadow-sm dark:bg-gray-900"
                 dangerouslySetInnerHTML={{ __html: currentHtml }}
               />
             </div>
