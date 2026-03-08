@@ -254,6 +254,35 @@ function buildGuidanceQuestion(
   return '背景、目标、关键约束和预期产出可以再补充一下吗？';
 }
 
+function stripSectionsByHeading(content: string, headings: string[]): string {
+  const headingSet = new Set(headings.map((item) => item.trim().toLowerCase()));
+  const lines = content.split('\n');
+  const kept: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? '';
+    const headingMatch = line.trim().match(/^#{1,3}\s*(.+?)\s*$/);
+    const headingLabel = headingMatch?.[1]?.trim().toLowerCase() ?? '';
+
+    if (headingLabel && headingSet.has(headingLabel)) {
+      index += 1;
+      while (index < lines.length) {
+        const next = (lines[index] ?? '').trim();
+        if (/^#{1,3}\s+/.test(next)) {
+          index -= 1;
+          break;
+        }
+        index += 1;
+      }
+      continue;
+    }
+
+    kept.push(line);
+  }
+
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function appendGuidanceTail(input: {
   answer: string;
   topic: string;
@@ -261,7 +290,7 @@ function appendGuidanceTail(input: {
   hasKnowledgeDoc: boolean;
   activeScenario: KnowledgeDocScenario | null;
 }): string {
-  const base = input.answer.trim().replace(/\n{3,}/g, '\n\n');
+  const base = stripSectionsByHeading(input.answer.trim(), ['下一步建议', '待确认问题']);
   const docHint = input.hasKnowledgeDoc
     ? '如果这部分内容合适，我也可以帮你把它更新到知识文档。'
     : '如果这部分内容合适，我也可以帮你把它整理成知识文档。';
@@ -270,7 +299,7 @@ function appendGuidanceTail(input: {
   if (!/知识文档/.test(base)) {
     sections.push(docHint);
   }
-  sections.push(question);
+  sections.push(`### 待确认问题\n- ${question}`);
   return sections.filter(Boolean).join('\n\n');
 }
 

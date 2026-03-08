@@ -186,7 +186,9 @@ function splitSuggestionSection(content: string): {
   suggestionContent: string;
 } {
   const lines = content.split('\n');
-  const suggestionHeadingIndex = lines.findIndex((line) => /^#{1,3}\s*下一步建议\s*$/.test(line.trim()));
+  const suggestionHeadingIndex = lines.findIndex((line) =>
+    /^#{1,3}\s*(待确认问题|下一步建议)\s*$/.test(line.trim())
+  );
   if (suggestionHeadingIndex === -1) {
     return { mainContent: content, suggestionContent: '' };
   }
@@ -251,7 +253,7 @@ function MarkdownContent({ content }: { content: string }) {
       ) : null}
       {suggestionContent ? (
         <div className="rounded-[14px] border border-gray-200 bg-gray-50 px-3 py-2.5">
-          <p className="mb-1 text-[11px] font-medium text-gray-500">下一步建议</p>
+          <p className="mb-1 text-[11px] font-medium text-gray-500">待确认问题</p>
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
             {suggestionContent}
           </ReactMarkdown>
