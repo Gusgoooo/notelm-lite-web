@@ -785,9 +785,6 @@ export async function POST(request: Request) {
     });
     const pythonToolUsed = needBuiltinPaperStats && realtimeScriptOutputs.length > 0;
     const pythonRefNumber = pythonToolUsed ? rowsForCitations.length + 1 : null;
-    if (pythonRefNumber != null) {
-      answer += `\n\n[${pythonRefNumber}] 已调用 Python 工具完成统计分析（代码省略）。`;
-    }
     if (needBuiltinPaperStats) {
       answer += `\n\n${REPORT_ACTION_MARKER}`;
     }

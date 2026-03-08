@@ -956,13 +956,11 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                   <div
                     key={m.id}
                     data-assistant-message={m.role === 'assistant' ? 'true' : undefined}
-                    className={`w-full max-w-[680px] rounded-xl border shadow-sm ${
-                      m.role === 'user' ? 'px-3 py-2' : 'p-3'
-                    } ${
+                    className={
                       m.role === 'user'
-                        ? 'ml-auto mr-0 border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800'
-                        : 'ml-0 mr-auto border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900'
-                    }`}
+                        ? 'ml-auto mr-0 w-fit max-w-[240px] rounded-[20px] bg-[#f1f1f1] px-3 py-2 text-gray-900 dark:bg-gray-800 dark:text-gray-100'
+                        : 'ml-0 mr-auto w-full max-w-[680px]'
+                    }
                   >
                     <div className="text-sm">
                       <MarkdownContent content={parsed.displayContent} />
@@ -1071,7 +1069,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
             </>
           )}
           {loading && (
-            <div className="ml-0 mr-auto w-full max-w-[680px] rounded-xl border border-gray-200 bg-white p-3 text-sm text-gray-500 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+            <div className="ml-0 mr-auto w-full max-w-[680px] py-1 text-sm text-gray-500 dark:text-gray-400">
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{`Thinking... ${thinkingSeconds}s`}</p>
             </div>
           )}
