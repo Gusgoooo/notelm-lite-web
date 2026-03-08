@@ -52,6 +52,28 @@ function normalizeHeadingLevel(line: string, level: number): string {
   return line.replace(/^(\s*)#{1,6}(\s+)/, `$1${'#'.repeat(Math.max(1, Math.min(6, level)))}$2`);
 }
 
+function getHeadingText(line: string): string {
+  const match = line.match(/^\s*#{1,6}\s+(.+)$/);
+  return (match?.[1] ?? '').trim();
+}
+
+function normalizeHeadingLabel(text: string): string {
+  return text
+    .replace(/[：:]\s*$/, '')
+    .replace(/\s+/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function isLikelySectionLabel(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  if (/^[-*+]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed) || /^>\s?/.test(trimmed)) return false;
+  if (trimmed.length > 24) return false;
+  if (/[。！？.!?]/.test(trimmed)) return false;
+  return true;
+}
+
 function enforceProgressiveHeadingStructure(lines: string[]): string[] {
   const normalized = [...lines];
   let previousHeadingLevel: number | null = null;
@@ -77,6 +99,7 @@ function enforceProgressiveHeadingStructure(lines: string[]): string[] {
     const line = normalized[index] ?? '';
     output.push(line);
     if (getHeadingLevel(line) !== 1) continue;
+    const h1Label = normalizeHeadingLabel(getHeadingText(line));
 
     for (let cursor = index + 1; cursor < normalized.length; cursor += 1) {
       const candidate = normalized[cursor] ?? '';
@@ -84,9 +107,24 @@ function enforceProgressiveHeadingStructure(lines: string[]): string[] {
       if (!candidate.trim()) continue;
       const candidateHeadingLevel = getHeadingLevel(candidate);
       if (candidateHeadingLevel == null) {
-        if (output.at(-1) !== '') output.push('');
-        output.push('## 概要');
-        output.push('');
+        if (isLikelySectionLabel(candidate)) {
+          const label = candidate.trim();
+          const normalizedLabel = normalizeHeadingLabel(label);
+          if (normalizedLabel === h1Label) {
+            normalized[cursor] = '## 核心要点';
+          } else {
+            normalized[cursor] = `## ${label}`;
+          }
+        } else {
+          if (output.at(-1) !== '') output.push('');
+          output.push('## 核心要点');
+          output.push('');
+        }
+      } else if (candidateHeadingLevel === 2) {
+        const h2Label = normalizeHeadingLabel(getHeadingText(candidate));
+        if (h2Label && h2Label === h1Label) {
+          normalized[cursor] = candidate.replace(/^(\s*)##\s+.*$/, '$1## 核心要点');
+        }
       } else if (candidateHeadingLevel > 2) {
         normalized[cursor] = normalizeHeadingLevel(candidate, 2);
       }
