@@ -25,7 +25,7 @@ export type KnowledgeDocScenarioState = {
 
 export const KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE = '__KNOWLEDGE_DOC_SCENARIOS__';
 export const KNOWLEDGE_DOC_SCENARIO_INSTRUCTION_PLACEHOLDER =
-  '例如“参考来源，确定科学的OKR撰写结构，并引导我一步一步回答撰写OKR所需要的内容。回答需要简洁且突出重点“。';
+  '例如：“参考来源，确定科学的OKR撰写结构，并引导我一步一步回答撰写OKR所需要的内容。回答需要简洁且突出重点。”';
 export const KNOWLEDGE_DOC_SCENARIO_EDITOR_HINT =
   '设置此项目的背景信息并自定义NotebookGo 的回复方式。';
 

@@ -9,7 +9,6 @@ import TableHeader from '@tiptap/extension-table-header';
 import TableRow from '@tiptap/extension-table-row';
 import DiffMatchPatch from 'diff-match-patch';
 import {
-  extractScenarioPromptAnchors,
   getDefaultKnowledgeDocScenarioState,
   KNOWLEDGE_DOC_SCENARIO_EDITOR_HINT,
   KNOWLEDGE_DOC_SCENARIO_INSTRUCTION_PLACEHOLDER,
@@ -228,19 +227,6 @@ function getScenarioCardClass(scenario: KnowledgeDocScenario): string {
   if (scenario.accent === 'violet') return 'bg-violet-50 text-violet-700 hover:bg-violet-100';
   if (scenario.accent === 'rose') return 'bg-rose-50 text-rose-700 hover:bg-rose-100';
   return 'bg-slate-100 text-slate-700 hover:bg-slate-200';
-}
-
-function getScenarioActiveBadgeClass(scenario: KnowledgeDocScenario): string {
-  if (scenario.accent === 'sky') return 'bg-sky-100 text-sky-700';
-  if (scenario.accent === 'emerald') return 'bg-emerald-100 text-emerald-700';
-  if (scenario.accent === 'amber') return 'bg-amber-100 text-amber-700';
-  if (scenario.accent === 'violet') return 'bg-violet-100 text-violet-700';
-  if (scenario.accent === 'rose') return 'bg-rose-100 text-rose-700';
-  return 'bg-slate-200 text-slate-700';
-}
-
-function buildScenarioPreview(structure: string): string {
-  return extractScenarioPromptAnchors(structure, 3).join(' / ') || summarizeScenarioStructure(structure);
 }
 
 function stripHtml(html: string): string {
@@ -787,7 +773,7 @@ export function KnowledgeDocPanel({
         setScenarioEditorMode('create');
         setScenarioEditorSourceId(null);
         setScenarioTitleDraft('');
-        setScenarioStructureDraft(KNOWLEDGE_DOC_SCENARIO_INSTRUCTION_PLACEHOLDER.replace(/^例如/, '').replace(/“|”/g, ''));
+        setScenarioStructureDraft('');
       } else if (scenario) {
         setScenarioEditorMode(mode);
         setScenarioEditorSourceId(scenario.id);
@@ -1433,7 +1419,6 @@ export function KnowledgeDocPanel({
                 {draftScenarios.map((scenario) => {
                   const isActive = scenarioState.activeScenarioId === scenario.id;
                   const isLoading = draftScenarioLoading === scenario.id;
-                  const preview = buildScenarioPreview(scenario.structure);
                   return (
                     <div
                       key={scenario.id}
@@ -1455,31 +1440,18 @@ export function KnowledgeDocPanel({
                         type="button"
                         onClick={() => void runDraftGeneration(scenario.id, docHasContent ? 'update' : 'create')}
                         disabled={draftScenarioLoading != null}
-                        className={`flex h-full w-full min-h-[128px] flex-col items-start justify-between rounded-[18px] px-4 py-3 text-left transition ${getScenarioCardClass(scenario)}`}
+                        className={`flex h-full w-full min-h-[128px] flex-col items-start justify-center rounded-[18px] px-4 py-3 text-left transition ${getScenarioCardClass(scenario)} ${
+                          isActive ? 'ring-1 ring-black/15 dark:ring-white/20' : ''
+                        }`}
                       >
-                        <div className="space-y-2">
-                          <div className="flex flex-wrap items-center gap-2 pr-8">
-                            <span className="inline-flex items-center gap-2 text-sm font-semibold">
-                              <DraftIcon scenario={scenario.presetKey} />
-                              {isLoading ? '生成中…' : scenario.label}
-                            </span>
-                            {isActive ? (
-                              <span
-                                className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${getScenarioActiveBadgeClass(scenario)}`}
-                              >
-                                当前项目
-                              </span>
-                            ) : null}
-                            {!scenario.builtIn ? (
-                              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-                                自定义
-                              </span>
-                            ) : null}
-                          </div>
-                          <p className="text-xs leading-5 text-black/55 dark:text-white/60">{scenario.hint}</p>
-                        </div>
-                        <div className="w-full rounded-[14px] bg-white px-3 py-2 text-[11px] leading-5 text-black/60 dark:bg-gray-950 dark:text-white/70">
-                          {preview}
+                        <div className="space-y-1.5 pr-8">
+                          <span className="inline-flex items-center gap-2 text-sm font-semibold">
+                            <DraftIcon scenario={scenario.presetKey} />
+                            {isLoading ? '生成中…' : scenario.label}
+                          </span>
+                          <p className="line-clamp-1 text-xs leading-5 text-black/55 dark:text-white/60">
+                            {scenario.hint}
+                          </p>
                         </div>
                       </button>
                     </div>
