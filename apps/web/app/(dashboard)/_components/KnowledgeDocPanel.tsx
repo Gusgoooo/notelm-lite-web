@@ -1368,7 +1368,9 @@ export function KnowledgeDocPanel({
                           event.stopPropagation();
                           openScenarioEditor(scenario.builtIn ? 'clone' : 'edit', scenario);
                         }}
-                        className="absolute right-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-white text-gray-700 opacity-0 shadow-sm transition hover:bg-gray-50 group-hover:opacity-100 dark:border-white/10 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800"
+                        className={`absolute right-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-white text-gray-700 shadow-sm transition hover:bg-gray-50 dark:border-white/10 dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800 ${
+                          scenario.builtIn ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'
+                        }`}
                         aria-label={scenario.builtIn ? '另存为新场景' : '编辑场景'}
                       >
                         <EditIcon />
@@ -1394,7 +1396,7 @@ export function KnowledgeDocPanel({
                   <div className="space-y-1">
                     <span className="inline-flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100">
                       <AddScenarioIcon />
-                      新增自定义项目
+                      新增自定义结构
                     </span>
                     <p className="text-xs leading-5 text-gray-500 dark:text-gray-400">
                       自定义项目说明和回复方式，保存后会作为一个新的场景卡片。
