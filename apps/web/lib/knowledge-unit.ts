@@ -1,10 +1,11 @@
 export const KNOWLEDGE_UNIT_NOTE_TITLE = '__SYSTEM_KU_STATE__';
 export const KNOWLEDGE_UNIT_TEMP_NOTE_PREFIX = '__SYSTEM_KU_TMP__';
 
-/** Single knowledge document per notebook (right panel editor). */
+/** Knowledge document system notes (right panel editor). */
 export const KNOWLEDGE_DOC_NOTE_TITLE = '__KNOWLEDGE_DOC__';
 export const KNOWLEDGE_DOC_HISTORY_NOTE_TITLE = '__KNOWLEDGE_DOC_HISTORY__';
 export const KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE = '__KNOWLEDGE_DOC_SCENARIOS__';
+export const KNOWLEDGE_DOC_COLLECTION_NOTE_TITLE = '__KNOWLEDGE_DOC_COLLECTION__';
 
 export type KnowledgeUnitTrigger =
   | 'ON_ANSWER_GENERATED'

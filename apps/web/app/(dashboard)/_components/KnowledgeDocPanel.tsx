@@ -46,6 +46,14 @@ type KnowledgeDocHistoryEntry = {
   savedAt: string;
 };
 
+type KnowledgeDocCard = {
+  docId: string;
+  title: string;
+  updatedAt: string;
+  hasContent: boolean;
+  scenarioLabel: string;
+};
+
 type ArtifactNoticeState = 'running' | 'success' | 'error';
 
 type SaveDocOptions = {
@@ -475,6 +483,10 @@ export function KnowledgeDocPanel({
   onToggleCollapse,
 }: KnowledgeDocPanelProps) {
   const [docId, setDocId] = useState<string | null>(null);
+  const [activeDocId, setActiveDocId] = useState<string | null>(null);
+  const [docCards, setDocCards] = useState<KnowledgeDocCard[]>([]);
+  const [listView, setListView] = useState(false);
+  const [pendingDocCreation, setPendingDocCreation] = useState(false);
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -482,7 +494,6 @@ export function KnowledgeDocPanel({
   const [pendingDiff, setPendingDiff] = useState<{ previous: string; suggested: string } | null>(null);
   const [updatingFromChat, setUpdatingFromChat] = useState(false);
   const [sheetMode, setSheetMode] = useState<SheetMode>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [docHistory, setDocHistory] = useState<KnowledgeDocHistoryEntry[]>([]);
   const [scenarioState, setScenarioState] = useState<KnowledgeDocScenarioState>(getDefaultKnowledgeDocScenarioState);
@@ -555,26 +566,52 @@ export function KnowledgeDocPanel({
     );
   }, []);
 
-  const fetchDoc = useCallback(async () => {
-    if (!notebookId) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`, {
-        cache: 'no-store',
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setDocId(null);
-        setContent('');
-        emitDocStatus(null, '');
-        return;
-      }
-      const rawContent = typeof data?.content === 'string' ? data.content : '';
+  const applyDocPayload = useCallback(
+    (data: unknown) => {
+      const row = (data ?? {}) as {
+        id?: unknown;
+        docId?: unknown;
+        activeDocId?: unknown;
+        content?: unknown;
+        history?: unknown;
+        scenarioState?: unknown;
+        docs?: unknown;
+      };
+      const rawContent = typeof row.content === 'string' ? row.content : '';
       const nextContent = rawContent.includes('<') ? rawContent : markdownToKnowledgeDocHtml(rawContent);
-      const nextId = typeof data?.id === 'string' ? data.id : null;
-      const storedHistory = normalizeHistoryEntries(data?.history);
-      const nextScenarioState = normalizeKnowledgeDocScenarioState(data?.scenarioState);
-      setDocId(nextId);
+      const nextDocId = typeof row.docId === 'string' ? row.docId : typeof row.id === 'string' ? row.id : null;
+      const nextActiveDocId =
+        typeof row.activeDocId === 'string'
+          ? row.activeDocId
+          : nextDocId;
+      const storedHistory = normalizeHistoryEntries(row.history);
+      const nextScenarioState = normalizeKnowledgeDocScenarioState(row.scenarioState);
+      const cards = Array.isArray(row.docs)
+        ? row.docs
+            .filter(
+              (item): item is KnowledgeDocCard =>
+                Boolean(
+                  item &&
+                    typeof item === 'object' &&
+                    typeof (item as KnowledgeDocCard).docId === 'string' &&
+                    typeof (item as KnowledgeDocCard).title === 'string' &&
+                    typeof (item as KnowledgeDocCard).updatedAt === 'string' &&
+                    typeof (item as KnowledgeDocCard).hasContent === 'boolean' &&
+                    typeof (item as KnowledgeDocCard).scenarioLabel === 'string'
+                )
+            )
+            .map((item) => ({
+              docId: item.docId,
+              title: item.title,
+              updatedAt: item.updatedAt,
+              hasContent: item.hasContent,
+              scenarioLabel: item.scenarioLabel,
+            }))
+        : [];
+
+      setDocCards(cards);
+      setActiveDocId(nextActiveDocId ?? null);
+      setDocId(nextDocId);
       setContent(nextContent || '<p></p>');
       initialContentRef.current = nextContent || '<p></p>';
       setScenarioState(nextScenarioState);
@@ -588,15 +625,42 @@ export function KnowledgeDocPanel({
               })
             : []
       );
-      emitDocStatus(nextId, nextContent || '<p></p>');
+      emitDocStatus(nextDocId, nextContent || '<p></p>');
+    },
+    [emitDocStatus]
+  );
+
+  const fetchDoc = useCallback(async (targetDocId?: string | null) => {
+    if (!notebookId) return;
+    setLoading(true);
+    try {
+      const url = targetDocId?.trim()
+        ? `/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc?docId=${encodeURIComponent(targetDocId)}`
+        : `/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`;
+      const res = await fetch(url, { cache: 'no-store' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDocCards([]);
+        setActiveDocId(null);
+        setDocId(null);
+        setContent('');
+        emitDocStatus(null, '');
+        return;
+      }
+      applyDocPayload(data);
     } finally {
       setLoading(false);
     }
-  }, [emitDocStatus, notebookId]);
+  }, [applyDocPayload, emitDocStatus, notebookId]);
 
   useEffect(() => {
     void fetchDoc();
   }, [fetchDoc]);
+
+  useEffect(() => {
+    setListView(false);
+    setPendingDocCreation(false);
+  }, [notebookId]);
 
   const saveDoc = useCallback(
     async (html: string, options: SaveDocOptions = {}) => {
@@ -608,25 +672,29 @@ export function KnowledgeDocPanel({
         const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: html, history: nextHistory }),
+          body: JSON.stringify({
+            content: html,
+            history: nextHistory,
+            docId: activeDocId ?? docId,
+            activeDocId: activeDocId ?? docId,
+          }),
         });
         if (!res.ok) return null;
         const data = await res.json().catch(() => ({}));
+        applyDocPayload(data);
         const next = typeof data?.content === 'string' ? data.content : html;
-        const nextId = typeof data?.id === 'string' ? data.id : docId;
-        const nextScenarioState = normalizeKnowledgeDocScenarioState(data?.scenarioState);
-        setDocHistory(normalizeHistoryEntries(data?.history).length > 0 ? normalizeHistoryEntries(data?.history) : nextHistory);
-        initialContentRef.current = next;
-        setDocId(nextId ?? null);
-        setContent(next);
-        setScenarioState(nextScenarioState);
-        emitDocStatus(nextId ?? null, next);
+        const nextId =
+          typeof data?.docId === 'string'
+            ? data.docId
+            : typeof data?.id === 'string'
+              ? data.id
+              : docId;
         return { id: nextId ?? null, content: next };
       } finally {
         setSaving(false);
       }
     },
-    [docId, emitDocStatus, notebookId, saving]
+    [activeDocId, applyDocPayload, docId, notebookId, saving]
   );
 
   const ensureDocExists = useCallback(async () => {
@@ -636,22 +704,69 @@ export function KnowledgeDocPanel({
     return saved?.id ?? null;
   }, [content, docId, saveDoc]);
 
+  const createNewDoc = useCallback(
+    async (input?: { title?: string; scenarioState?: KnowledgeDocScenarioState }) => {
+      if (!notebookId) return null;
+      const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          createDoc: true,
+          docTitle: input?.title,
+          scenarioState: input?.scenarioState,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === 'string' ? data.error : '新建知识文档失败');
+      }
+      applyDocPayload(data);
+      return typeof data?.docId === 'string'
+        ? data.docId
+        : typeof data?.id === 'string'
+          ? data.id
+          : null;
+    },
+    [applyDocPayload, notebookId]
+  );
+
+  const focusDoc = useCallback(
+    async (nextDocId: string) => {
+      if (!notebookId || !nextDocId.trim()) return;
+      const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activeDocId: nextDocId.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data?.error === 'string' ? data.error : '切换知识文档失败');
+      }
+      applyDocPayload(data);
+    },
+    [applyDocPayload, notebookId]
+  );
+
   const saveScenarioState = useCallback(
     async (nextScenarioState: KnowledgeDocScenarioState) => {
       if (!notebookId) return;
       const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenarioState: nextScenarioState }),
+        body: JSON.stringify({
+          scenarioState: nextScenarioState,
+          docId: activeDocId ?? docId,
+          activeDocId: activeDocId ?? docId,
+        }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.error ?? '保存知识文档结构失败');
       }
       const data = await res.json().catch(() => ({}));
-      setScenarioState(normalizeKnowledgeDocScenarioState(data?.scenarioState));
+      applyDocPayload(data);
     },
-    [notebookId]
+    [activeDocId, applyDocPayload, docId, notebookId]
   );
 
   const editor = useEditor({
@@ -811,11 +926,20 @@ export function KnowledgeDocPanel({
       const scenarioLabel = scenarioConfig.label;
       const previousScenarioState = scenarioState;
       try {
-        await ensureDocExists();
         const nextScenarioState: KnowledgeDocScenarioState = {
           ...scenarioState,
           activeScenarioId: scenarioConfig.id,
         };
+        if (pendingDocCreation || !activeDocId || listView) {
+          await createNewDoc({
+            title: scenarioLabel,
+            scenarioState: nextScenarioState,
+          });
+          setPendingDocCreation(false);
+        } else {
+          await ensureDocExists();
+        }
+        setListView(false);
         setScenarioState(nextScenarioState);
         await saveScenarioState(nextScenarioState);
         const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc/generate`, {
@@ -844,7 +968,19 @@ export function KnowledgeDocPanel({
         setDraftScenarioLoading(null);
       }
     },
-    [applyGeneratedText, draftScenarioLoading, draftScenarios, ensureDocExists, notebookId, saveScenarioState, scenarioState]
+    [
+      activeDocId,
+      applyGeneratedText,
+      createNewDoc,
+      draftScenarioLoading,
+      draftScenarios,
+      ensureDocExists,
+      listView,
+      notebookId,
+      pendingDocCreation,
+      saveScenarioState,
+      scenarioState,
+    ]
   );
 
   const runCreationGenerate = useCallback(
@@ -929,20 +1065,8 @@ export function KnowledgeDocPanel({
 
   const openDraftSheet = useCallback(async () => {
     if (draftScenarioLoading || creationGenerating) return;
-    await ensureDocExists();
     setSheetMode('draft');
-  }, [creationGenerating, draftScenarioLoading, ensureDocExists]);
-
-  const requestPreviewDownload = useCallback(() => {
-    const markdown = normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(editor?.getHTML() ?? content ?? ''));
-    const blob = new Blob([markdown || stripHtml(content)], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'knowledge-doc.md';
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }, [content, editor]);
+  }, [creationGenerating, draftScenarioLoading]);
 
   useEffect(() => {
     const onUpdate = (event: Event) => {
@@ -1017,6 +1141,8 @@ export function KnowledgeDocPanel({
 
   useEffect(() => {
     const onCreateRequest = () => {
+      setListView(true);
+      setPendingDocCreation(true);
       void openDraftSheet();
     };
 
@@ -1029,7 +1155,7 @@ export function KnowledgeDocPanel({
     };
 
     const onOpenCreationDrawer = () => {
-      if (draftScenarioLoading || creationGenerating) return;
+      if (draftScenarioLoading || creationGenerating || listView || !docHasContent) return;
       setSheetMode('create');
     };
 
@@ -1052,7 +1178,7 @@ export function KnowledgeDocPanel({
       window.removeEventListener('knowledge-doc-open-create-drawer', onOpenCreationDrawer);
       window.removeEventListener('knowledge-doc-pending-state', onPendingState as EventListener);
     };
-  }, [creationGenerating, docHasContent, draftScenarioLoading, openDraftSheet, runDraftGeneration]);
+  }, [creationGenerating, docHasContent, draftScenarioLoading, listView, openDraftSheet, runDraftGeneration]);
 
   const confirmPending = useCallback(() => {
     if (!pendingDiff || !editor) return;
@@ -1082,6 +1208,36 @@ export function KnowledgeDocPanel({
     },
     [editor, saveDoc]
   );
+
+  const handleOpenListView = useCallback(() => {
+    setListView(true);
+    setPendingDocCreation(false);
+    setSheetMode(null);
+  }, []);
+
+  const handleNewDocClick = useCallback(() => {
+    setListView(true);
+    setPendingDocCreation(true);
+    setSheetMode('draft');
+  }, []);
+
+  const handleFocusDocCard = useCallback(
+    async (targetDocId: string) => {
+      try {
+        await focusDoc(targetDocId);
+        setPendingDocCreation(false);
+        setListView(false);
+      } catch (error) {
+        alert(error instanceof Error ? error.message : '切换知识文档失败');
+      }
+    },
+    [focusDoc]
+  );
+
+  const closeSheet = useCallback(() => {
+    setSheetMode(null);
+    setPendingDocCreation(false);
+  }, []);
 
   if (!notebookId) {
     return (
@@ -1138,23 +1294,34 @@ export function KnowledgeDocPanel({
           知识文档
         </h2>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setHistoryOpen(true)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-          >
-            <HistoryIcon />
-            历史
-          </button>
-          <label className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-[12px] bg-gray-100 px-2.5 text-xs text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
-            <span className="font-medium text-gray-600 dark:text-gray-300">自动更新</span>
-            <input
-              type="checkbox"
-              checked={autoUpdate}
-              onChange={(e) => setAutoUpdate(e.target.checked)}
-              className="h-4 w-4 rounded border border-gray-300 accent-gray-900 dark:border-gray-600"
-            />
-          </label>
+          {listView ? null : (
+            <>
+              <button
+                type="button"
+                onClick={handleOpenListView}
+                className="inline-flex h-8 items-center rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                文档列表
+              </button>
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(true)}
+                className="inline-flex h-8 items-center gap-1.5 rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                <HistoryIcon />
+                历史
+              </button>
+              <label className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-[12px] bg-gray-100 px-2.5 text-xs text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
+                <span className="font-medium text-gray-600 dark:text-gray-300">自动更新</span>
+                <input
+                  type="checkbox"
+                  checked={autoUpdate}
+                  onChange={(e) => setAutoUpdate(e.target.checked)}
+                  className="h-4 w-4 rounded border border-gray-300 accent-gray-900 dark:border-gray-600"
+                />
+              </label>
+            </>
+          )}
           {onToggleCollapse ? (
             <button
               type="button"
@@ -1172,6 +1339,49 @@ export function KnowledgeDocPanel({
       {loading ? (
         <div className="relative z-10 flex flex-1 items-center justify-center p-4 text-xs text-gray-500 dark:text-gray-400">
           加载中…
+        </div>
+      ) : listView ? (
+        <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden">
+          <p className="px-3 pb-2 pt-1 text-xs text-gray-500 dark:text-gray-400">
+            请选择一个文档进行知识问答。
+          </p>
+          <div className="min-h-0 flex-1 overflow-auto px-2 pb-3">
+            {docCards.length > 0 ? (
+              <div className="space-y-2">
+                {docCards.map((card) => {
+                  const isFocused = activeDocId === card.docId;
+                  return (
+                    <button
+                      key={card.docId}
+                      type="button"
+                      onClick={() => void handleFocusDocCard(card.docId)}
+                      className={`w-full rounded-[14px] border px-3 py-3 text-left transition ${
+                        isFocused
+                          ? 'border-black/15 bg-white shadow-sm dark:border-white/20 dark:bg-gray-900'
+                          : 'border-gray-200 bg-white hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:hover:bg-gray-800'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">{card.title}</p>
+                        <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-300">
+                          {card.scenarioLabel}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+                        <span>{formatHistoryTime(card.updatedAt)}</span>
+                        <span className="text-gray-300 dark:text-gray-700">·</span>
+                        <span>{card.hasContent ? '已有内容' : '空白文档'}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex min-h-[220px] items-center justify-center px-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                还没有知识文档，点击下方“新建文档”开始创建。
+              </div>
+            )}
+          </div>
         </div>
       ) : pendingDiff ? (
         <div className="relative z-10 flex flex-1 min-h-0 flex-col overflow-hidden">
@@ -1246,19 +1456,20 @@ export function KnowledgeDocPanel({
         <p className="relative z-10 px-3 py-1 text-xs text-blue-600 dark:text-blue-400">正在根据对话更新文档…</p>
       ) : null}
 
-      {docHasContent ? (
+      {!loading ? (
         <div className="relative z-10 flex shrink-0 items-center justify-center gap-2 px-3 pb-3 pt-0">
           <button
             type="button"
-            onClick={() => setPreviewOpen(true)}
+            onClick={handleNewDocClick}
             className="inline-flex h-10 items-center rounded-[12px] bg-gray-100 px-4 text-sm font-medium text-gray-700 transition hover:bg-gray-200"
           >
-            预览
+            新建文档
           </button>
           <button
             type="button"
             onClick={() => setSheetMode('create')}
-            className="inline-flex h-10 items-center gap-2 rounded-[12px] bg-black px-4 text-sm font-medium text-white shadow-sm transition hover:bg-black/92 dark:bg-white dark:text-black dark:hover:bg-white/92"
+            disabled={!docHasContent || listView}
+            className="inline-flex h-10 items-center gap-2 rounded-[12px] bg-black px-4 text-sm font-medium text-white shadow-sm transition hover:bg-black/92 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-white dark:text-black dark:hover:bg-white/92"
           >
             去创作
             <ArrowRightIcon />
@@ -1317,7 +1528,7 @@ export function KnowledgeDocPanel({
           className="app-modal-backdrop absolute inset-x-0 bottom-0 top-12 z-30 flex items-end"
           onClick={(event) => {
             if (event.target === event.currentTarget) {
-              setSheetMode(null);
+              closeSheet();
             }
           }}
         >
@@ -1340,7 +1551,7 @@ export function KnowledgeDocPanel({
               </div>
               <button
                 type="button"
-                onClick={() => setSheetMode(null)}
+                onClick={closeSheet}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
                 aria-label="关闭抽屉"
                 title="关闭"
@@ -1377,7 +1588,12 @@ export function KnowledgeDocPanel({
                       </button>
                       <button
                         type="button"
-                        onClick={() => void runDraftGeneration(scenario.id, docHasContent ? 'update' : 'create')}
+                        onClick={() =>
+                          void runDraftGeneration(
+                            scenario.id,
+                            pendingDocCreation || listView ? 'create' : docHasContent ? 'update' : 'create'
+                          )
+                        }
                         disabled={draftScenarioLoading != null}
                         className={`flex h-[98px] w-full items-center rounded-[18px] px-4 py-3 text-left transition ${getScenarioCardClass(scenario)} ${
                           isActive ? 'ring-1 ring-black/15 dark:ring-white/20' : ''
@@ -1512,41 +1728,6 @@ export function KnowledgeDocPanel({
                       ? '保存场景'
                       : '保存新场景'}
               </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {previewOpen ? (
-        <div className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-[24px] bg-white shadow-xl dark:bg-gray-900">
-            <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-800">
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">知识文档预览</h3>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">完整查看当前渲染后的文档内容。</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={requestPreviewDownload}
-                  className="inline-flex h-8 items-center rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200"
-                >
-                  下载
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewOpen(false)}
-                  className="inline-flex h-8 items-center rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200"
-                >
-                  关闭
-                </button>
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto bg-[#f7f7f8] p-5 dark:bg-gray-950">
-              <div
-                className="knowledge-doc-editor mx-auto min-h-[60vh] max-w-3xl rounded-[20px] bg-[#f8f7f1] px-8 py-8 shadow-sm dark:bg-gray-900"
-                dangerouslySetInnerHTML={{ __html: currentHtml }}
-              />
             </div>
           </div>
         </div>
