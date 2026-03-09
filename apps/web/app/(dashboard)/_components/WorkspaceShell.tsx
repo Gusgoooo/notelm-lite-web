@@ -932,17 +932,9 @@ export function WorkspaceShell({
               <>
                 <button
                   type="button"
-                  onClick={() => void handleCreateNotebook()}
-                  disabled={creatingNotebook || creatingNotebookCopy || publishSaving}
-                  className="inline-flex h-7 items-center rounded-[12px] bg-black px-3 text-xs font-medium text-white disabled:opacity-60"
-                >
-                  {creatingNotebook ? '新建中…' : '新建 Notebook'}
-                </button>
-                <button
-                  type="button"
                   onClick={() => void handleCreateNotebookCopy()}
                   disabled={creatingNotebookCopy || creatingNotebook || publishSaving}
-                  className="inline-flex h-7 items-center rounded-[12px] bg-black px-3 text-xs font-medium text-white disabled:opacity-60"
+                  className="inline-flex h-7 items-center rounded-[12px] border border-black/20 bg-white px-3 text-xs font-medium text-gray-800 transition hover:bg-gray-50 disabled:opacity-60 dark:border-white/20 dark:bg-transparent dark:text-gray-100 dark:hover:bg-white/10"
                 >
                   {creatingNotebookCopy ? '创建中…' : '创建副本'}
                 </button>
@@ -950,9 +942,17 @@ export function WorkspaceShell({
                   type="button"
                   onClick={() => setPublishOpen(true)}
                   disabled={publishSaving || creatingNotebook || creatingNotebookCopy}
-                  className="inline-flex h-7 items-center rounded-[12px] bg-black px-3 text-xs font-medium text-white disabled:opacity-60"
+                  className="inline-flex h-7 items-center rounded-[12px] border border-black/20 bg-white px-3 text-xs font-medium text-gray-800 transition hover:bg-gray-50 disabled:opacity-60 dark:border-white/20 dark:bg-transparent dark:text-gray-100 dark:hover:bg-white/10"
                 >
                   {publishSaving ? '分享中…' : '分享'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCreateNotebook()}
+                  disabled={creatingNotebook || creatingNotebookCopy || publishSaving}
+                  className="inline-flex h-7 items-center rounded-[12px] border border-black/20 bg-white px-3 text-xs font-medium text-gray-800 transition hover:bg-gray-50 disabled:opacity-60 dark:border-white/20 dark:bg-transparent dark:text-gray-100 dark:hover:bg-white/10"
+                >
+                  {creatingNotebook ? '新建中…' : '新建 Notebook'}
                 </button>
               </>
             )}
