@@ -4,8 +4,6 @@ import { getNotebookAccess } from '@/lib/notebook-access';
 import {
   KNOWLEDGE_UNIT_NOTE_TITLE,
   KNOWLEDGE_UNIT_TEMP_NOTE_PREFIX,
-  KNOWLEDGE_DOC_COLLECTION_NOTE_TITLE,
-  KNOWLEDGE_DOC_HISTORY_NOTE_TITLE,
   KNOWLEDGE_DOC_NOTE_TITLE,
   KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE,
 } from '@/lib/knowledge-unit';
@@ -32,8 +30,6 @@ export async function GET(
       list.filter(
         (item) =>
           item.title !== KNOWLEDGE_UNIT_NOTE_TITLE &&
-          item.title !== KNOWLEDGE_DOC_COLLECTION_NOTE_TITLE &&
-          item.title !== KNOWLEDGE_DOC_HISTORY_NOTE_TITLE &&
           item.title !== KNOWLEDGE_DOC_NOTE_TITLE &&
           item.title !== KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE &&
           !item.title.startsWith(KNOWLEDGE_UNIT_TEMP_NOTE_PREFIX)
