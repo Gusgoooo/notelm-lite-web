@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AnimatedList } from '@/components/ui/animated-list';
-import { InteractiveHoverButton } from '@/components/ui/interactive-hover-button';
 import { shouldIgnoreEnterForIme } from '@/lib/ime';
 import { ChatPanel } from './ChatPanel';
 import { KnowledgeDocPanel } from './KnowledgeDocPanel';
@@ -123,6 +122,11 @@ function buildWorkFilename(note: WorkNote, extension: string): string {
   return `${normalized || '作品'}.${extension}`;
 }
 
+function buildNotebookCopyTitle(title: string): string {
+  const trimmed = title.trim() || 'Untitled';
+  return trimmed.endsWith(' · 副本') ? trimmed : `${trimmed} · 副本`;
+}
+
 function SpinnerIcon({ className = 'h-4 w-4' }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={`${className} animate-spin`} fill="none" stroke="currentColor" strokeWidth="2">
@@ -202,6 +206,8 @@ export function WorkspaceShell({
   const [docCollapsed, setDocCollapsed] = useState(false);
   const [resizing, setResizing] = useState(false);
   const [savingFork, setSavingFork] = useState(false);
+  const [creatingNotebook, setCreatingNotebook] = useState(false);
+  const [creatingNotebookCopy, setCreatingNotebookCopy] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishSaving, setPublishSaving] = useState(false);
   const [publishError, setPublishError] = useState('');
@@ -703,6 +709,56 @@ export function WorkspaceShell({
     }
   };
 
+  const handleCreateNotebook = async () => {
+    if (creatingNotebook) return;
+    setCreatingNotebook(true);
+    setPublishError('');
+    setPublishSuccess('');
+    try {
+      const res = await fetch('/api/notebooks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Untitled' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.id) {
+        setPublishError(data?.error ?? data?.detail ?? '新建 notebook 失败');
+        return;
+      }
+      router.push(`/?notebookId=${encodeURIComponent(data.id)}`);
+      router.refresh();
+    } catch {
+      setPublishError('新建 notebook 失败，请稍后重试');
+    } finally {
+      setCreatingNotebook(false);
+    }
+  };
+
+  const handleCreateNotebookCopy = async () => {
+    if (creatingNotebookCopy) return;
+    setCreatingNotebookCopy(true);
+    setPublishError('');
+    setPublishSuccess('');
+    try {
+      const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/fork`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: buildNotebookCopyTitle(headerTitle) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.notebook?.id) {
+        setPublishError(data?.error ?? '创建副本失败');
+        return;
+      }
+      router.push(`/?notebookId=${encodeURIComponent(data.notebook.id)}`);
+      router.refresh();
+    } catch {
+      setPublishError('创建副本失败，请稍后重试');
+    } finally {
+      setCreatingNotebookCopy(false);
+    }
+  };
+
   const saveHeaderTitle = async () => {
     if (!isOwner || savingHeaderTitle) return;
     const nextTitle = headerTitleDraft.trim();
@@ -873,12 +929,32 @@ export function WorkspaceShell({
               </button>
             )}
             {isOwner && (
-              <InteractiveHoverButton
-                className="scale-[0.8] origin-center tracking-[2px]"
-                onClick={() => setPublishOpen(true)}
-              >
-                分享
-              </InteractiveHoverButton>
+              <>
+                <button
+                  type="button"
+                  onClick={() => void handleCreateNotebook()}
+                  disabled={creatingNotebook || creatingNotebookCopy || publishSaving}
+                  className="inline-flex h-7 items-center rounded-[12px] bg-black px-3 text-xs font-medium text-white disabled:opacity-60"
+                >
+                  {creatingNotebook ? '新建中…' : '新建 Notebook'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCreateNotebookCopy()}
+                  disabled={creatingNotebookCopy || creatingNotebook || publishSaving}
+                  className="inline-flex h-7 items-center rounded-[12px] bg-black px-3 text-xs font-medium text-white disabled:opacity-60"
+                >
+                  {creatingNotebookCopy ? '创建中…' : '创建副本'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPublishOpen(true)}
+                  disabled={publishSaving || creatingNotebook || creatingNotebookCopy}
+                  className="inline-flex h-7 items-center rounded-[12px] bg-black px-3 text-xs font-medium text-white disabled:opacity-60"
+                >
+                  {publishSaving ? '分享中…' : '分享'}
+                </button>
+              </>
             )}
           </div>
         </div>
