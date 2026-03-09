@@ -154,6 +154,22 @@ function AddScenarioIcon() {
   );
 }
 
+function StructureSwitchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 6h10" />
+      <path d="M18 6h2" />
+      <path d="M10 12h10" />
+      <path d="M4 12h2" />
+      <path d="M4 18h12" />
+      <path d="M20 18h0.01" />
+      <circle cx="15" cy="6" r="2" />
+      <circle cx="7" cy="12" r="2" />
+      <circle cx="18" cy="18" r="2" />
+    </svg>
+  );
+}
+
 function getScenarioCardClass(scenario: KnowledgeDocScenario): string {
   if (!scenario.builtIn) {
     return 'border border-gray-200 bg-white text-gray-800 hover:bg-gray-50';
@@ -497,6 +513,10 @@ export function KnowledgeDocPanel({
   const [scenarioTitleDraft, setScenarioTitleDraft] = useState('');
   const [scenarioStructureDraft, setScenarioStructureDraft] = useState('');
   const [scenarioEditorSaving, setScenarioEditorSaving] = useState(false);
+  const [structureSwitchOpen, setStructureSwitchOpen] = useState(false);
+  const [structureScenarioId, setStructureScenarioId] = useState<KnowledgeDocScenarioId | ''>('');
+  const [structureDraft, setStructureDraft] = useState('');
+  const [structureSaving, setStructureSaving] = useState(false);
 
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialContentRef = useRef<string | null>(null);
@@ -506,6 +526,10 @@ export function KnowledgeDocPanel({
   const activeScenario = useMemo(
     () => draftScenarios.find((item) => item.id === scenarioState.activeScenarioId) ?? null,
     [draftScenarios, scenarioState.activeScenarioId]
+  );
+  const selectedStructureScenario = useMemo(
+    () => draftScenarios.find((item) => item.id === structureScenarioId) ?? null,
+    [draftScenarios, structureScenarioId]
   );
 
   const creationActions = useMemo(
@@ -704,6 +728,21 @@ export function KnowledgeDocPanel({
   const docHasContent = hasMeaningfulHtml(currentHtml);
   const panelBusy = updatingFromChat || externalBusy;
 
+  const openStructureSwitch = useCallback(() => {
+    const scenario = activeScenario ?? draftScenarios[0];
+    if (!scenario) return;
+    setStructureScenarioId(scenario.id);
+    setStructureDraft(scenario.structure);
+    setStructureSwitchOpen(true);
+  }, [activeScenario, draftScenarios]);
+
+  const closeStructureSwitch = useCallback((force = false) => {
+    if (structureSaving && !force) return;
+    setStructureSwitchOpen(false);
+    setStructureScenarioId('');
+    setStructureDraft('');
+  }, [structureSaving]);
+
   const openScenarioEditor = useCallback(
     (mode: ScenarioEditorMode, scenario?: KnowledgeDocScenario | null) => {
       if (mode === 'create') {
@@ -787,6 +826,16 @@ export function KnowledgeDocPanel({
     scenarioTitleDraft,
   ]);
 
+  const handleChangeStructureScenario = useCallback(
+    (nextScenarioId: string) => {
+      const scenario = draftScenarios.find((item) => item.id === nextScenarioId);
+      if (!scenario) return;
+      setStructureScenarioId(scenario.id);
+      setStructureDraft(scenario.structure);
+    },
+    [draftScenarios]
+  );
+
   const applyGeneratedText = useCallback(
     async (nextText: string, options: SaveDocOptions = {}) => {
       const newHtml = markdownToKnowledgeDocHtml(nextText);
@@ -797,9 +846,18 @@ export function KnowledgeDocPanel({
   );
 
   const runDraftGeneration = useCallback(
-    async (scenarioId: KnowledgeDocScenarioId, mode: 'create' | 'update') => {
+    async (
+      scenarioId: KnowledgeDocScenarioId,
+      mode: 'create' | 'update',
+      options?: {
+        scenarioConfig?: KnowledgeDocScenario;
+        scenarioStateOverride?: KnowledgeDocScenarioState;
+      }
+    ) => {
       if (!notebookId || draftScenarioLoading) return;
-      const scenarioConfig = draftScenarios.find((item) => item.id === scenarioId);
+      const baseScenarioState = options?.scenarioStateOverride ?? scenarioState;
+      const scenarioConfig =
+        options?.scenarioConfig ?? baseScenarioState.scenarios.find((item) => item.id === scenarioId);
       if (!scenarioConfig) return;
       setSheetMode(null);
       setDraftScenarioLoading(scenarioId);
@@ -809,11 +867,11 @@ export function KnowledgeDocPanel({
         description: '系统正在按所选结构整理内容，完成后会直接更新到右侧知识文档。',
       });
       const scenarioLabel = scenarioConfig.label;
-      const previousScenarioState = scenarioState;
+      const previousScenarioState = baseScenarioState;
       try {
         await ensureDocExists();
         const nextScenarioState: KnowledgeDocScenarioState = {
-          ...scenarioState,
+          ...baseScenarioState,
           activeScenarioId: scenarioConfig.id,
         };
         setScenarioState(nextScenarioState);
@@ -844,7 +902,88 @@ export function KnowledgeDocPanel({
         setDraftScenarioLoading(null);
       }
     },
-    [applyGeneratedText, draftScenarioLoading, draftScenarios, ensureDocExists, notebookId, saveScenarioState, scenarioState]
+    [applyGeneratedText, draftScenarioLoading, ensureDocExists, notebookId, saveScenarioState, scenarioState]
+  );
+
+  const handleApplyStructure = useCallback(
+    async (saveAsCustom: boolean) => {
+      if (!notebookId || structureSaving) return;
+      const selectedScenario =
+        draftScenarios.find((item) => item.id === structureScenarioId) ?? activeScenario ?? draftScenarios[0];
+      if (!selectedScenario) return;
+      const nextStructure = structureDraft.trim().slice(0, 12000);
+      if (!nextStructure) return;
+
+      const previousScenarioState = scenarioState;
+      const changed = nextStructure !== selectedScenario.structure;
+      let nextScenarioState: KnowledgeDocScenarioState = scenarioState;
+      let nextScenario = selectedScenario;
+      setStructureSaving(true);
+      try {
+        if (saveAsCustom || (selectedScenario.builtIn && changed)) {
+          const customScenario: KnowledgeDocScenario = {
+            id: `custom-${Date.now().toString(36)}` as KnowledgeDocScenarioId,
+            presetKey: 'custom',
+            label: `${selectedScenario.label} 自定义`.slice(0, 40),
+            hint: summarizeScenarioStructure(nextStructure),
+            structure: nextStructure,
+            builtIn: false,
+            accent: selectedScenario.accent,
+          };
+          nextScenarioState = {
+            ...scenarioState,
+            scenarios: [...scenarioState.scenarios, customScenario],
+            activeScenarioId: customScenario.id,
+          };
+          nextScenario = customScenario;
+        } else if (!selectedScenario.builtIn && changed) {
+          const updatedScenario: KnowledgeDocScenario = {
+            ...selectedScenario,
+            structure: nextStructure,
+            hint: summarizeScenarioStructure(nextStructure),
+          };
+          nextScenarioState = {
+            ...scenarioState,
+            scenarios: scenarioState.scenarios.map((item) =>
+              item.id === selectedScenario.id ? updatedScenario : item
+            ),
+            activeScenarioId: updatedScenario.id,
+          };
+          nextScenario = updatedScenario;
+        } else {
+          nextScenarioState = {
+            ...scenarioState,
+            activeScenarioId: selectedScenario.id,
+          };
+        }
+
+        setScenarioState(nextScenarioState);
+        await saveScenarioState(nextScenarioState);
+        closeStructureSwitch(true);
+        await runDraftGeneration(nextScenario.id, docHasContent ? 'update' : 'create', {
+          scenarioConfig: nextScenario,
+          scenarioStateOverride: nextScenarioState,
+        });
+      } catch (error) {
+        setScenarioState(previousScenarioState);
+        alert(error instanceof Error ? error.message : '应用文档结构失败');
+      } finally {
+        setStructureSaving(false);
+      }
+    },
+    [
+      activeScenario,
+      closeStructureSwitch,
+      docHasContent,
+      draftScenarios,
+      notebookId,
+      runDraftGeneration,
+      saveScenarioState,
+      scenarioState,
+      structureDraft,
+      structureSaving,
+      structureScenarioId,
+    ]
   );
 
   const runCreationGenerate = useCallback(
@@ -1138,6 +1277,20 @@ export function KnowledgeDocPanel({
           知识文档
         </h2>
         <div className="flex items-center gap-2">
+          <div className="group relative">
+            <button
+              type="button"
+              onClick={openStructureSwitch}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] bg-gray-100 text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              aria-label="切换知识结构"
+              title="切换知识结构"
+            >
+              <StructureSwitchIcon />
+            </button>
+            <span className="pointer-events-none absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[10px] bg-black px-2 py-1 text-[11px] font-medium text-white opacity-0 transition group-hover:opacity-100 dark:bg-white dark:text-black">
+              切换文档结构
+            </span>
+          </div>
           <button
             type="button"
             onClick={() => setHistoryOpen(true)}
@@ -1423,6 +1576,98 @@ export function KnowledgeDocPanel({
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      ) : null}
+
+      {structureSwitchOpen ? (
+        <div
+          className="app-modal-backdrop fixed inset-0 z-[61] flex items-center justify-center p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeStructureSwitch();
+            }
+          }}
+        >
+          <div className="w-full max-w-2xl rounded-[24px] bg-white p-5 shadow-xl dark:bg-gray-900">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">自定义文档格式</h3>
+                <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                  切换文档类型并修改项目说明。保存后会按最新设置重新生成当前知识文档。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => closeStructureSwitch()}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                aria-label="关闭文档结构编辑"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="m18 6-12 12M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-gray-600 dark:text-gray-300">文档类型</label>
+                <select
+                  value={structureScenarioId}
+                  onChange={(event) => handleChangeStructureScenario(event.target.value)}
+                  className="h-10 w-full rounded-[14px] border border-gray-200 bg-white px-3 text-sm text-gray-900 outline-none transition focus:border-gray-300 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+                >
+                  {draftScenarios.map((scenario) => (
+                    <option key={scenario.id} value={scenario.id}>
+                      {scenario.label}
+                    </option>
+                  ))}
+                </select>
+                {selectedStructureScenario ? (
+                  <p className="text-[11px] leading-5 text-gray-500 dark:text-gray-400">
+                    当前类型说明：{selectedStructureScenario.hint}
+                  </p>
+                ) : null}
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-gray-600 dark:text-gray-300">项目说明</label>
+                <p className="text-[11px] leading-5 text-gray-500 dark:text-gray-400">
+                  {KNOWLEDGE_DOC_SCENARIO_EDITOR_HINT}
+                </p>
+                <textarea
+                  value={structureDraft}
+                  onChange={(event) => setStructureDraft(event.target.value)}
+                  className="min-h-[280px] w-full rounded-[18px] border border-gray-200 bg-white px-4 py-3 text-sm leading-6 text-gray-900 outline-none transition focus:border-gray-300 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+                  placeholder={KNOWLEDGE_DOC_SCENARIO_INSTRUCTION_PLACEHOLDER}
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => closeStructureSwitch()}
+                className="inline-flex h-9 items-center rounded-[12px] border border-gray-300 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleApplyStructure(true)}
+                disabled={!structureDraft.trim() || structureSaving}
+                className="inline-flex h-9 items-center rounded-[12px] border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+              >
+                {structureSaving ? '处理中…' : '保存为自定义结构'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleApplyStructure(false)}
+                disabled={!structureDraft.trim() || structureSaving}
+                className="inline-flex h-9 items-center rounded-[12px] bg-black px-3 text-xs font-medium text-white transition hover:bg-black/92 disabled:opacity-60"
+              >
+                {structureSaving ? '处理中…' : '保存并应用'}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
