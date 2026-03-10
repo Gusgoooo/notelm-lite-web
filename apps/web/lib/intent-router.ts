@@ -34,6 +34,11 @@ type IntentRouterSchema = {
   properties?: Record<string, { enum?: string[] }>;
 };
 
+type IntentRouterFewshot = {
+  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
+  output: IntentRoutingResult;
+};
+
 export const INTENT_ROUTING_FALLBACK: IntentRoutingResult = {
   intent_type: 'qa',
   confidence: 'low',
@@ -51,8 +56,10 @@ export const INTENT_ROUTING_FALLBACK: IntentRoutingResult = {
 
 type IntentRouterArtifacts = {
   systemPrompt: string;
+  systemPromptRaw: string;
   schema: IntentRouterSchema | null;
-  fewshots: string[];
+  schemaRaw: string;
+  fewshots: IntentRouterFewshot[];
 };
 
 type IntentRouterValidation = {
@@ -83,35 +90,96 @@ function normalizeFewshotLines(raw: string): string[] {
     .filter(Boolean);
 }
 
-async function readIntentRouterArtifacts(): Promise<IntentRouterArtifacts> {
-  const cwd = process.cwd();
-  const candidateDirs = [
-    path.join(cwd, 'prompts', 'intent-router'),
-    path.join(cwd, '..', 'prompts', 'intent-router'),
-    path.join(cwd, '..', '..', 'prompts', 'intent-router'),
-  ];
+function parseFewshotExamples(raw: string): IntentRouterFewshot[] {
+  const lines = normalizeFewshotLines(raw);
+  const out: IntentRouterFewshot[] = [];
+  for (const line of lines) {
+    const parsed = parseJsonSafe(line);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+    const row = parsed as Record<string, unknown>;
+    const messages = Array.isArray(row.messages) ? row.messages : [];
+    const output = row.output;
+    const normalizedMessages = messages
+      .filter(
+        (item): item is { role: 'user' | 'assistant' | 'system'; content: string } =>
+          Boolean(
+            item &&
+              typeof item === 'object' &&
+              typeof (item as { role?: unknown }).role === 'string' &&
+              ((item as { role: string }).role === 'user' ||
+                (item as { role: string }).role === 'assistant' ||
+                (item as { role: string }).role === 'system') &&
+              typeof (item as { content?: unknown }).content === 'string' &&
+              (item as { content: string }).content.trim().length > 0
+          )
+      )
+      .slice(0, 6);
+    if (normalizedMessages.length === 0) continue;
+    const validation = validateIntentRoutingResult(output, null);
+    if (!validation.valid || !validation.normalized) continue;
+    out.push({
+      messages: normalizedMessages,
+      output: validation.normalized,
+    });
+  }
+  return out;
+}
 
-  const readFromCandidates = async (filename: string): Promise<string> => {
-    for (const dir of candidateDirs) {
-      const fullPath = path.join(dir, filename);
-      try {
-        return await readFile(fullPath, 'utf8');
-      } catch {
-        continue;
-      }
-    }
-    return '';
-  };
+type ArtifactSet = {
+  systemPromptRaw: string;
+  schemaRaw: string;
+  fewshotRaw: string;
+};
 
+async function readArtifactSet(baseDir: string, files: { system: string; schema: string; fewshots: string }): Promise<ArtifactSet> {
   const [systemPromptRaw, schemaRaw, fewshotRaw] = await Promise.all([
-    readFromCandidates('system_prompt.txt'),
-    readFromCandidates('intent_schema.json'),
-    readFromCandidates('fewshot_examples.jsonl'),
+    readFile(path.join(baseDir, files.system), 'utf8').catch(() => ''),
+    readFile(path.join(baseDir, files.schema), 'utf8').catch(() => ''),
+    readFile(path.join(baseDir, files.fewshots), 'utf8').catch(() => ''),
   ]);
   return {
+    systemPromptRaw,
+    schemaRaw,
+    fewshotRaw,
+  };
+}
+
+async function readIntentRouterArtifacts(): Promise<IntentRouterArtifacts> {
+  const cwd = process.cwd();
+  const rootCandidates = [cwd, path.join(cwd, '..'), path.join(cwd, '..', '..')];
+  let selected: ArtifactSet | null = null;
+
+  for (const baseDir of rootCandidates) {
+    const customSet = await readArtifactSet(baseDir, {
+      system: 'system_prompt_incremental_merge.txt',
+      schema: 'intent_schema_incremental_merge.json',
+      fewshots: 'fewshot_examples_incremental_merge.jsonl',
+    });
+    if (customSet.systemPromptRaw.trim() && customSet.schemaRaw.trim() && customSet.fewshotRaw.trim()) {
+      selected = customSet;
+      break;
+    }
+    const defaultSet = await readArtifactSet(path.join(baseDir, 'prompts', 'intent-router'), {
+      system: 'system_prompt.txt',
+      schema: 'intent_schema.json',
+      fewshots: 'fewshot_examples.jsonl',
+    });
+    if (defaultSet.systemPromptRaw.trim() && defaultSet.schemaRaw.trim() && defaultSet.fewshotRaw.trim()) {
+      selected = defaultSet;
+      break;
+    }
+  }
+
+  const systemPromptRaw = selected?.systemPromptRaw ?? '';
+  const schemaRaw = selected?.schemaRaw ?? '';
+  const fewshotRaw = selected?.fewshotRaw ?? '';
+  const parsedFewshots = parseFewshotExamples(fewshotRaw);
+  return {
     systemPrompt: systemPromptRaw.trim(),
+    systemPromptRaw,
     schema: (parseJsonSafe(schemaRaw) as IntentRouterSchema | null) ?? null,
-    fewshots: normalizeFewshotLines(fewshotRaw),
+    schemaRaw,
+    fewshots: parsedFewshots,
   };
 }
 
@@ -322,6 +390,78 @@ function buildHeuristicIntent(input: IntentRouterInput): IntentRoutingResult {
   };
 }
 
+function shouldUseLlmIntentRouter(): boolean {
+  if (process.env.NODE_ENV === 'test') return false;
+  const flag = (process.env.INTENT_ROUTER_USE_LLM ?? '1').trim().toLowerCase();
+  return !(flag === '0' || flag === 'false' || flag === 'off');
+}
+
+function buildIntentRouterLlmMessages(input: IntentRouterInput, artifacts: IntentRouterArtifacts): Array<{ role: 'system' | 'user'; content: string }> {
+  const recentContext = toRecentContext(input.recentMessages);
+  const fewshots = artifacts.fewshots
+    .slice(0, 10)
+    .map((item, index) => {
+      const msg = item.messages
+        .map((m) => `${m.role}: ${m.content}`)
+        .join('\n');
+      return `示例${index + 1}输入:\n${msg}\n示例${index + 1}输出:\n${JSON.stringify(item.output)}`;
+    })
+    .join('\n\n');
+  const userPrompt =
+    `请根据下面输入给出路由 JSON。\n` +
+    `仅输出 JSON，不要代码块，不要解释。\n\n` +
+    `【Schema】\n${artifacts.schemaRaw}\n\n` +
+    `【Fewshot】\n${fewshots || '(none)'}\n\n` +
+    `【CurrentInput】\n${JSON.stringify({
+      userMessage: input.userMessage,
+      hasActiveDoc: input.hasActiveDoc,
+      recentContext,
+    })}`;
+  return [
+    { role: 'system', content: artifacts.systemPrompt },
+    { role: 'user', content: userPrompt },
+  ];
+}
+
+async function routeIntentByOpenRouterLlm(
+  input: IntentRouterInput,
+  artifacts: IntentRouterArtifacts
+): Promise<string | null> {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) return null;
+  const baseUrl = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+  const model =
+    process.env.OPENROUTER_INTENT_MODEL?.trim() ||
+    process.env.OPENROUTER_CHAT_MODEL?.trim() ||
+    process.env.OPENROUTER_SEARCH_MODEL?.trim() ||
+    'qwen/qwen-2.5-72b-instruct';
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: buildIntentRouterLlmMessages(input, artifacts),
+    }),
+  });
+  const raw = await response.text();
+  const parsed = parseJsonSafe(raw);
+  if (!response.ok) {
+    return null;
+  }
+  const obj =
+    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as { choices?: Array<{ message?: { content?: string } }> })
+      : null;
+  const content = obj?.choices?.[0]?.message?.content;
+  if (typeof content !== 'string' || !content.trim()) return null;
+  return content;
+}
+
 export async function routeIntent(input: IntentRouterInput): Promise<IntentRouterOutput> {
   const artifacts = await loadIntentRouterArtifacts();
   if (!artifacts.systemPrompt || !artifacts.schema || artifacts.fewshots.length === 0) {
@@ -334,20 +474,38 @@ export async function routeIntent(input: IntentRouterInput): Promise<IntentRoute
       },
     };
   }
+
+  if (shouldUseLlmIntentRouter()) {
+    try {
+      const raw = await routeIntentByOpenRouterLlm(input, artifacts);
+      if (typeof raw === 'string' && raw.trim()) {
+        const parsed = parseIntentRoutingResultFromJson(raw, artifacts.schema);
+        if (!parsed.validation.usedFallback) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore model routing failure and fallback to heuristics
+    }
+  }
+
   const heuristicsResult = buildHeuristicIntent(input);
-  const validation = validateIntentRoutingResult(heuristicsResult, artifacts.schema);
-  if (!validation.valid || !validation.normalized) {
+  const heuristicValidation = validateIntentRoutingResult(heuristicsResult, artifacts.schema);
+  if (!heuristicValidation.valid || !heuristicValidation.normalized) {
     return {
       result: INTENT_ROUTING_FALLBACK,
       validation: {
         isValid: false,
         usedFallback: true,
-        errors: validation.errors.length > 0 ? validation.errors : ['invalid heuristic router output'],
+        errors:
+          heuristicValidation.errors.length > 0
+            ? heuristicValidation.errors
+            : ['invalid heuristic router output'],
       },
     };
   }
   return {
-    result: validation.normalized,
+    result: heuristicValidation.normalized,
     validation: {
       isValid: true,
       usedFallback: false,
