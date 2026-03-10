@@ -14,6 +14,7 @@ type QaCandidate = {
   category: QaKnowledgeCategory;
   text: string;
   targetSection: string;
+  format: 'bullet' | 'table';
 };
 
 export type QaMergeResult = {
@@ -45,7 +46,20 @@ const DEFAULT_CANDIDATE_STATS: Record<QaKnowledgeCategory, number> = {
 
 const CONCEPT_PATTERN = /(是指|指的是|定义为|可定义为|称为|即|本质是|核心概念|概念)/;
 const FACT_PATTERN = /(显示|表明|发现|数据|证据|结果|实验|研究|统计|提升|降低|增长|下降|%|\d)/;
+const COMPARE_PATTERN = /(对比|比较|竞品|差异|优劣|优缺点|区别|vs|versus)/i;
 const NOISE_PATTERN = /^(好的|明白|可以|总结如下|结论如下|我认为|建议|另外|此外)$/;
+
+function inferCompareSection(text: string): string | null {
+  if (!COMPARE_PATTERN.test(text)) return null;
+  if (/notion/i.test(text)) return '与 Notion 对比';
+  if (/notebooklm/i.test(text)) return '与 NotebookLM 对比';
+  if (/chatgpt/i.test(text)) return '与 ChatGPT 对比';
+  if (/claude/i.test(text)) return '与 Claude 对比';
+  if (/obsidian/i.test(text)) return '与 Obsidian 对比';
+  if (/confluence/i.test(text)) return '与 Confluence 对比';
+  if (/飞书|语雀|石墨|腾讯文档/.test(text)) return '与协作文档产品对比';
+  return '竞品对比';
+}
 
 function decodeHtmlEntities(value: string): string {
   return value
@@ -163,9 +177,65 @@ function cleanSentence(raw: string): string {
     .trim();
 }
 
+function isMarkdownTableSeparatorLine(line: string): boolean {
+  return /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line.trim());
+}
+
+function isMarkdownTableLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || !trimmed.includes('|')) return false;
+  if (isMarkdownTableSeparatorLine(trimmed)) return true;
+  return /^\|?.+\|.+\|?$/.test(trimmed);
+}
+
+function normalizeTableBlock(block: string): string {
+  return block
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+function splitAnswerIntoTableBlocks(answerText: string): { tables: string[]; plainText: string } {
+  const sourceLines = stripHtml(answerText).split('\n').map((line) => line.trimEnd());
+  const tables: string[] = [];
+  const plainLines: string[] = [];
+
+  let index = 0;
+  while (index < sourceLines.length) {
+    const line = sourceLines[index]?.trim() ?? '';
+    const nextLine = sourceLines[index + 1]?.trim() ?? '';
+    if (isMarkdownTableLine(line) && isMarkdownTableSeparatorLine(nextLine)) {
+      const blockLines: string[] = [line, nextLine];
+      let cursor = index + 2;
+      while (cursor < sourceLines.length && isMarkdownTableLine(sourceLines[cursor] ?? '')) {
+        blockLines.push((sourceLines[cursor] ?? '').trim());
+        cursor += 1;
+      }
+      const block = normalizeTableBlock(blockLines.join('\n'));
+      if (block) {
+        tables.push(block);
+      }
+      index = cursor;
+      continue;
+    }
+    if (line) {
+      plainLines.push(line);
+    }
+    index += 1;
+  }
+
+  return {
+    tables,
+    plainText: plainLines.join('\n'),
+  };
+}
+
 function extractCandidates(answerText: string, currentDocContent: string): QaCandidate[] {
   const currentNorm = normalizeForCompare(currentDocContent);
-  const pieces = stripHtml(answerText)
+  const { tables, plainText } = splitAnswerIntoTableBlocks(answerText);
+  const pieces = plainText
     .split(/[\n。！？!?；;]+/g)
     .map((item) => cleanSentence(item))
     .filter(Boolean);
@@ -173,9 +243,33 @@ function extractCandidates(answerText: string, currentDocContent: string): QaCan
   const dedupe = new Set<string>();
   const out: QaCandidate[] = [];
 
+  for (const tableBlock of tables) {
+    const normalized = normalizeForCompare(tableBlock);
+    if (!normalized || normalized.length < 6) continue;
+    if (dedupe.has(normalized)) continue;
+    dedupe.add(normalized);
+    const compareSection = inferCompareSection(tableBlock);
+    if (currentNorm.includes(normalized)) {
+      out.push({
+        category: 'duplicate',
+        text: tableBlock,
+        targetSection: compareSection ?? '关键事实',
+        format: 'table',
+      });
+      continue;
+    }
+    out.push({
+      category: 'new_fact',
+      text: tableBlock,
+      targetSection: compareSection ?? '关键事实',
+      format: 'table',
+    });
+  }
+
   for (const piece of pieces) {
-    if (piece.length < 8 || piece.length > 160) continue;
+    if (piece.length < 6 || piece.length > 260) continue;
     if (NOISE_PATTERN.test(piece)) continue;
+    const compareSection = inferCompareSection(piece);
     const normalized = normalizeForCompare(piece);
     if (!normalized || normalized.length < 6) continue;
     if (dedupe.has(normalized)) continue;
@@ -186,7 +280,18 @@ function extractCandidates(answerText: string, currentDocContent: string): QaCan
       out.push({
         category: 'duplicate',
         text: piece,
-        targetSection: '增量补充',
+        targetSection: compareSection ?? '增量补充',
+        format: 'bullet',
+      });
+      continue;
+    }
+
+    if (compareSection) {
+      out.push({
+        category: 'new_fact',
+        text: piece,
+        targetSection: compareSection,
+        format: 'bullet',
       });
       continue;
     }
@@ -196,6 +301,7 @@ function extractCandidates(answerText: string, currentDocContent: string): QaCan
         category: 'new_concept',
         text: piece,
         targetSection: '核心概念',
+        format: 'bullet',
       });
       continue;
     }
@@ -205,6 +311,7 @@ function extractCandidates(answerText: string, currentDocContent: string): QaCan
         category: 'new_fact',
         text: piece,
         targetSection: '关键事实',
+        format: 'bullet',
       });
       continue;
     }
@@ -213,10 +320,11 @@ function extractCandidates(answerText: string, currentDocContent: string): QaCan
       category: 'minor_refinement',
       text: piece,
       targetSection: '增量补充',
+      format: 'bullet',
     });
   }
 
-  return out.slice(0, 8);
+  return out.slice(0, 14);
 }
 
 function pickSection(baseMarkdown: string, candidate: QaCandidate): string {
@@ -228,6 +336,19 @@ function pickSection(baseMarkdown: string, candidate: QaCandidate): string {
 
   if (headings.length === 0) return candidate.targetSection;
 
+  if (candidate.targetSection && candidate.targetSection.trim()) {
+    const target = candidate.targetSection.trim();
+    const targetNorm = normalizeForCompare(target);
+    const explicitMatch = headings.find((heading) => normalizeForCompare(heading) === targetNorm);
+    if (explicitMatch) return explicitMatch;
+    if (/(对比|竞品|notion|notebooklm|chatgpt|claude|obsidian|confluence)/i.test(target)) {
+      const compareHeading = headings.find((heading) =>
+        /(对比|竞品|notion|notebooklm|chatgpt|claude|obsidian|confluence)/i.test(heading)
+      );
+      return compareHeading ?? target;
+    }
+  }
+
   const conceptHeading = headings.find((h) => /(概念|定义|术语)/.test(h));
   const factHeading = headings.find((h) => /(事实|结论|证据|数据)/.test(h));
   const refineHeading = headings.find((h) => /(建议|行动|策略|方案|补充)/.test(h));
@@ -238,19 +359,39 @@ function pickSection(baseMarkdown: string, candidate: QaCandidate): string {
   return headings[0];
 }
 
-function insertBulletsIntoSection(markdown: string, section: string, bullets: string[]): string {
-  const cleanBullets = bullets
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((item) => (item.startsWith('- ') ? item : `- ${item}`));
-  if (cleanBullets.length === 0) return markdown;
+function insertCandidatesIntoSection(
+  markdown: string,
+  section: string,
+  candidates: QaCandidate[]
+): { markdown: string; insertedCount: number } {
+  const cleanCandidates = candidates
+    .map((candidate) => ({
+      ...candidate,
+      text: candidate.text.trim(),
+    }))
+    .filter((candidate) => Boolean(candidate.text));
+  if (cleanCandidates.length === 0) {
+    return { markdown, insertedCount: 0 };
+  }
 
   const lines = markdown.split('\n');
   const headingIndex = lines.findIndex((line) => line.trim().toLowerCase() === `## ${section}`.toLowerCase());
 
   if (headingIndex < 0) {
-    const appendix = [`## ${section}`, ...cleanBullets];
-    return `${markdown.trim()}\n\n${appendix.join('\n')}`.replace(/\n{3,}/g, '\n\n').trim();
+    const appendix: string[] = [`## ${section}`];
+    for (const candidate of cleanCandidates) {
+      if (candidate.format === 'table') {
+        appendix.push('');
+        appendix.push(candidate.text);
+      } else {
+        appendix.push(candidate.text.startsWith('- ') ? candidate.text : `- ${candidate.text}`);
+      }
+    }
+    const next = `${markdown.trim()}\n\n${appendix.join('\n')}`.replace(/\n{3,}/g, '\n\n').trim();
+    return {
+      markdown: next,
+      insertedCount: cleanCandidates.length,
+    };
   }
 
   let insertAt = lines.length;
@@ -262,12 +403,35 @@ function insertBulletsIntoSection(markdown: string, section: string, bullets: st
   }
 
   const existingSectionText = lines.slice(headingIndex + 1, insertAt).join('\n');
-  const existingNorm = normalizeForCompare(existingSectionText);
-  const uniqueBullets = cleanBullets.filter((line) => !existingNorm.includes(normalizeForCompare(line)));
-  if (uniqueBullets.length === 0) return markdown;
+  let existingNorm = normalizeForCompare(existingSectionText);
+  const stagedLines: string[] = [];
+  let insertedCount = 0;
 
-  const next = [...lines.slice(0, insertAt), ...uniqueBullets, ...lines.slice(insertAt)];
-  return next.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  for (const candidate of cleanCandidates) {
+    const normalized = normalizeForCompare(candidate.text);
+    if (!normalized || existingNorm.includes(normalized)) continue;
+    if (candidate.format === 'table') {
+      if (stagedLines.length > 0 && stagedLines[stagedLines.length - 1] !== '') {
+        stagedLines.push('');
+      }
+      stagedLines.push(candidate.text);
+      stagedLines.push('');
+    } else {
+      stagedLines.push(candidate.text.startsWith('- ') ? candidate.text : `- ${candidate.text}`);
+    }
+    existingNorm += normalized;
+    insertedCount += 1;
+  }
+
+  if (insertedCount === 0) {
+    return { markdown, insertedCount: 0 };
+  }
+
+  const next = [...lines.slice(0, insertAt), ...stagedLines, ...lines.slice(insertAt)]
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return { markdown: next, insertedCount };
 }
 
 function summarizeCandidates(candidates: QaCandidate[]): Record<QaKnowledgeCategory, number> {
@@ -333,21 +497,26 @@ export function mergeAnswerIntoKnowledgeDoc(
     };
   }
 
-  const grouped = new Map<string, string[]>();
+  const grouped = new Map<string, QaCandidate[]>();
   for (const candidate of effective) {
     const section = pickSection(baseMarkdown, candidate);
     const rows = grouped.get(section) ?? [];
-    rows.push(candidate.text);
+    rows.push(candidate);
     grouped.set(section, rows);
   }
 
   let merged = baseMarkdown;
   const changedSections: string[] = [];
+  let insertedCount = 0;
   grouped.forEach((rows, section) => {
-    const next = insertBulletsIntoSection(merged, section, rows.slice(0, 2));
-    if (next !== merged) {
+    const tableRows = rows.filter((row) => row.format === 'table').slice(0, 2);
+    const bulletRows = rows.filter((row) => row.format !== 'table').slice(0, 4);
+    const selectedRows = [...tableRows, ...bulletRows];
+    const applyResult = insertCandidatesIntoSection(merged, section, selectedRows);
+    if (applyResult.markdown !== merged) {
       changedSections.push(section);
-      merged = next;
+      merged = applyResult.markdown;
+      insertedCount += applyResult.insertedCount;
     }
   });
 
@@ -379,7 +548,7 @@ export function mergeAnswerIntoKnowledgeDoc(
     suggestedContent: normalizedMerged,
     changeType,
     changedSections,
-    summary: `已按最小增量方式补充 ${effective.length} 条信息。`,
+    summary: `已按增量方式补充 ${Math.max(insertedCount, 1)} 条信息。`,
     candidateStats,
   };
 }

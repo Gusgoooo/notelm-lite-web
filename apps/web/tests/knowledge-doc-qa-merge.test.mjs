@@ -84,4 +84,49 @@ describe('knowledge doc update flow', () => {
     expect(h1Count).toBeLessThanOrEqual(1);
     expect(next).toContain('## 核心要点');
   });
+
+  it('问答包含 Markdown 表格时，应保留表格结构并写入文档', () => {
+    const answer = `关键指标如下：
+| 指标 | 当前值 | 环比 |
+| --- | --- | --- |
+| 转化率 | 12.4% | +2.1% |
+| 留存率 | 43% | +3% |`;
+    const result = mergeAnswerIntoKnowledgeDoc(
+      answer,
+      '# 项目复盘\n\n## 关键事实\n- 上周已完成首轮测试',
+      true
+    );
+    expect(result.updated).toBe(true);
+    const next = result.suggestedContent ?? '';
+    expect(next).toContain('| 指标 | 当前值 | 环比 |');
+    expect(next).toContain('| 转化率 | 12.4% | +2.1% |');
+  });
+
+  it('增量更新不应过度保守，单轮可写入多条新增事实', () => {
+    const answer =
+      '新增事实1：A/B 测试样本量提升到 1200。新增事实2：注册转化率提升 9%。新增事实3：首日留存提升 5%。新增事实4：客服响应时长下降 18%。';
+    const result = mergeAnswerIntoKnowledgeDoc(
+      answer,
+      '# 运营复盘\n\n## 关键事实\n- 已完成实验准备',
+      true
+    );
+    expect(result.updated).toBe(true);
+    const next = result.suggestedContent ?? '';
+    const bulletCount = (next.match(/^- /gm) ?? []).length;
+    expect(bulletCount).toBeGreaterThanOrEqual(3);
+  });
+
+  it('新增 Notion 对比话题时，应写入对比章节而非丢失', () => {
+    const answer =
+      '与 Notion 对比：NotebookLM 在来源追溯和引用链路上更强，但在通用项目管理协同上不如 Notion 灵活。';
+    const result = mergeAnswerIntoKnowledgeDoc(
+      answer,
+      '# NotebookLM 调研\n\n## 核心结论\n- 已完成基础能力梳理',
+      true
+    );
+    expect(result.updated).toBe(true);
+    const next = result.suggestedContent ?? '';
+    expect(next).toContain('## 与 Notion 对比');
+    expect(next).toContain('Notion');
+  });
 });

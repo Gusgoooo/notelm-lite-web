@@ -120,6 +120,168 @@ function getKnowledgeDocLengthBudget(
   };
 }
 
+function normalizeForSelectionCompare(raw: string): string {
+  return raw
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\[(\d{1,3})]/g, ' ')
+    .replace(/[#>*`~_|-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/gi, '');
+}
+
+function isMarkdownTableSeparatorLine(line: string): boolean {
+  return /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line.trim());
+}
+
+function isMarkdownTableLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || !trimmed.includes('|')) return false;
+  if (isMarkdownTableSeparatorLine(trimmed)) return true;
+  return /^\|?.+\|.+\|?$/.test(trimmed);
+}
+
+function extractSelectionAnchors(highlighted: string): string[] {
+  const normalized = normalizeKnowledgeDocMarkdown(highlighted);
+  return normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length >= 10)
+    .filter((line) => !line.startsWith('#'))
+    .filter((line) => !isMarkdownTableLine(line))
+    .map((line) => line.replace(/^[-*+]\s+/, ''))
+    .slice(0, 5);
+}
+
+function contentContainsSelectionAnchors(content: string, highlighted: string): boolean {
+  const contentNorm = normalizeForSelectionCompare(content);
+  const anchors = extractSelectionAnchors(highlighted);
+  if (anchors.length === 0) return false;
+  return anchors.some((anchor) => {
+    const anchorNorm = normalizeForSelectionCompare(anchor);
+    return anchorNorm.length >= 8 && contentNorm.includes(anchorNorm);
+  });
+}
+
+function findSelectionTargetSection(markdown: string): string {
+  const headings = markdown
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^##\s+/.test(line))
+    .map((line) => line.replace(/^##\s+/, '').trim());
+  if (headings.length === 0) return '核心要点';
+  const preferred = headings.find((heading) => /(证据|事实|数据|结论|要点|补充|摘要|引用|摘录)/.test(heading));
+  return preferred ?? headings[0];
+}
+
+function splitSelectionMaterial(markdown: string): { tableBlocks: string[]; quoteLines: string[] } {
+  const lines = markdown.split('\n').map((line) => line.trimEnd());
+  const tableBlocks: string[] = [];
+  const quoteLines: string[] = [];
+
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index]?.trim() ?? '';
+    const nextLine = lines[index + 1]?.trim() ?? '';
+    if (isMarkdownTableLine(line) && isMarkdownTableSeparatorLine(nextLine)) {
+      const tableLines: string[] = [line, nextLine];
+      let cursor = index + 2;
+      while (cursor < lines.length && isMarkdownTableLine(lines[cursor] ?? '')) {
+        tableLines.push((lines[cursor] ?? '').trim());
+        cursor += 1;
+      }
+      tableBlocks.push(tableLines.join('\n').trim());
+      index = cursor;
+      continue;
+    }
+    if (line && !line.startsWith('#') && !isMarkdownTableLine(line) && !isMarkdownTableSeparatorLine(line)) {
+      const clean = line.replace(/^[-*+]\s+/, '').trim();
+      if (clean) {
+        quoteLines.push(clean);
+      }
+    }
+    index += 1;
+  }
+
+  return {
+    tableBlocks: tableBlocks.slice(0, 2),
+    quoteLines: quoteLines.slice(0, 6),
+  };
+}
+
+function mergeSelectionMaterialIntoDoc(currentContent: string, highlightedMaterials: string): string {
+  const base = normalizeKnowledgeDocMarkdown(currentContent);
+  const fallbackBase = base || '# 知识文档\n\n## 核心要点\n- 待补充';
+  const normalizedHighlighted = normalizeKnowledgeDocMarkdown(highlightedMaterials);
+  if (!normalizedHighlighted) return fallbackBase;
+
+  const { tableBlocks, quoteLines } = splitSelectionMaterial(normalizedHighlighted);
+  if (tableBlocks.length === 0 && quoteLines.length === 0) return fallbackBase;
+
+  const section = findSelectionTargetSection(fallbackBase);
+  const lines = fallbackBase.split('\n');
+  const headingIndex = lines.findIndex((line) => line.trim().toLowerCase() === `## ${section}`.toLowerCase());
+  const sectionMissing = headingIndex < 0;
+
+  let scopedLines = lines;
+  let scopedHeadingIndex = headingIndex;
+  if (sectionMissing) {
+    scopedLines = [...lines, '', `## ${section}`];
+    scopedHeadingIndex = scopedLines.length - 1;
+  }
+
+  let insertAt = scopedLines.length;
+  for (let i = scopedHeadingIndex + 1; i < scopedLines.length; i += 1) {
+    if (/^##\s+/.test((scopedLines[i] ?? '').trim())) {
+      insertAt = i;
+      break;
+    }
+  }
+
+  const existingSectionText = scopedLines.slice(scopedHeadingIndex + 1, insertAt).join('\n');
+  let existingNorm = normalizeForSelectionCompare(existingSectionText);
+  const toInsert: string[] = [];
+
+  for (const table of tableBlocks) {
+    const tableNorm = normalizeForSelectionCompare(table);
+    if (!tableNorm || existingNorm.includes(tableNorm)) continue;
+    if (toInsert.length > 0 && toInsert[toInsert.length - 1] !== '') {
+      toInsert.push('');
+    }
+    toInsert.push(table);
+    toInsert.push('');
+    existingNorm += tableNorm;
+  }
+
+  const freshQuoteLines: string[] = [];
+  for (const line of quoteLines) {
+    const lineNorm = normalizeForSelectionCompare(line);
+    if (!lineNorm || existingNorm.includes(lineNorm)) continue;
+    freshQuoteLines.push(line);
+    existingNorm += lineNorm;
+  }
+  if (freshQuoteLines.length > 0) {
+    if (toInsert.length > 0 && toInsert[toInsert.length - 1] !== '') {
+      toInsert.push('');
+    }
+    toInsert.push('- 划选原文摘录');
+    for (const line of freshQuoteLines) {
+      toInsert.push(`  - ${line}`);
+    }
+  }
+
+  if (toInsert.length === 0) {
+    return fallbackBase;
+  }
+
+  const merged = [...scopedLines.slice(0, insertAt), ...toInsert, ...scopedLines.slice(insertAt)]
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return normalizeKnowledgeDocMarkdown(merged);
+}
+
 async function compressKnowledgeDocToBudget(
   markdown: string,
   structure: string,
@@ -219,6 +381,7 @@ export async function POST(
       typeof body?.lastAssistantMessage === 'string' ? body.lastAssistantMessage : '';
     const highlightedMaterials =
       typeof body?.highlightedMaterials === 'string' ? body.highlightedMaterials : '';
+    const highlightedMode = body?.highlightedMode === 'selection' ? 'selection' : 'general';
     const userEditedHint =
       typeof body?.userEditedHint === 'string' ? body.userEditedHint : '';
     const lengthMode = resolveKnowledgeDocLengthMode(lastUserMessage);
@@ -243,6 +406,7 @@ export async function POST(
       activeScenario.structure,
       lengthMode
     );
+    const selectionUpdate = highlightedMode === 'selection' && highlightedMaterials.trim().length > 0;
 
     const systemPrompt = `你是一个知识文档整理助手。根据用户与 AI 的对话内容，更新「当前知识文档」。
 要求：
@@ -258,9 +422,14 @@ export async function POST(
 10. 最高优先级规则：若对话或突出资料中出现“当前知识文档尚未覆盖”的新概念/新证据（术语、关键事实、指标、结论、来源依据），必须优先插入到最匹配的章节；禁止遗漏。
 11. 字数策略必须与用户意图一致：明确要求精简时再压缩；默认做平衡优化；明确要求补充/扩写时允许明显增量。
 12. 如果新信息与旧信息重复或冲突，优先合并或替换旧内容；如果某段已经过时或弱相关，应删除而不是保留。
-13. 每个二级模块优先控制在 2-4 条要点或 1-2 个短段落内，句子尽量短。${
+13. 每个二级模块优先控制在 2-6 条要点或 1-3 个短段落内，句子尽量短。
+14. 增量更新时默认保留现有内容，仅修改相关章节，不要大幅删减文档长度。${
+  selectionUpdate
+    ? '\n15. 本轮是“划词更新”，突出资料属于高权重原文。必须优先保留原文表达，少改写、少压缩，并把可用的 Markdown 表格原样纳入文档。'
+    : ''
+}${
   userEditedHint
-    ? `\n14. 以下内容为用户明确标注的手动编辑，请务必保留不改动：\n${userEditedHint}`
+    ? `\n16. 以下内容为用户明确标注的手动编辑，请务必保留不改动：\n${userEditedHint}`
     : ''
 }
 
@@ -270,6 +439,7 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
       `【当前知识文档（Markdown）】\n${currentContent || '(空)'}\n\n` +
       `【当前场景】\n${activeScenario.label}\n\n` +
       `【当前项目说明】\n${activeScenario.structure}\n\n` +
+      `【更新来源类型】\n${selectionUpdate ? '划词更新（高权重原文）' : '常规对话更新'}\n\n` +
       `【当前长度策略】\n${
         lengthMode === 'condense'
           ? `用户明确要求精简：当前版本约 ${lengthBudget.baseline} 个字符单元，本次建议控制在 ${lengthBudget.min}-${lengthBudget.max} 之间，超过 ${lengthBudget.hardMax} 将触发压缩。`
@@ -287,7 +457,8 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
 3. 优先改写、替换、合并已有内容。
 4. 只有结构中缺少必要信息时，才新增内容；若用户要求补充/扩写，应优先补齐依据、细节和待办。
 5. 删除重复、过时、冲突或弱相关内容。
-6. 在保证准确前提下，默认让文档更完整；仅当用户明确要求精简时才缩短。`;
+6. 在保证准确前提下，默认让文档更完整；仅当用户明确要求精简时才缩短。
+7. 若本轮为划词更新，优先保留突出资料中的原文和表格，避免改写成过度抽象的短句。`;
 
     const { content: suggestedContent } = await chat([
       { role: 'system', content: systemPrompt },
@@ -307,6 +478,16 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
       const compressThreshold = lengthMode === 'condense' ? lengthBudget.max : lengthBudget.hardMax;
       if (countKnowledgeDocUnits(trimmed) > compressThreshold) {
         trimmed = await compressKnowledgeDocToBudget(trimmed, activeScenario.structure, compressThreshold);
+      }
+    }
+    if (selectionUpdate) {
+      const baselineUnits = countKnowledgeDocUnits(currentContent);
+      const nextUnits = countKnowledgeDocUnits(trimmed || currentContent);
+      const shrunkTooMuch = baselineUnits > 0 && nextUnits < Math.round(baselineUnits * 0.88);
+      const containsAnchors = contentContainsSelectionAnchors(trimmed || '', highlightedMaterials);
+      if (shrunkTooMuch || !containsAnchors) {
+        const mergeBase = shrunkTooMuch ? currentContent : trimmed || currentContent;
+        trimmed = mergeSelectionMaterialIntoDoc(mergeBase, highlightedMaterials);
       }
     }
     return NextResponse.json({

@@ -522,10 +522,12 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       lastUserMessage,
       lastAssistantMessage,
       highlightedMaterials = '',
+      highlightedMode = 'general',
     }: {
       lastUserMessage: string;
       lastAssistantMessage: string;
       highlightedMaterials?: string;
+      highlightedMode?: 'selection' | 'general';
     }) => {
       if (!notebookId) throw new Error('notebookId is required');
       window.dispatchEvent(new CustomEvent('knowledge-doc-expand'));
@@ -554,6 +556,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               lastUserMessage,
               lastAssistantMessage,
               highlightedMaterials,
+              highlightedMode,
             }),
           }
         );
@@ -1215,6 +1218,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                   lastUserMessage: '',
                   lastAssistantMessage: '',
                   highlightedMaterials: content,
+                  highlightedMode: 'selection',
                 });
                 setSelectionToast(null);
               } catch (error) {
