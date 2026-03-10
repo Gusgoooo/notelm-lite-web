@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ShinyText from '@/components/ShinyText';
 import { isImeCommitRecentlyEnded, shouldIgnoreEnterForIme } from '@/lib/ime';
-import { KnowledgeDocCreateButton } from './KnowledgeDocCreateButton';
 
 type Citation = {
   sourceId: string;
@@ -30,6 +29,10 @@ type Message = {
   citations?: Citation[];
   createdAt?: string;
   conversationId?: string;
+  assistantMessageId?: string;
+  intentType?: 'qa' | 'doc_edit' | 'doc_replace';
+  previewPayload?: Record<string, unknown> | null;
+  showUpdateButton?: boolean;
   action?:
     | {
         type: 'create_doc' | 'update_doc';
@@ -80,27 +83,6 @@ type NotebookEntryMode = 'bootstrap' | null;
 
 const HISTORY_PAGE_SIZE = 20;
 const REPORT_ACTION_MARKER = '[[ACTION:REPORT]]';
-
-function buildHighlightedMaterialsFromCitations(citations: Citation[] | undefined): string {
-  const normalized = sortCitations(citations);
-  if (normalized.length === 0) return '';
-  return normalized
-    .map(
-      (citation) =>
-        `- ${citation.sourceTitle}${
-          citation.pageStart != null
-            ? `（p.${citation.pageStart}${
-                citation.pageEnd != null && citation.pageEnd !== citation.pageStart ? `-${citation.pageEnd}` : ''
-              }）`
-            : ''
-        }：${citation.snippet}`
-    )
-    .join('\n');
-}
-
-function shouldSyncKnowledgeDocFromMessage(message: string): boolean {
-  return /更新知识文档|更新知识库文档|同步到知识文档|写入知识文档|整理到知识文档|修改知识文档/i.test(message);
-}
 
 function toTimestamp(value: string | undefined): number | null {
   if (!value) return null;
@@ -251,6 +233,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const [selectionToast, setSelectionToast] = useState<SelectionToastState | null>(null);
   const [savingSelection, setSavingSelection] = useState(false);
   const [selectionCopied, setSelectionCopied] = useState(false);
+  const [applyingUpdateMessageId, setApplyingUpdateMessageId] = useState<string | null>(null);
   const [knowledgeDocState, setKnowledgeDocState] = useState<{ exists: boolean; hasContent: boolean }>({
     exists: false,
     hasContent: false,
@@ -569,21 +552,92 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
     [notebookId]
   );
 
-  const requestKnowledgeDocCreate = useCallback(() => {
-    window.dispatchEvent(new CustomEvent('knowledge-doc-expand'));
-    window.dispatchEvent(new CustomEvent('knowledge-doc-create-request'));
-  }, []);
+  const applyKnowledgeDocUpdate = useCallback(
+    async (input: {
+      activeDocId: string;
+      lastIntentType: 'qa' | 'doc_edit' | 'doc_replace';
+      previewPayload: Record<string, unknown> | null;
+      messageId: string;
+      lastUserMessage: string;
+      lastAssistantMessage: string;
+      citations?: Citation[];
+    }) => {
+      if (!notebookId) throw new Error('notebookId is required');
+      if (applyingUpdateMessageId) return;
+      setApplyingUpdateMessageId(input.messageId);
+      window.dispatchEvent(new CustomEvent('knowledge-doc-expand'));
+      window.dispatchEvent(
+        new CustomEvent('knowledge-doc-pending-state', {
+          detail: {
+            active: true,
+            label: '正在应用知识文档更新…',
+          },
+        })
+      );
+      try {
+        const applyRes = await fetch(
+          `/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc/apply-update`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              activeDocId: input.activeDocId,
+              lastIntentType: input.lastIntentType,
+              previewPayload: input.previewPayload,
+              messageId: input.messageId,
+              lastUserMessage: input.lastUserMessage,
+              lastAssistantMessage: input.lastAssistantMessage,
+              citations: input.citations ?? [],
+            }),
+          }
+        );
+        const applyData = await applyRes.json().catch(() => ({}));
+        if (!applyRes.ok) {
+          throw new Error(applyData?.error ?? '更新知识文档失败');
+        }
 
-  const requestKnowledgeDocRefreshFromSources = useCallback(() => {
-    window.dispatchEvent(new CustomEvent('knowledge-doc-expand'));
-    window.dispatchEvent(
-      new CustomEvent('knowledge-doc-generate-request', {
-        detail: {
-          mode: knowledgeDocState.exists ? 'update' : 'create',
-        },
-      })
-    );
-  }, [knowledgeDocState.exists]);
+        if (!applyData?.updated || typeof applyData?.suggestedContent !== 'string') {
+          if (typeof applyData?.summary === 'string' && applyData.summary.trim()) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `doc-update-hint-${Date.now()}`,
+                role: 'assistant',
+                content: applyData.summary.trim(),
+                showUpdateButton: true,
+                intentType: 'qa',
+                previewPayload: {
+                  mode: 'qa',
+                  question: '',
+                  answer: applyData.summary.trim(),
+                  sourceSufficient: false,
+                },
+              },
+            ]);
+            setTailVersion((v) => v + 1);
+          }
+          return;
+        }
+
+        window.dispatchEvent(
+          new CustomEvent('knowledge-doc-update-from-chat', {
+            detail: {
+              suggestedContent: applyData.suggestedContent,
+              autoApply: true,
+            },
+          })
+        );
+      } finally {
+        setApplyingUpdateMessageId(null);
+        window.dispatchEvent(
+          new CustomEvent('knowledge-doc-pending-state', {
+            detail: { active: false },
+          })
+        );
+      }
+    },
+    [applyingUpdateMessageId, notebookId]
+  );
 
   useEffect(() => {
     const clearTimer = () => {
@@ -738,13 +792,34 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         const data = await res.json();
         setConversationId(data.conversationId);
         const normalizedCitations = Array.isArray(data.citations) ? data.citations : [];
+        const intentType =
+          data?.intentRouting?.intent_type === 'doc_edit' || data?.intentRouting?.intent_type === 'doc_replace'
+            ? (data.intentRouting.intent_type as 'doc_edit' | 'doc_replace')
+            : 'qa';
+        const previewPayload =
+          data?.previewPayload && typeof data.previewPayload === 'object'
+            ? (data.previewPayload as Record<string, unknown>)
+            : ({
+                mode: 'qa',
+                question: text,
+                answer: typeof data?.answer === 'string' ? data.answer : '',
+                sourceSufficient: normalizedCitations.length > 0,
+              } satisfies Record<string, unknown>);
+        const assistantMessageId =
+          typeof data?.assistantMessageId === 'string' && data.assistantMessageId.trim()
+            ? data.assistantMessageId
+            : `a-${Date.now()}`;
         setMessages((prev) => [
           ...prev,
           {
-            id: `a-${Date.now()}`,
+            id: assistantMessageId,
             role: 'assistant',
             content: data.answer,
             citations: normalizedCitations,
+            assistantMessageId,
+            intentType,
+            previewPayload,
+            showUpdateButton: data?.showUpdateButton !== false,
           },
         ]);
         window.dispatchEvent(
@@ -757,21 +832,12 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
             },
           })
         );
-        if (shouldSyncKnowledgeDocFromMessage(text)) {
-          void updateKnowledgeDocFromChat({
-            lastUserMessage: text,
-            lastAssistantMessage: data.answer,
-            highlightedMaterials: buildHighlightedMaterialsFromCitations(normalizedCitations),
-          }).catch((error) => {
-            console.error('Failed to sync knowledge document from chat command', error);
-          });
-        }
         setTailVersion((v) => v + 1);
       } finally {
         setLoading(false);
       }
     },
-    [conversationId, input, loading, notebookId, updateKnowledgeDocFromChat]
+    [conversationId, input, loading, notebookId]
   );
 
   useEffect(() => {
@@ -916,17 +982,10 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                 <p className="text-center text-xs text-red-600 dark:text-red-400">{historyError}</p>
               )}
 
-              {messages.map((m) => {
+              {messages.map((m, idx) => {
                 const parsed = parseMessageActions(m.content);
                 const refineDone = isRefineCompletedMessage(parsed.displayContent);
-                const messageAction = m.action
-                  ? m.action
-                  : m.role === 'assistant' && !/^error:/i.test(parsed.displayContent)
-                    ? {
-                        type: knowledgeDocState.exists ? 'update_doc' : 'create_doc',
-                        source: 'chat' as const,
-                      }
-                    : null;
+                const showUpdateButton = m.role === 'assistant' && (m.showUpdateButton ?? true);
                 return (
                   <div
                     key={m.id}
@@ -942,34 +1001,61 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                     </div>
                     {m.role === 'assistant' && (
                       <>
-                        {!refineDone && messageAction?.type === 'update_doc' ? (
+                        {showUpdateButton ? (
                           <div className="mt-3">
                             <div className="flex flex-wrap items-center gap-2">
                               <button
                                 type="button"
                                 className={SAVE_ACTION_PILL_CLASS}
                                 onClick={async () => {
-                                  if (messageAction.source === 'sources') {
-                                    requestKnowledgeDocRefreshFromSources();
-                                    return;
+                                  try {
+                                    if (!notebookId) return;
+                                    if (m.action?.source === 'sources') {
+                                      window.dispatchEvent(new CustomEvent('knowledge-doc-expand'));
+                                      window.dispatchEvent(
+                                        new CustomEvent('knowledge-doc-generate-request', {
+                                          detail: {
+                                            mode: knowledgeDocState.exists ? 'update' : 'create',
+                                          },
+                                        })
+                                      );
+                                      return;
+                                    }
+                                    const prevUser =
+                                      idx > 0
+                                        ? messages
+                                            .slice(0, idx)
+                                            .reverse()
+                                            .find((msg) => msg.role === 'user')
+                                        : null;
+                                    const docRes = await fetch(
+                                      `/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`,
+                                      { cache: 'no-store' }
+                                    );
+                                    const docData = await docRes.json().catch(() => ({}));
+                                    await applyKnowledgeDocUpdate({
+                                      activeDocId: typeof docData?.id === 'string' ? docData.id : '',
+                                      lastIntentType: m.intentType ?? 'qa',
+                                      previewPayload:
+                                        (m.previewPayload as Record<string, unknown> | null) ??
+                                        ({
+                                          mode: 'qa',
+                                          question: prevUser?.content ?? '',
+                                          answer: parsed.displayContent,
+                                          sourceSufficient: Boolean(m.citations?.length),
+                                        } as Record<string, unknown>),
+                                      messageId: m.assistantMessageId ?? m.id,
+                                      lastUserMessage: prevUser?.content ?? '',
+                                      lastAssistantMessage: parsed.displayContent,
+                                      citations: m.citations,
+                                    });
+                                  } catch (error) {
+                                    alert(error instanceof Error ? error.message : '更新知识文档失败');
                                   }
-                                  if (!notebookId) return;
-                                  const idx = messages.findIndex((msg) => msg.id === m.id);
-                                  const prevUser =
-                                    idx > 0
-                                      ? messages
-                                          .slice(0, idx)
-                                          .reverse()
-                                          .find((msg) => msg.role === 'user')
-                                      : null;
-                                  await updateKnowledgeDocFromChat({
-                                    lastUserMessage: prevUser?.content ?? '',
-                                    lastAssistantMessage: parsed.displayContent,
-                                    highlightedMaterials: buildHighlightedMaterialsFromCitations(m.citations),
-                                  });
                                 }}
+                                disabled={applyingUpdateMessageId === (m.assistantMessageId ?? m.id)}
                               >
-                                更新知识文档
+                                {applyingUpdateMessageId === (m.assistantMessageId ?? m.id) ? '更新中…' : '更新知识文档'}
                               </button>
                             </div>
                           </div>
@@ -1027,15 +1113,6 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                             </ul>
                           </div>
                         )}
-                        {!refineDone && messageAction?.type === 'create_doc' ? (
-                          <div className="mt-3">
-                            <KnowledgeDocCreateButton
-                              onClick={requestKnowledgeDocCreate}
-                              compact
-                              className="h-7 px-3"
-                            />
-                          </div>
-                        ) : null}
                       </>
                     )}
                   </div>

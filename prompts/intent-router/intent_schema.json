@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Intent Routing Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "intent_type",
+    "confidence",
+    "target_scope",
+    "answer_mode",
+    "citation_required",
+    "allow_no_source_answer",
+    "show_update_button",
+    "requires_user_confirm_to_apply",
+    "on_confirm_update_mode",
+    "qa_update_policy",
+    "reason_codes",
+    "notes"
+  ],
+  "properties": {
+    "intent_type": {
+      "type": "string",
+      "enum": [
+        "qa",
+        "doc_edit",
+        "doc_replace"
+      ]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ]
+    },
+    "target_scope": {
+      "type": "string",
+      "enum": [
+        "none",
+        "section",
+        "full_document"
+      ]
+    },
+    "answer_mode": {
+      "type": "string",
+      "enum": [
+        "source_grounded_only",
+        "preview_edit",
+        "preview_replace"
+      ]
+    },
+    "citation_required": {
+      "type": "boolean"
+    },
+    "allow_no_source_answer": {
+      "type": "boolean"
+    },
+    "show_update_button": {
+      "type": "boolean",
+      "const": true
+    },
+    "requires_user_confirm_to_apply": {
+      "type": "boolean",
+      "const": true
+    },
+    "on_confirm_update_mode": {
+      "type": "string",
+      "enum": [
+        "incremental_merge",
+        "apply_edit",
+        "apply_replace"
+      ]
+    },
+    "qa_update_policy": {
+      "type": "string",
+      "enum": [
+        "extract_compare_minimal_merge",
+        "n_a"
+      ]
+    },
+    "reason_codes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "HAS_ACTIVE_DOC",
+          "NO_ACTIVE_DOC",
+          "HAS_OBJECT_REFERENCE",
+          "NO_OBJECT_REFERENCE",
+          "HAS_EDIT_ACTION",
+          "NO_EDIT_ACTION",
+          "HAS_REPLACE_SIGNAL",
+          "NO_REPLACE_SIGNAL",
+          "EDITING_MODE",
+          "DISCUSSION_MODE",
+          "MIXED_MODE",
+          "TOPIC_DISCUSSION_ONLY",
+          "OBJECT_OPERATION",
+          "SHORT_EDIT_FEEDBACK"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "notes": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 260
+    }
+  }
+}

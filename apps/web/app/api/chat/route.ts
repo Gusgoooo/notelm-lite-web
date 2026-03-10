@@ -28,6 +28,7 @@ import {
 } from '@/lib/knowledge-unit';
 import { getLatestResearchState } from '@/lib/research-state';
 import { buildMainChatSystemPrompt } from '@/lib/chat-system-prompt';
+import { routeIntent, type IntentRoutingResult } from '@/lib/intent-router';
 
 const TOP_K = 8;
 const PER_SOURCE_CAP = 4;
@@ -236,6 +237,128 @@ function appendGuidanceTail(input: {
   return stripSectionsByHeading(input.answer.trim(), ['下一步建议', '待确认问题']);
 }
 
+type DocPreviewMode = 'doc_edit' | 'doc_replace';
+
+type ChatPreviewPayload =
+  | {
+      mode: 'qa';
+      question: string;
+      answer: string;
+      sourceSufficient: boolean;
+    }
+  | {
+      mode: DocPreviewMode;
+      suggestedContent: string;
+      summary: string;
+    };
+
+function normalizeMarkdownText(value: string): string {
+  return value.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function buildPreviewSnippet(markdown: string, maxLines = 14): string {
+  const lines = markdown
+    .split('\n')
+    .map((line) => line.trimEnd());
+  const snippet = lines.slice(0, maxLines).join('\n').trim();
+  if (!snippet) return '(预览为空)';
+  return lines.length > maxLines ? `${snippet}\n...` : snippet;
+}
+
+function parseJsonObject(raw: string): unknown {
+  const trimmed = raw.trim();
+  const fenced = trimmed.match(/```json\s*([\s\S]*?)```/i)?.[1];
+  const candidate = fenced ?? trimmed;
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    const start = candidate.indexOf('{');
+    const end = candidate.lastIndexOf('}');
+    if (start < 0 || end <= start) return null;
+    try {
+      return JSON.parse(candidate.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function buildKnowledgeDocPreview(input: {
+  mode: DocPreviewMode;
+  userMessage: string;
+  context: string;
+  scriptContext: string;
+  currentDocContent: string;
+  activeScenario: KnowledgeDocScenario | null;
+}): Promise<{ answer: string; payload: ChatPreviewPayload }> {
+  const modeLabel = input.mode === 'doc_replace' ? '整篇替换预览' : '局部更新预览';
+  const systemPrompt = `你是知识文档预览助手。你的任务是生成预览，不得执行写入。
+必须严格输出 JSON，不要输出额外说明。JSON 结构如下：
+{
+  "summary": "一句话说明",
+  "suggested_markdown": "完整 Markdown 预览稿"
+}
+
+规则：
+1. 输入是用户请求、当前文档、来源证据和项目说明。
+2. ${
+    input.mode === 'doc_replace'
+      ? '本轮按整篇替换方式生成完整新稿，但仅作为预览。'
+      : '本轮按最小局部编辑方式生成完整新稿：尽量挂靠原章节，非必要不改动无关部分。'
+  }
+3. 只能基于来源证据与用户请求，不得编造。
+4. 输出 Markdown 要结构清晰，可直接用于知识文档渲染。`;
+
+  const userPrompt =
+    `【用户请求】\n${input.userMessage}\n\n` +
+    `【当前知识文档】\n${input.currentDocContent || '(空)'}\n\n` +
+    `【当前项目说明】\n${input.activeScenario?.label ?? '(无)'}\n${input.activeScenario?.structure ?? ''}\n\n` +
+    `【来源证据】\n${input.context}\n\n` +
+    `【脚本洞察】\n${input.scriptContext || '(none)'}\n\n` +
+    '请输出 JSON。';
+
+  const { content } = await chat([
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt },
+  ]);
+  const parsed = parseJsonObject(content ?? '');
+  const row = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  const summary = typeof row?.summary === 'string' ? row.summary.trim() : '';
+  const suggestedMarkdown =
+    typeof row?.suggested_markdown === 'string' ? normalizeMarkdownText(row.suggested_markdown) : '';
+
+  if (!suggestedMarkdown) {
+    const fallbackMarkdown = normalizeMarkdownText(
+      (input.currentDocContent || '').replace(/<[^>]*>/g, '\n').replace(/\n{3,}/g, '\n\n')
+    );
+    const fallbackSummary = input.mode === 'doc_replace' ? '已准备整篇替换预览（回退版本）' : '已准备局部更新预览（回退版本）';
+    const fallbackAnswer =
+      `已生成${modeLabel}，以下是可应用草稿：\n\n` +
+      `\`\`\`markdown\n${buildPreviewSnippet(fallbackMarkdown)}\n\`\`\``;
+    return {
+      answer: fallbackAnswer,
+      payload: {
+        mode: input.mode,
+        suggestedContent: fallbackMarkdown,
+        summary: fallbackSummary,
+      },
+    };
+  }
+
+  const answer =
+    `已生成${modeLabel}，请先确认预览后再点击「更新知识文档」应用：\n\n` +
+    `\`\`\`markdown\n${buildPreviewSnippet(suggestedMarkdown)}\n\`\`\``;
+
+  return {
+    answer,
+    payload: {
+      mode: input.mode,
+      suggestedContent: suggestedMarkdown,
+      summary: summary || `已生成${modeLabel}`,
+    },
+  };
+}
+
 export async function POST(request: Request) {
   try {
     if (!envLogged) {
@@ -256,6 +379,7 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+    const trimmedUserMessage = userMessage.trim();
     const access = await getNotebookAccess(notebookId);
     if (!access.notebook) {
       return NextResponse.json({ error: 'Notebook not found' }, { status: 404 });
@@ -358,6 +482,25 @@ export async function POST(request: Request) {
         notebookId,
       });
     }
+    const intentRoutingOutput = await routeIntent({
+      userMessage: trimmedUserMessage,
+      hasActiveDoc: hasMeaningfulKnowledgeDoc(knowledgeDocRow?.content),
+      recentMessages: history.slice(-5),
+    });
+    const intentRoutingResult = intentRoutingOutput.result;
+    console.info(
+      '[intent-router]',
+      JSON.stringify({
+        userMessage: trimmedUserMessage,
+        intent_type: intentRoutingResult.intent_type,
+        answer_mode: intentRoutingResult.answer_mode,
+        on_confirm_update_mode: intentRoutingResult.on_confirm_update_mode,
+        qa_update_policy: intentRoutingResult.qa_update_policy,
+        show_update_button: intentRoutingResult.show_update_button,
+        schema_validation_result: intentRoutingOutput.validation.isValid ? 'valid' : 'fallback',
+        schema_validation_errors: intentRoutingOutput.validation.errors,
+      })
+    );
 
     const persistAndRespond = async (
       answer: string,
@@ -380,7 +523,12 @@ export async function POST(request: Request) {
         fullContent?: string;
         score?: number;
         distance?: number;
-      }> = []
+      }> = [],
+      responseMeta: {
+        intentRouting: IntentRoutingResult;
+        previewPayload: ChatPreviewPayload | null;
+        showUpdateButton: boolean;
+      }
     ) => {
       const userMsgId = `msg_${randomUUID()}`;
       const assistantMsgId = `msg_${randomUUID()}`;
@@ -403,6 +551,10 @@ export async function POST(request: Request) {
         answer,
         citations: citationsForClient,
         conversationId,
+        assistantMessageId: assistantMsgId,
+        intentRouting: responseMeta.intentRouting,
+        previewPayload: responseMeta.previewPayload,
+        showUpdateButton: responseMeta.showUpdateButton,
       });
     };
 
@@ -427,7 +579,6 @@ export async function POST(request: Request) {
       const nameInFrontMatter = skillContext.match(/^name:\s*([a-zA-Z0-9_-]+)/m)?.[1] ?? '';
       detectedSkillName = nameInFrontMatter || (skillContext.match(/^#\s+(.+)$/m)?.[1] ?? '');
     }
-    const trimmedUserMessage = userMessage.trim();
     const isViralSkill =
       readySkillSources.length > 0 &&
       /viral-video-copywriting|爆款短视频文案创作/i.test(`${detectedSkillName}\n${skillContext}`);
@@ -699,43 +850,77 @@ export async function POST(request: Request) {
     const useSkillPlanningTemplate =
       readySkillSources.length > 0 &&
       !useDirectViralScript &&
-      (hasSkillContext || shouldUseSkillPlanningTemplate(userMessage.trim()));
+      (hasSkillContext || shouldUseSkillPlanningTemplate(trimmedUserMessage));
     const hasScriptCapability = readyPythonSources.length > 0 || needBuiltinPaperStats;
-    const skillExecutionRule = hasScriptCapability
-      ? '可将“脚本分析”作为可选能力提及；如需提及脚本，只描述预期产出，不要输出命令行或伪执行步骤。'
-      : '当前 notebook 不具备可执行脚本能力，不要输出脚本运行建议、终端命令或伪执行步骤。';
-    const skillTemplateRule = useSkillPlanningTemplate
-      ? `当用户提出创作/规划类问题时，回答要务实、可执行，并保持自然对话感。除非用户明确要求结构化模板，否则不要强行套固定章节。优先使用自然段，只有在提升清晰度时再使用列表。${skillExecutionRule}`
-      : '';
-    const viralSkillRule = useDirectViralScript
-      ? '短视频脚本能力已启用。请一次性输出可直接拍摄的完整中文脚本，不要让用户做多选。输出结构固定为：1) 标题 2) 时长与受众定位 3) 完整脚本（按秒段：开场/发展/高潮/结尾，每段含画面、字幕/旁白、音效）4) 视觉风格建议（配色/镜头/字幕）5) 音乐与音效建议 6) 互动设计（评论区引导）7) 可直接拍摄的执行清单。约束：内容需原创、包含强对比与明确 CTA，且不输出命令行或伪执行步骤。'
-      : '';
-    const paperInsightRule = needBuiltinPaperStats
-      ? '回答来源/论文对比问题时，按 4 个部分组织：1) 高频研究问题 2) 被反复验证的变量 3) 研究空白 4) 方法争议。要求精炼且有证据依据。'
-      : '';
-    const onboardingGuideRule = shouldGuideForKnowledgeDoc
-      ? `当前 notebook 主题：${onboardingTopic}。用户还在为后续知识文档补齐信息。回答时要识别缺失上下文，并优先强调可复用、可沉淀到文档中的关键信息。`
-      : '';
-    const activeScenarioRule = activeKnowledgeDocScenario
-      ? `当前项目指令：${activeKnowledgeDocScenario.label}\n项目说明：\n${activeKnowledgeDocScenario.structure}\n请将其视为该 notebook 的长期项目级约束：既影响知识文档组织方式，也影响问答表达风格。必要时主动引导用户补充更适合写入该项目的事实、目标、指标、约束、证据或偏好。若项目说明要求简洁、聚焦、分步或决策导向，需持续保持该风格。`
-      : '';
-    const systemPrompt = buildMainChatSystemPrompt([
-      skillTemplateRule,
-      viralSkillRule,
-      paperInsightRule,
-      onboardingGuideRule,
-      activeScenarioRule,
-    ]);
-    const userPrompt = `Notebook topic: ${onboardingTopic || access.notebook.title}\n\nSources:\n${context}\n\nScript Insights:\n${scriptContext || '(none)'}\n\nUser question: ${userMessage.trim()}`;
-    const chatMessages = [
-      { role: 'system' as const, content: systemPrompt },
-      ...history.slice(-10).map((m) => ({ role: m.role, content: m.content })),
-      { role: 'user' as const, content: userPrompt },
-    ];
-    const { content: rawAnswer } = await chat(chatMessages);
-    const answerBase = useSkillPlanningTemplate
-      ? sanitizeSkillAnswer(rawAnswer, hasScriptCapability)
-      : rawAnswer;
+
+    let answerBase = '';
+    let previewPayload: ChatPreviewPayload | null = null;
+
+    if (intentRoutingResult.intent_type === 'qa') {
+      if (selected.length === 0) {
+        answerBase = '当前来源不足以支持回答。请先补充来源后再提问。';
+        previewPayload = {
+          mode: 'qa',
+          question: trimmedUserMessage,
+          answer: answerBase,
+          sourceSufficient: false,
+        };
+      } else {
+        const skillExecutionRule = hasScriptCapability
+          ? '可将“脚本分析”作为可选能力提及；如需提及脚本，只描述预期产出，不要输出命令行或伪执行步骤。'
+          : '当前 notebook 不具备可执行脚本能力，不要输出脚本运行建议、终端命令或伪执行步骤。';
+        const skillTemplateRule = useSkillPlanningTemplate
+          ? `当用户提出创作/规划类问题时，回答要务实、可执行，并保持自然对话感。除非用户明确要求结构化模板，否则不要强行套固定章节。优先使用自然段，只有在提升清晰度时再使用列表。${skillExecutionRule}`
+          : '';
+        const viralSkillRule = useDirectViralScript
+          ? '短视频脚本能力已启用。请一次性输出可直接拍摄的完整中文脚本，不要让用户做多选。输出结构固定为：1) 标题 2) 时长与受众定位 3) 完整脚本（按秒段：开场/发展/高潮/结尾，每段含画面、字幕/旁白、音效）4) 视觉风格建议（配色/镜头/字幕）5) 音乐与音效建议 6) 互动设计（评论区引导）7) 可直接拍摄的执行清单。约束：内容需原创、包含强对比与明确 CTA，且不输出命令行或伪执行步骤。'
+          : '';
+        const paperInsightRule = needBuiltinPaperStats
+          ? '回答来源/论文对比问题时，按 4 个部分组织：1) 高频研究问题 2) 被反复验证的变量 3) 研究空白 4) 方法争议。要求精炼且有证据依据。'
+          : '';
+        const onboardingGuideRule = shouldGuideForKnowledgeDoc
+          ? `当前 notebook 主题：${onboardingTopic}。用户还在为后续知识文档补齐信息。回答时要识别缺失上下文，并优先强调可复用、可沉淀到文档中的关键信息。`
+          : '';
+        const activeScenarioRule = activeKnowledgeDocScenario
+          ? `当前项目指令：${activeKnowledgeDocScenario.label}\n项目说明：\n${activeKnowledgeDocScenario.structure}\n请将其视为该 notebook 的长期项目级约束：既影响知识文档组织方式，也影响问答表达风格。必要时主动引导用户补充更适合写入该项目的事实、目标、指标、约束、证据或偏好。若项目说明要求简洁、聚焦、分步或决策导向，需持续保持该风格。`
+          : '';
+        const systemPrompt = buildMainChatSystemPrompt([
+          skillTemplateRule,
+          viralSkillRule,
+          paperInsightRule,
+          onboardingGuideRule,
+          activeScenarioRule,
+        ]);
+        const userPrompt = `Notebook topic: ${onboardingTopic || access.notebook.title}\n\nSources:\n${context}\n\nScript Insights:\n${scriptContext || '(none)'}\n\nUser question: ${trimmedUserMessage}`;
+        const chatMessages = [
+          { role: 'system' as const, content: systemPrompt },
+          ...history.slice(-10).map((m) => ({ role: m.role, content: m.content })),
+          { role: 'user' as const, content: userPrompt },
+        ];
+        const { content: rawAnswer } = await chat(chatMessages);
+        answerBase = useSkillPlanningTemplate
+          ? sanitizeSkillAnswer(rawAnswer, hasScriptCapability)
+          : rawAnswer;
+        previewPayload = {
+          mode: 'qa',
+          question: trimmedUserMessage,
+          answer: answerBase,
+          sourceSufficient: selected.length > 0,
+        };
+      }
+    } else {
+      const preview = await buildKnowledgeDocPreview({
+        mode: intentRoutingResult.intent_type,
+        userMessage: trimmedUserMessage,
+        context,
+        scriptContext,
+        currentDocContent: knowledgeDocRow?.content ?? '',
+        activeScenario: activeKnowledgeDocScenario,
+      });
+      answerBase = preview.answer;
+      previewPayload = preview.payload;
+    }
+
     const citedNumbers = extractCitationNumbers(answerBase, selected.length);
     const rowsForCitations =
       citedNumbers.length > 0
@@ -747,11 +932,11 @@ export async function POST(request: Request) {
     let answer = appendGuidanceTail({
       answer: answerBase,
       topic: onboardingTopic || access.notebook.title,
-      userMessage: userMessage.trim(),
+      userMessage: trimmedUserMessage,
       hasKnowledgeDoc: hasMeaningfulKnowledgeDoc(knowledgeDocRow?.content),
       activeScenario: activeKnowledgeDocScenario,
     });
-    if (needBuiltinPaperStats) {
+    if (needBuiltinPaperStats && intentRoutingResult.intent_type === 'qa') {
       answer += `\n\n${REPORT_ACTION_MARKER}`;
     }
 
@@ -787,7 +972,11 @@ export async function POST(request: Request) {
         distance,
       })
     );
-    return persistAndRespond(answer, citationsForDb, citationsForClient);
+    return persistAndRespond(answer, citationsForDb, citationsForClient, {
+      intentRouting: intentRoutingResult,
+      previewPayload,
+      showUpdateButton: intentRoutingResult.show_update_button === true,
+    });
   } catch (e) {
     console.error(e);
     return NextResponse.json(
