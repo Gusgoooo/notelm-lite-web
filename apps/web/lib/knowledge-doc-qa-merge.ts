@@ -47,6 +47,16 @@ const CONCEPT_PATTERN = /(是指|指的是|定义为|可定义为|称为|即|本
 const FACT_PATTERN = /(显示|表明|发现|数据|证据|结果|实验|研究|统计|提升|降低|增长|下降|%|\d)/;
 const NOISE_PATTERN = /^(好的|明白|可以|总结如下|结论如下|我认为|建议|另外|此外)$/;
 
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
 function stripHtml(raw: string): string {
   return raw
     .replace(/<br\s*\/?>/gi, '\n')
@@ -56,11 +66,80 @@ function stripHtml(raw: string): string {
     .replace(/<h2[^>]*>/gi, '## ')
     .replace(/<h3[^>]*>/gi, '### ')
     .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
     .replace(/\r\n?/g, '\n');
+}
+
+function htmlToMarkdownLike(raw: string): string {
+  if (!raw || !raw.includes('<')) return raw;
+  const toPlain = (htmlChunk: string): string =>
+    decodeHtmlEntities(htmlChunk.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ')).trim();
+
+  let text = raw.replace(/<br\s*\/?>/gi, '\n');
+  const replaceTag = (tag: string, prefix = '') => {
+    const re = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'gi');
+    text = text.replace(re, (_m, inner: string) => {
+      const clean = toPlain(inner);
+      if (!clean) return '\n';
+      return `\n${prefix}${clean}\n`;
+    });
+  };
+
+  replaceTag('h1', '# ');
+  replaceTag('h2', '## ');
+  replaceTag('h3', '### ');
+  replaceTag('li', '- ');
+  replaceTag('p');
+
+  return decodeHtmlEntities(
+    text
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<div\b[^>]*>/gi, '\n')
+      .replace(/<[^>]*>/g, ' ')
+  )
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .split('\n')
+    .map((line) => {
+      const match = line.match(/^\s*(#(?:\s+#)+)\s+(.+)$/);
+      if (!match) return line;
+      const count = match[1].match(/#/g)?.length ?? 1;
+      return `${'#'.repeat(Math.min(6, Math.max(1, count)))} ${match[2].trim()}`;
+    })
+    .join('\n')
+    .trim();
+}
+
+function repairSeparatedHeadingSyntax(markdown: string): string {
+  return markdown
+    .split('\n')
+    .map((line) => {
+      const noisy = line.match(/^(\s*#{1,6})\s+(?:#\s+)+(.+)$/);
+      if (noisy) {
+        return `${noisy[1].trim()} ${noisy[2].trim()}`;
+      }
+      const match = line.match(/^\s*(#(?:\s+#)+)\s+(.+)$/);
+      if (!match) return line;
+      const count = match[1].match(/#/g)?.length ?? 1;
+      return `${'#'.repeat(Math.min(6, Math.max(1, count)))} ${match[2].trim()}`;
+    })
+    .join('\n');
+}
+
+function cleanupNoisyHeadingTail(markdown: string): string {
+  return markdown
+    .split('\n')
+    .map((line) =>
+      line
+        .replace(/^(\s*#{1,6})\s+#\s+(.+)$/g, '$1 $2')
+        .replace(/^(\s*#{1,6})\s+(?:#\s+)+/g, '$1 ')
+        .trimEnd()
+    )
+    .join('\n');
 }
 
 function normalizeForCompare(raw: string): string {
@@ -200,9 +279,25 @@ function summarizeCandidates(candidates: QaCandidate[]): Record<QaKnowledgeCateg
 }
 
 function ensureBaseMarkdown(content: string): string {
-  const normalized = normalizeKnowledgeDocMarkdown(stripHtml(content));
-  if (normalized) return normalized;
-  return '# 知识文档\n\n## 核心要点\n- 待补充';
+  const markdownLike = htmlToMarkdownLike(content);
+  const normalized = normalizeKnowledgeDocMarkdown(repairSeparatedHeadingSyntax(markdownLike));
+  if (!normalized) {
+    return '# 知识文档\n\n## 核心要点\n- 待补充';
+  }
+  const repaired = normalizeKnowledgeDocMarkdown(repairSeparatedHeadingSyntax(normalized));
+  const cleaned = cleanupNoisyHeadingTail(
+    normalizeKnowledgeDocMarkdown(cleanupNoisyHeadingTail(repaired))
+  );
+  if (!/^##\s+/m.test(cleaned)) {
+    const firstLine =
+      cleaned
+        .split('\n')
+        .map((line) => line.trim())
+        .find(Boolean)
+        ?.replace(/^[-*+]\s*/, '') ?? '待补充';
+    return `# 知识文档\n\n## 核心要点\n- ${firstLine}`;
+  }
+  return cleaned;
 }
 
 export function mergeAnswerIntoKnowledgeDoc(
@@ -256,7 +351,9 @@ export function mergeAnswerIntoKnowledgeDoc(
     }
   });
 
-  const normalizedMerged = normalizeKnowledgeDocMarkdown(merged);
+  const normalizedMerged = cleanupNoisyHeadingTail(
+    normalizeKnowledgeDocMarkdown(cleanupNoisyHeadingTail(merged))
+  );
   if (!normalizedMerged || normalizeForCompare(normalizedMerged) === normalizeForCompare(baseMarkdown)) {
     return {
       updated: false,

@@ -6,6 +6,7 @@ import {
   normalizeKnowledgeDocScenarioState,
   type KnowledgeDocScenarioState,
 } from '@/lib/knowledge-doc-scenarios';
+import { ensureKnowledgeDocMarkdown } from '@/lib/knowledge-doc-markdown';
 import {
   KNOWLEDGE_DOC_HISTORY_NOTE_TITLE,
   KNOWLEDGE_DOC_NOTE_TITLE,
@@ -39,7 +40,10 @@ function normalizeHistoryEntries(value: unknown): KnowledgeDocHistoryEntry[] {
 function parseStoredHistory(raw: string | null | undefined): KnowledgeDocHistoryEntry[] {
   if (!raw) return [];
   try {
-    return normalizeHistoryEntries(JSON.parse(raw));
+    return normalizeHistoryEntries(JSON.parse(raw)).map((item) => ({
+      ...item,
+      content: ensureKnowledgeDocMarkdown(item.content),
+    }));
   } catch {
     return [];
   }
@@ -89,7 +93,7 @@ export async function GET(
       )
       .limit(1);
     return NextResponse.json({
-      content: row?.content ?? '',
+      content: ensureKnowledgeDocMarkdown(row?.content ?? ''),
       id: row?.id ?? null,
       history: parseStoredHistory(historyRow?.content),
       scenarioState: parseStoredScenarioState(scenarioRow?.content),
@@ -120,8 +124,13 @@ export async function PATCH(
     const hasContent = typeof body?.content === 'string';
     const hasHistory = body?.history !== undefined;
     const hasScenarioState = body?.scenarioState !== undefined;
-    const content = hasContent ? body.content : '';
-    const history = hasHistory ? normalizeHistoryEntries(body?.history) : [];
+    const content = hasContent ? ensureKnowledgeDocMarkdown(body.content) : '';
+    const history = hasHistory
+      ? normalizeHistoryEntries(body?.history).map((item) => ({
+          ...item,
+          content: ensureKnowledgeDocMarkdown(item.content),
+        }))
+      : [];
     const scenarioState = hasScenarioState
       ? normalizeKnowledgeDocScenarioState(body?.scenarioState)
       : getDefaultKnowledgeDocScenarioState();
@@ -148,9 +157,10 @@ export async function PATCH(
       .limit(1);
     const now = new Date();
     if (existing) {
+      const existingMarkdown = ensureKnowledgeDocMarkdown(existing.content);
       await db
         .update(notes)
-        .set({ content: hasContent ? content : existing.content, updatedAt: now })
+        .set({ content: hasContent ? content : existingMarkdown, updatedAt: now })
         .where(eq(notes.id, existing.id));
       if (hasHistory) {
         if (existingHistory) {
@@ -188,7 +198,7 @@ export async function PATCH(
       }
       return NextResponse.json({
         id: existing.id,
-        content: hasContent ? content : existing.content,
+        content: hasContent ? content : existingMarkdown,
         history: hasHistory ? history : parseStoredHistory(existingHistory?.content),
         scenarioState: hasScenarioState ? scenarioState : parseStoredScenarioState(existingScenarioState?.content),
       });

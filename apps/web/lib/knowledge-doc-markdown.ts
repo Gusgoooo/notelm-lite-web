@@ -29,11 +29,19 @@ function normalizeMarkdownLine(line: string): string {
     return trimmedEnd;
   }
 
-  return trimmedEnd
+  const normalized = trimmedEnd
     .replace(/^(\s*#{1,6})(\S)/, '$1 $2')
     .replace(/^(\s*>)(\S)/, '$1 $2')
     .replace(/^(\s*[-*+])(\S)/, '$1 $2')
     .replace(/^(\s*\d+\.)(\S)/, '$1 $2');
+
+  if (!/^\s*#{1,6}\s+/.test(normalized)) {
+    return normalized;
+  }
+
+  return normalized
+    .replace(/^(\s*#{1,6})\s+(?:#\s+)+(.+)$/, '$1 $2')
+    .replace(/^(\s*#{1,6})\s+#\s+(.+)$/, '$1 $2');
 }
 
 function isMarkdownTableLine(line: string): boolean {
@@ -73,6 +81,49 @@ function isLikelySectionLabel(line: string): boolean {
   if (trimmed.length > 24) return false;
   if (/[。！？.!?]/.test(trimmed)) return false;
   return true;
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+
+function htmlToMarkdownLike(raw: string): string {
+  if (!raw || !raw.includes('<')) return raw;
+  const toPlain = (htmlChunk: string): string =>
+    decodeHtmlEntities(htmlChunk.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ')).trim();
+
+  let text = raw.replace(/<br\s*\/?>/gi, '\n');
+  const replaceTag = (tag: string, prefix = '') => {
+    const re = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'gi');
+    text = text.replace(re, (_m, inner: string) => {
+      const clean = toPlain(inner);
+      if (!clean) return '\n';
+      return `\n${prefix}${clean}\n`;
+    });
+  };
+
+  replaceTag('h1', '# ');
+  replaceTag('h2', '## ');
+  replaceTag('h3', '### ');
+  replaceTag('li', '- ');
+  replaceTag('p');
+
+  return decodeHtmlEntities(
+    text
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<div\b[^>]*>/gi, '\n')
+      .replace(/<[^>]*>/g, ' ')
+  )
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function enforceProgressiveHeadingStructure(lines: string[]): string[] {
@@ -194,6 +245,10 @@ export function normalizeKnowledgeDocMarkdown(raw: string): string {
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+export function ensureKnowledgeDocMarkdown(raw: string): string {
+  return normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(raw));
 }
 
 export function stripKnowledgeDocMarkdown(raw: string): string {

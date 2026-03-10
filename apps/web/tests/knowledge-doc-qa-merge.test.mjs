@@ -70,4 +70,18 @@ describe('knowledge doc update flow', () => {
     expect(result.updated).toBe(true);
     expect(result.changeType).toBe('new_fact');
   });
+
+  it('当前文档为 HTML 时，增量更新不应破坏标题结构', () => {
+    const htmlDoc = '<h1>项目文档</h1><h2>核心要点</h2><ul><li>已有要点</li></ul>';
+    const result = mergeAnswerIntoKnowledgeDoc(
+      '新增事实：本周转化率提升 12%，需要补充到核心要点。',
+      htmlDoc,
+      true
+    );
+    expect(result.updated).toBe(true);
+    const next = result.suggestedContent ?? '';
+    const h1Count = (next.match(/^#\s+/gm) ?? []).length;
+    expect(h1Count).toBeLessThanOrEqual(1);
+    expect(next).toContain('## 核心要点');
+  });
 });

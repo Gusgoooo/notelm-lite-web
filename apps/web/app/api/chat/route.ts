@@ -29,6 +29,7 @@ import {
 } from '@/lib/knowledge-unit';
 import { getLatestResearchState } from '@/lib/research-state';
 import { buildMainChatSystemPrompt } from '@/lib/chat-system-prompt';
+import { ensureKnowledgeDocMarkdown } from '@/lib/knowledge-doc-markdown';
 
 const TOP_K = 8;
 const PER_SOURCE_CAP = 4;
@@ -289,6 +290,9 @@ async function buildKnowledgeDocPreview(input: {
   sourceSupported: boolean;
 }): Promise<{ answer: string; payload: ChatPreviewPayload }> {
   const modeLabel = input.applyMode === 'replace' ? '整篇替换预览' : '局部更新预览';
+  const currentDocMarkdown = normalizeMarkdownText(
+    ensureKnowledgeDocMarkdown(input.currentDocContent || '')
+  );
   const systemPrompt = `你是知识文档预览助手。你只负责输出“修改预览”，不得声称已更新文档。
 
 规则：
@@ -302,7 +306,7 @@ async function buildKnowledgeDocPreview(input: {
 
   const userPrompt =
     `【用户请求】\n${input.userMessage}\n\n` +
-    `【当前知识文档】\n${input.currentDocContent || '(空)'}\n\n` +
+    `【当前知识文档】\n${currentDocMarkdown || '(空)'}\n\n` +
     `【当前项目说明】\n${input.activeScenario?.label ?? '(无)'}\n${input.activeScenario?.structure ?? ''}\n\n` +
     `【来源证据】\n${input.context}\n\n` +
     `【脚本洞察】\n${input.scriptContext || '(none)'}\n\n` +
@@ -316,7 +320,7 @@ async function buildKnowledgeDocPreview(input: {
 
   if (!suggestedMarkdown) {
     const fallbackMarkdown = normalizeMarkdownText(
-      (input.currentDocContent || '').replace(/<[^>]*>/g, '\n').replace(/\n{3,}/g, '\n\n')
+      currentDocMarkdown || '# 知识文档\n\n## 核心要点\n- 待补充'
     );
     const fallbackAnswer =
       `已生成${modeLabel}，以下是可应用草稿：\n\n` +

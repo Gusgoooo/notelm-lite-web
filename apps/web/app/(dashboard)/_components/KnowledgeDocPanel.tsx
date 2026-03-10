@@ -279,19 +279,19 @@ function appendHistoryEntry(
   options: SaveDocOptions = {}
 ): KnowledgeDocHistoryEntry[] {
   if (options.historyMode === 'skip') return entries;
-  const previousText = stripHtml(previousHtml);
-  const nextText = stripHtml(nextHtml);
-  if (previousText === nextText) return entries;
+  const previousMarkdown = normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(previousHtml));
+  const nextMarkdown = normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(nextHtml));
+  if (previousMarkdown === nextMarkdown) return entries;
 
   const summary = (options.summary ?? buildHistorySummary(previousHtml, nextHtml)).trim() || '编辑了知识文档';
   const nextEntry: KnowledgeDocHistoryEntry = {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    content: nextHtml,
+    content: nextMarkdown,
     summary,
     savedAt: new Date().toISOString(),
   };
 
-  if (entries[0]?.content === nextHtml) {
+  if (entries[0]?.content === nextMarkdown) {
     return [{ ...entries[0], summary: nextEntry.summary, savedAt: nextEntry.savedAt }, ...entries.slice(1)];
   }
 
@@ -299,7 +299,7 @@ function appendHistoryEntry(
     const latest = entries[0];
     const latestAt = Date.parse(latest.savedAt);
     if (Number.isFinite(latestAt) && Date.now() - latestAt < 120000 && latest.summary.startsWith('编辑')) {
-      return [{ ...latest, content: nextHtml, summary: nextEntry.summary, savedAt: nextEntry.savedAt }, ...entries.slice(1)];
+      return [{ ...latest, content: nextMarkdown, summary: nextEntry.summary, savedAt: nextEntry.savedAt }, ...entries.slice(1)];
     }
   }
 
@@ -577,9 +577,13 @@ export function KnowledgeDocPanel({
         return;
       }
       const rawContent = typeof data?.content === 'string' ? data.content : '';
-      const nextContent = rawContent.includes('<') ? rawContent : markdownToKnowledgeDocHtml(rawContent);
+      const nextMarkdown = normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(rawContent));
+      const nextContent = markdownToKnowledgeDocHtml(nextMarkdown || '');
       const nextId = typeof data?.id === 'string' ? data.id : null;
-      const storedHistory = normalizeHistoryEntries(data?.history);
+      const storedHistory = normalizeHistoryEntries(data?.history).map((entry) => ({
+        ...entry,
+        content: normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(entry.content)),
+      }));
       const nextScenarioState = normalizeKnowledgeDocScenarioState(data?.scenarioState);
       setDocId(nextId);
       setContent(nextContent || '<p></p>');
@@ -595,7 +599,7 @@ export function KnowledgeDocPanel({
               })
             : []
       );
-      emitDocStatus(nextId, nextContent || '<p></p>');
+      emitDocStatus(nextId, nextMarkdown);
     } finally {
       setLoading(false);
     }
@@ -610,24 +614,32 @@ export function KnowledgeDocPanel({
       if (!notebookId || saving) return null;
       const previous = initialContentRef.current ?? '';
       const nextHistory = appendHistoryEntry(docHistoryRef.current, previous, html, options);
+      const nextMarkdown = normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(html));
       setSaving(true);
       try {
         const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: html, history: nextHistory }),
+          body: JSON.stringify({ content: nextMarkdown, history: nextHistory }),
         });
         if (!res.ok) return null;
         const data = await res.json().catch(() => ({}));
-        const next = typeof data?.content === 'string' ? data.content : html;
+        const nextMarkdownFromApi = normalizeKnowledgeDocMarkdown(
+          htmlToMarkdownLike(typeof data?.content === 'string' ? data.content : nextMarkdown)
+        );
+        const next = markdownToKnowledgeDocHtml(nextMarkdownFromApi || '');
         const nextId = typeof data?.id === 'string' ? data.id : docId;
         const nextScenarioState = normalizeKnowledgeDocScenarioState(data?.scenarioState);
-        setDocHistory(normalizeHistoryEntries(data?.history).length > 0 ? normalizeHistoryEntries(data?.history) : nextHistory);
+        const storedHistory = normalizeHistoryEntries(data?.history).map((entry) => ({
+          ...entry,
+          content: normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(entry.content)),
+        }));
+        setDocHistory(storedHistory.length > 0 ? storedHistory : nextHistory);
         initialContentRef.current = next;
         setDocId(nextId ?? null);
         setContent(next);
         setScenarioState(nextScenarioState);
-        emitDocStatus(nextId ?? null, next);
+        emitDocStatus(nextId ?? null, nextMarkdownFromApi);
         return { id: nextId ?? null, content: next };
       } finally {
         setSaving(false);
@@ -701,6 +713,7 @@ export function KnowledgeDocPanel({
   }, []);
 
   const currentHtml = editor?.getHTML() ?? content ?? '<p></p>';
+  const currentMarkdown = normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(currentHtml));
   const docHasContent = hasMeaningfulHtml(currentHtml);
   const panelBusy = updatingFromChat || externalBusy;
 
@@ -1142,7 +1155,9 @@ export function KnowledgeDocPanel({
   const restoreHistoryEntry = useCallback(
     async (entry: KnowledgeDocHistoryEntry) => {
       if (!editor) return;
-      const nextHtml = entry.content || '<p></p>';
+      const nextHtml = markdownToKnowledgeDocHtml(
+        normalizeKnowledgeDocMarkdown(entry.content || '')
+      );
       editor.commands.setContent(nextHtml, false);
       await saveDoc(nextHtml, {
         historyMode: 'append',
@@ -1711,7 +1726,7 @@ export function KnowledgeDocPanel({
               {docHistory.length > 0 ? (
                 <div className="space-y-3">
                   {docHistory.map((entry) => {
-                    const isCurrent = entry.content === currentHtml;
+                    const isCurrent = entry.content === currentMarkdown;
                     return (
                       <button
                         key={entry.id}
@@ -1729,7 +1744,7 @@ export function KnowledgeDocPanel({
                             ) : null}
                           </div>
                           <p className="line-clamp-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
-                            {extractHistoryFocus(htmlToMarkdownLike(entry.content)) || '查看当时的文档内容并回退到该版本。'}
+                            {extractHistoryFocus(normalizeKnowledgeDocMarkdown(entry.content)) || '查看当时的文档内容并回退到该版本。'}
                           </p>
                         </div>
                         <div className="shrink-0 text-right">

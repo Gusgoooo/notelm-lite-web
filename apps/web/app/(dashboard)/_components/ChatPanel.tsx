@@ -644,7 +644,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
           new CustomEvent('knowledge-doc-update-from-chat', {
             detail: {
               suggestedContent: applyData.suggestedContent,
-              autoApply: true,
+              autoApply: false,
             },
           })
         );

@@ -8,6 +8,7 @@ import {
 } from '@/lib/knowledge-doc-scenarios';
 import {
   countKnowledgeDocUnits,
+  ensureKnowledgeDocMarkdown,
   KNOWLEDGE_DOC_MARKDOWN_GUIDE,
   normalizeKnowledgeDocMarkdown,
 } from '@/lib/knowledge-doc-markdown';
@@ -16,10 +17,6 @@ import {
   KNOWLEDGE_DOC_NOTE_TITLE,
   KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE,
 } from '@/lib/knowledge-unit';
-
-function stripHtml(value: string): string {
-  return value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-}
 
 function parseScenarioState(raw: string | null | undefined) {
   if (!raw) return getDefaultKnowledgeDocScenarioState();
@@ -61,7 +58,7 @@ function getKnowledgeDocLengthBudget(
   structure: string,
   mode: KnowledgeDocLengthMode
 ) {
-  const currentUnits = countKnowledgeDocUnits(stripHtml(currentContent));
+  const currentUnits = countKnowledgeDocUnits(currentContent);
   if (currentUnits > 0) {
     if (mode === 'condense') {
       const min = Math.max(120, Math.round(currentUnits * 0.68));
@@ -260,7 +257,7 @@ export async function POST(
       );
     }
 
-    const currentContent = docRow?.content ?? '';
+    const currentContent = ensureKnowledgeDocMarkdown(docRow?.content ?? '');
     const lengthBudget = getKnowledgeDocLengthBudget(
       currentContent,
       selectedScenario.structure,
@@ -293,7 +290,7 @@ ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
       `当前任务模式：${mode === 'update' ? '更新已有知识文档' : '生成新的知识文档初稿'}\n` +
       `目标场景：${selectedScenario.label}\n` +
       `必须遵循的项目说明：\n${selectedScenario.structure}\n\n` +
-      `当前知识文档：\n${currentContent || '（空）'}\n\n` +
+      `当前知识文档（Markdown）：\n${currentContent || '（空）'}\n\n` +
       `长度目标：\n${
         mode === 'update'
           ? lengthMode === 'condense'

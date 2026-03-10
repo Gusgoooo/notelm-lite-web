@@ -8,6 +8,7 @@ import {
 } from '@/lib/knowledge-doc-scenarios';
 import {
   countKnowledgeDocUnits,
+  ensureKnowledgeDocMarkdown,
   KNOWLEDGE_DOC_MARKDOWN_GUIDE,
   normalizeKnowledgeDocMarkdown,
 } from '@/lib/knowledge-doc-markdown';
@@ -21,10 +22,6 @@ function parseScenarioState(raw: string | null | undefined) {
   } catch {
     return getDefaultKnowledgeDocScenarioState();
   }
-}
-
-function stripHtml(value: string): string {
-  return value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function hasExplicitCondenseIntent(text: string): boolean {
@@ -58,7 +55,7 @@ function getKnowledgeDocLengthBudget(
   structure: string,
   mode: KnowledgeDocLengthMode
 ) {
-  const currentUnits = countKnowledgeDocUnits(stripHtml(currentContent));
+  const currentUnits = countKnowledgeDocUnits(currentContent);
   if (currentUnits > 0) {
     if (mode === 'condense') {
       const min = Math.max(120, Math.round(currentUnits * 0.68));
@@ -214,7 +211,9 @@ export async function POST(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     const body = await request.json();
-    const currentContent = typeof body?.currentContent === 'string' ? body.currentContent : '';
+    const currentContent = ensureKnowledgeDocMarkdown(
+      typeof body?.currentContent === 'string' ? body.currentContent : ''
+    );
     const lastUserMessage = typeof body?.lastUserMessage === 'string' ? body.lastUserMessage : '';
     const lastAssistantMessage =
       typeof body?.lastAssistantMessage === 'string' ? body.lastAssistantMessage : '';
@@ -250,7 +249,7 @@ export async function POST(
 1. 将对话中的关键信息、结论、事实整合进文档，保持结构清晰（可分段、分条）。
 2. 不要编造对话中未出现的内容。
 3. 输出 Markdown，可使用 #、##、###、无序列表、加粗、表格等结构化格式。
-4. 如果当前知识文档是 HTML，请先理解其现有结构，再用等价的 Markdown 完整输出。
+4. 当前知识文档输入始终是 Markdown，请保持结构兼容并完整输出 Markdown。
 5. 当前知识文档是当前版本下的权威版本。你必须把更新理解为对现有文档做增删改查，而不是简单追加内容。
 6. 如果提供了“突出资料”，请将它与用户问题和助手回答一起吸收进文档，优先整理成可复用的结论、事实依据、要点列表。
 7. 当前文档中已有内容视为用户撰写或修改过的，请尽量保留并在其基础上补充、替换、合并或删除，避免大段重写。
@@ -268,7 +267,7 @@ export async function POST(
 ${KNOWLEDGE_DOC_MARKDOWN_GUIDE}`;
 
     const userPrompt =
-      `【当前知识文档（可能是 HTML）】\n${currentContent || '(空)'}\n\n` +
+      `【当前知识文档（Markdown）】\n${currentContent || '(空)'}\n\n` +
       `【当前场景】\n${activeScenario.label}\n\n` +
       `【当前项目说明】\n${activeScenario.structure}\n\n` +
       `【当前长度策略】\n${

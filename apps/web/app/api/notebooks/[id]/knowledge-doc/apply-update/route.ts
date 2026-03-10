@@ -5,6 +5,7 @@ import {
   mergeAnswerIntoKnowledgeDoc,
   type QaMergeCitation,
 } from '@/lib/knowledge-doc-qa-merge';
+import { ensureKnowledgeDocMarkdown } from '@/lib/knowledge-doc-markdown';
 import { getNotebookAccess } from '@/lib/notebook-access';
 import { KNOWLEDGE_DOC_NOTE_TITLE } from '@/lib/knowledge-unit';
 
@@ -147,7 +148,9 @@ export async function POST(
       .from(notes)
       .where(and(eq(notes.notebookId, notebookId), eq(notes.title, KNOWLEDGE_DOC_NOTE_TITLE)))
       .limit(1);
-    const currentContent = typeof docRow?.content === 'string' ? docRow.content : '';
+    const currentContent = ensureKnowledgeDocMarkdown(
+      typeof docRow?.content === 'string' ? docRow.content : ''
+    );
 
     if (lastState.mode === 'qa') {
       const citations = normalizeCitations(body?.citations);
