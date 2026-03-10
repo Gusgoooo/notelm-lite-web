@@ -27,6 +27,7 @@ import {
   KNOWLEDGE_DOC_SCENARIO_STATE_NOTE_TITLE,
 } from '@/lib/knowledge-unit';
 import { getLatestResearchState } from '@/lib/research-state';
+import { buildMainChatSystemPrompt } from '@/lib/chat-system-prompt';
 
 const TOP_K = 8;
 const PER_SOURCE_CAP = 4;
@@ -701,24 +702,30 @@ export async function POST(request: Request) {
       (hasSkillContext || shouldUseSkillPlanningTemplate(userMessage.trim()));
     const hasScriptCapability = readyPythonSources.length > 0 || needBuiltinPaperStats;
     const skillExecutionRule = hasScriptCapability
-      ? `You may reference "脚本分析" only as an optional capability. If mentioning scripts, describe expected outputs in plain Chinese, never output shell commands.`
-      : `No executable script capability is available in this notebook. Do not output script-running advice, terminal commands, or pseudo execution steps.`;
+      ? '可将“脚本分析”作为可选能力提及；如需提及脚本，只描述预期产出，不要输出命令行或伪执行步骤。'
+      : '当前 notebook 不具备可执行脚本能力，不要输出脚本运行建议、终端命令或伪执行步骤。';
     const skillTemplateRule = useSkillPlanningTemplate
-      ? `\nWhen the user asks for creation/planning tasks, keep the answer practical but conversational in Chinese. Do not force fixed section templates unless the user explicitly asks for structured output. Prefer concise natural paragraphs with optional bullets only when they add clarity.\n${skillExecutionRule}`
+      ? `当用户提出创作/规划类问题时，回答要务实、可执行，并保持自然对话感。除非用户明确要求结构化模板，否则不要强行套固定章节。优先使用自然段，只有在提升清晰度时再使用列表。${skillExecutionRule}`
       : '';
     const viralSkillRule = useDirectViralScript
-      ? `\nViral-video-copywriting skill is active. Produce a complete, production-ready Chinese short-video script in one response. Do NOT ask users to choose options.\nOutput sections exactly:\n1) 标题\n2) 时长与受众定位\n3) 完整脚本（按秒段：开场/发展/高潮/结尾，每段含画面、字幕/旁白、音效）\n4) 视觉风格建议（配色/镜头/字幕）\n5) 音乐与音效建议\n6) 互动设计（评论区引导）\n7) 可直接拍摄的执行清单\nConstraints:\n- Content must be original, not copied from source text.\n- Include strong contrast, humor, and clear CTA.\n- No shell commands, no pseudo tool-execution steps.`
+      ? '短视频脚本能力已启用。请一次性输出可直接拍摄的完整中文脚本，不要让用户做多选。输出结构固定为：1) 标题 2) 时长与受众定位 3) 完整脚本（按秒段：开场/发展/高潮/结尾，每段含画面、字幕/旁白、音效）4) 视觉风格建议（配色/镜头/字幕）5) 音乐与音效建议 6) 互动设计（评论区引导）7) 可直接拍摄的执行清单。约束：内容需原创、包含强对比与明确 CTA，且不输出命令行或伪执行步骤。'
       : '';
     const paperInsightRule = needBuiltinPaperStats
-      ? '\nWhen answering paper-comparison requests, structure the answer with 4 sections in Chinese: 1) 高频研究问题 2) 被反复验证的变量 3) 研究空白 4) 方法争议。Keep it concise and evidence-grounded.'
+      ? '回答来源/论文对比问题时，按 4 个部分组织：1) 高频研究问题 2) 被反复验证的变量 3) 研究空白 4) 方法争议。要求精炼且有证据依据。'
       : '';
     const onboardingGuideRule = shouldGuideForKnowledgeDoc
-      ? `\nCurrent notebook topic: ${onboardingTopic}.\nThe user is still clarifying information for a future knowledge document. Keep the answer aware of missing context and emphasize the most reusable points for later structuring into a knowledge document.`
+      ? `当前 notebook 主题：${onboardingTopic}。用户还在为后续知识文档补齐信息。回答时要识别缺失上下文，并优先强调可复用、可沉淀到文档中的关键信息。`
       : '';
     const activeScenarioRule = activeKnowledgeDocScenario
-      ? `\nCurrent project instruction for this notebook: ${activeKnowledgeDocScenario.label}.\nProject instruction details:\n${activeKnowledgeDocScenario.structure}\nTreat this like persistent project-level instructions. It should affect both the knowledge document organization and the way you answer in chat.\nWhen helpful, steer the user to补充更适合写入该项目的事实、目标、指标、约束、证据或偏好。\nIf the instruction asks for concise, focused, step-by-step or decision-oriented answers, keep that style consistently.`
+      ? `当前项目指令：${activeKnowledgeDocScenario.label}\n项目说明：\n${activeKnowledgeDocScenario.structure}\n请将其视为该 notebook 的长期项目级约束：既影响知识文档组织方式，也影响问答表达风格。必要时主动引导用户补充更适合写入该项目的事实、目标、指标、约束、证据或偏好。若项目说明要求简洁、聚焦、分步或决策导向，需持续保持该风格。`
       : '';
-    const systemPrompt = `You are a helpful assistant. Unless the user explicitly requests another language, always answer in Simplified Chinese. Keep responses natural and conversational like ChatGPT, and avoid rigid sectioned formatting unless the user explicitly asks for it. Answer based only on the provided sources and script insights. When you use evidence from source chunks, cite exact source numbers like [1]; do not cite numbers for unsupported claims. If evidence is insufficient, say it directly.${skillTemplateRule}${viralSkillRule}${paperInsightRule}${onboardingGuideRule}${activeScenarioRule}`;
+    const systemPrompt = buildMainChatSystemPrompt([
+      skillTemplateRule,
+      viralSkillRule,
+      paperInsightRule,
+      onboardingGuideRule,
+      activeScenarioRule,
+    ]);
     const userPrompt = `Notebook topic: ${onboardingTopic || access.notebook.title}\n\nSources:\n${context}\n\nScript Insights:\n${scriptContext || '(none)'}\n\nUser question: ${userMessage.trim()}`;
     const chatMessages = [
       { role: 'system' as const, content: systemPrompt },
