@@ -51,6 +51,65 @@ function isMarkdownTableLine(line: string): boolean {
   return /^\|?.+\|.+\|?$/.test(trimmed);
 }
 
+function isMarkdownTableSeparatorLine(line: string): boolean {
+  return /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line.trim());
+}
+
+function stripListPrefixForTableLine(line: string): string {
+  const match = line.match(/^(\s*)(?:[-*+]|\d+\.)\s+(.+)$/);
+  if (!match) return line;
+  const candidate = match[2]?.trim() ?? '';
+  const pipeCount = candidate.match(/\|/g)?.length ?? 0;
+  if (pipeCount < 2) return line;
+  if (!/^\|?.+\|.+\|?$/.test(candidate)) return line;
+  return `${match[1] ?? ''}${candidate}`;
+}
+
+function countMarkdownTableColumns(line: string): number {
+  const normalized = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  const cells = normalized
+    .split('|')
+    .map((cell) => cell.trim())
+    .filter((cell) => cell.length > 0);
+  return Math.max(2, cells.length);
+}
+
+function createMarkdownTableSeparator(columnCount: number): string {
+  return `| ${Array.from({ length: Math.max(2, columnCount) }, () => '---').join(' | ')} |`;
+}
+
+function normalizeTableBlocks(lines: string[]): string[] {
+  const sanitized = lines.map((line) => stripListPrefixForTableLine(line));
+  const output: string[] = [];
+
+  let index = 0;
+  while (index < sanitized.length) {
+    const line = sanitized[index] ?? '';
+    if (!isMarkdownTableLine(line)) {
+      output.push(line);
+      index += 1;
+      continue;
+    }
+
+    const block: string[] = [line];
+    let cursor = index + 1;
+    while (cursor < sanitized.length && isMarkdownTableLine(sanitized[cursor] ?? '')) {
+      block.push(sanitized[cursor] ?? '');
+      cursor += 1;
+    }
+
+    if (block.length >= 2 && !isMarkdownTableSeparatorLine(block[1] ?? '')) {
+      const columnCount = countMarkdownTableColumns(block[0] ?? '');
+      block.splice(1, 0, createMarkdownTableSeparator(columnCount));
+    }
+
+    output.push(...block);
+    index = cursor;
+  }
+
+  return output;
+}
+
 function getHeadingLevel(line: string): number | null {
   const match = line.match(/^\s*(#{1,6})\s+/);
   return match ? match[1]!.length : null;
@@ -165,7 +224,9 @@ function enforceProgressiveHeadingStructure(lines: string[]): string[] {
       if (!candidate.trim()) continue;
       const candidateHeadingLevel = getHeadingLevel(candidate);
       if (candidateHeadingLevel == null) {
-        if (isLikelySectionLabel(candidate)) {
+        if (isMarkdownTableLine(candidate)) {
+          normalized.splice(cursor, 0, '## 核心要点', '');
+        } else if (isLikelySectionLabel(candidate)) {
           const label = candidate.trim();
           const normalizedLabel = normalizeHeadingLabel(label);
           if (normalizedLabel === h1Label) {
@@ -218,7 +279,8 @@ export function normalizeKnowledgeDocMarkdown(raw: string): string {
     .replace(/\t/g, '  ')
     .split('\n')
     .map((line) => normalizeMarkdownLine(line));
-  const progressiveLines = enforceProgressiveHeadingStructure(normalizedLines);
+  const normalizedTableLines = normalizeTableBlocks(normalizedLines);
+  const progressiveLines = enforceProgressiveHeadingStructure(normalizedTableLines);
 
   const spacedLines: string[] = [];
 
