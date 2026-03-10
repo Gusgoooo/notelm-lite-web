@@ -38,4 +38,20 @@ describe('knowledge doc markdown bridge', () => {
     expect(html).toContain('<table>');
     expect(html).toContain('<td>12%</td>');
   });
+
+  it('normalizes tables with blank lines and fullwidth separators', () => {
+    const raw = `## 竞品对比
+
+| 维度 ｜ NotebookLM ｜ Notion ｜
+
+| --- ｜ --- ｜ --- ｜
+
+| 溯源 ｜ 强 ｜ 中 ｜`;
+    const md = ensureKnowledgeDocMarkdown(raw);
+    expect(md).toContain('| 维度 | NotebookLM | Notion |');
+    expect(md).toContain('| --- | --- | --- |');
+    const html = markdownToKnowledgeDocHtml(md);
+    expect(html).toContain('<table>');
+    expect(html).toContain('<td>强</td>');
+  });
 });

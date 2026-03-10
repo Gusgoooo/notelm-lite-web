@@ -56,12 +56,13 @@ function isMarkdownTableSeparatorLine(line: string): boolean {
 }
 
 function stripListPrefixForTableLine(line: string): string {
-  const match = line.match(/^(\s*)(?:[-*+]|\d+\.)\s+(.+)$/);
-  if (!match) return line;
+  const normalizedLine = line.replace(/｜/g, '|');
+  const match = normalizedLine.match(/^(\s*)(?:[-*+]|\d+\.)\s+(.+)$/);
+  if (!match) return normalizedLine;
   const candidate = match[2]?.trim() ?? '';
   const pipeCount = candidate.match(/\|/g)?.length ?? 0;
-  if (pipeCount < 2) return line;
-  if (!/^\|?.+\|.+\|?$/.test(candidate)) return line;
+  if (pipeCount < 2) return normalizedLine;
+  if (!/^\|?.+\|.+\|?$/.test(candidate)) return normalizedLine;
   return `${match[1] ?? ''}${candidate}`;
 }
 
@@ -91,10 +92,21 @@ function normalizeTableBlocks(lines: string[]): string[] {
       continue;
     }
 
-    const block: string[] = [line];
+    const block: string[] = [line.trim()];
     let cursor = index + 1;
-    while (cursor < sanitized.length && isMarkdownTableLine(sanitized[cursor] ?? '')) {
-      block.push(sanitized[cursor] ?? '');
+    let blankGap = 0;
+    while (cursor < sanitized.length) {
+      const candidate = sanitized[cursor] ?? '';
+      const trimmed = candidate.trim();
+      if (!trimmed) {
+        blankGap += 1;
+        if (blankGap > 1) break;
+        cursor += 1;
+        continue;
+      }
+      if (!isMarkdownTableLine(trimmed)) break;
+      block.push(trimmed);
+      blankGap = 0;
       cursor += 1;
     }
 
@@ -103,7 +115,7 @@ function normalizeTableBlocks(lines: string[]): string[] {
       block.splice(1, 0, createMarkdownTableSeparator(columnCount));
     }
 
-    output.push(...block);
+    output.push(...block.filter(Boolean));
     index = cursor;
   }
 
