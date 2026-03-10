@@ -1,15 +1,31 @@
 import { NextResponse } from 'next/server';
 import { and, db, eq, notes } from 'db';
 import { applyDocPreviewPayload } from '@/lib/knowledge-doc-apply';
-import { mergeQaAnswerIntoKnowledgeDoc, type QaMergeCitation } from '@/lib/knowledge-doc-qa-merge';
+import {
+  mergeAnswerIntoKnowledgeDoc,
+  type QaMergeCitation,
+} from '@/lib/knowledge-doc-qa-merge';
 import { getNotebookAccess } from '@/lib/notebook-access';
 import { KNOWLEDGE_DOC_NOTE_TITLE } from '@/lib/knowledge-unit';
 
-type IntentType = 'qa' | 'doc_edit' | 'doc_replace';
+type AssistantMode = 'qa' | 'edit';
+type EditApplyMode = 'patch' | 'replace';
+type LastAssistantState = {
+  mode: AssistantMode;
+  responseText: string;
+  previewContent?: string;
+  sourceSupported?: boolean;
+  activeDocId?: string;
+  applyMode?: EditApplyMode;
+};
 
-function normalizeIntentType(value: unknown): IntentType | null {
-  if (value === 'qa' || value === 'doc_edit' || value === 'doc_replace') return value;
+function normalizeAssistantMode(value: unknown): AssistantMode | null {
+  if (value === 'qa' || value === 'edit') return value;
   return null;
+}
+
+function normalizeEditApplyMode(value: unknown): EditApplyMode {
+  return value === 'replace' ? 'replace' : 'patch';
 }
 
 function normalizeCitations(value: unknown): QaMergeCitation[] {
@@ -51,6 +67,61 @@ function toUserFacingBlockedSummary(blockedReason: string | undefined, fallbackS
   return normalized || '本轮没有可应用的更新，知识文档保持不变。';
 }
 
+function normalizeLastAssistantState(value: unknown, fallbackBody: Record<string, unknown>): LastAssistantState | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const row = value as Record<string, unknown>;
+    const mode = normalizeAssistantMode(row.mode);
+    const responseText = typeof row.responseText === 'string' ? row.responseText.trim() : '';
+    if (mode && responseText) {
+      return {
+        mode,
+        responseText,
+        previewContent: typeof row.previewContent === 'string' ? row.previewContent : undefined,
+        sourceSupported: typeof row.sourceSupported === 'boolean' ? row.sourceSupported : undefined,
+        activeDocId: typeof row.activeDocId === 'string' ? row.activeDocId : undefined,
+        applyMode: normalizeEditApplyMode(row.applyMode),
+      };
+    }
+  }
+
+  // Backward compatibility for old message payloads.
+  const legacyIntent = fallbackBody.lastIntentType;
+  if (legacyIntent === 'qa' || legacyIntent === 'doc_edit' || legacyIntent === 'doc_replace') {
+    const previewPayload =
+      fallbackBody.previewPayload && typeof fallbackBody.previewPayload === 'object'
+        ? (fallbackBody.previewPayload as Record<string, unknown>)
+        : {};
+    const previewContent =
+      typeof previewPayload.previewContent === 'string'
+        ? previewPayload.previewContent
+        : typeof previewPayload.suggestedContent === 'string'
+          ? previewPayload.suggestedContent
+          : typeof previewPayload.suggested_markdown === 'string'
+            ? previewPayload.suggested_markdown
+            : undefined;
+    const sourceSupported =
+      typeof previewPayload.sourceSupported === 'boolean'
+        ? previewPayload.sourceSupported
+        : typeof previewPayload.sourceSufficient === 'boolean'
+          ? previewPayload.sourceSufficient
+          : undefined;
+    const responseText =
+      typeof fallbackBody.lastAssistantMessage === 'string'
+        ? fallbackBody.lastAssistantMessage.trim()
+        : '';
+    if (!responseText) return null;
+    return {
+      mode: legacyIntent === 'qa' ? 'qa' : 'edit',
+      responseText,
+      previewContent,
+      sourceSupported,
+      activeDocId: typeof fallbackBody.activeDocId === 'string' ? fallbackBody.activeDocId : undefined,
+      applyMode: legacyIntent === 'doc_replace' ? 'replace' : 'patch',
+    };
+  }
+  return null;
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -65,10 +136,10 @@ export async function POST(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const body = await request.json().catch(() => ({}));
-    const lastIntentType = normalizeIntentType(body?.lastIntentType);
-    if (!lastIntentType) {
-      return NextResponse.json({ error: 'Invalid lastIntentType' }, { status: 400 });
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const lastState = normalizeLastAssistantState(body?.lastState, body);
+    if (!lastState) {
+      return NextResponse.json({ error: 'Invalid lastState' }, { status: 400 });
     }
 
     const [docRow] = await db
@@ -78,17 +149,27 @@ export async function POST(
       .limit(1);
     const currentContent = typeof docRow?.content === 'string' ? docRow.content : '';
 
-    if (lastIntentType === 'qa') {
-      const mergeResult = await mergeQaAnswerIntoKnowledgeDoc({
-        answerPayload: {
-          question: typeof body?.lastUserMessage === 'string' ? body.lastUserMessage : '',
-          answer: typeof body?.lastAssistantMessage === 'string' ? body.lastAssistantMessage : '',
-        },
-        currentDocContent: currentContent,
-        citations: normalizeCitations(body?.citations),
-      });
+    if (lastState.mode === 'qa') {
+      const citations = normalizeCitations(body?.citations);
+      const mergeResult = mergeAnswerIntoKnowledgeDoc(
+        lastState.responseText,
+        currentContent,
+        typeof lastState.sourceSupported === 'boolean'
+          ? lastState.sourceSupported
+          : citations.length > 0
+      );
       if (!mergeResult.updated || !mergeResult.suggestedContent) {
         const blockedSummary = toUserFacingBlockedSummary(mergeResult.blockedReason, mergeResult.summary);
+        console.info(
+          '[knowledge-doc-apply]',
+          JSON.stringify({
+            userMessage: typeof body?.lastUserMessage === 'string' ? body.lastUserMessage : '',
+            mode: lastState.mode,
+            show_update_button: true,
+            update_applied: false,
+            update_summary: blockedSummary,
+          })
+        );
         return NextResponse.json({
           updated: false,
           changeType: mergeResult.changeType,
@@ -98,6 +179,16 @@ export async function POST(
           candidateStats: mergeResult.candidateStats,
         });
       }
+      console.info(
+        '[knowledge-doc-apply]',
+        JSON.stringify({
+          userMessage: typeof body?.lastUserMessage === 'string' ? body.lastUserMessage : '',
+          mode: lastState.mode,
+          show_update_button: true,
+          update_applied: true,
+          update_summary: mergeResult.summary,
+        })
+      );
       return NextResponse.json({
         updated: true,
         suggestedContent: mergeResult.suggestedContent,
@@ -110,12 +201,25 @@ export async function POST(
     }
 
     const previewApply = applyDocPreviewPayload({
-      lastIntentType,
-      previewPayload: body?.previewPayload,
+      lastIntentType: lastState.applyMode === 'replace' ? 'doc_replace' : 'doc_edit',
+      previewPayload:
+        typeof lastState.previewContent === 'string'
+          ? { suggestedContent: lastState.previewContent }
+          : body?.previewPayload,
       currentDocContent: currentContent,
     });
     if (!previewApply.updated || !previewApply.suggestedContent) {
       const blockedSummary = toUserFacingBlockedSummary(previewApply.blockedReason, previewApply.summary);
+      console.info(
+        '[knowledge-doc-apply]',
+        JSON.stringify({
+          userMessage: typeof body?.lastUserMessage === 'string' ? body.lastUserMessage : '',
+          mode: lastState.mode,
+          show_update_button: true,
+          update_applied: false,
+          update_summary: blockedSummary,
+        })
+      );
       return NextResponse.json({
         updated: false,
         changeType: previewApply.changeType,
@@ -125,6 +229,16 @@ export async function POST(
       });
     }
 
+    console.info(
+      '[knowledge-doc-apply]',
+      JSON.stringify({
+        userMessage: typeof body?.lastUserMessage === 'string' ? body.lastUserMessage : '',
+        mode: lastState.mode,
+        show_update_button: true,
+        update_applied: true,
+        update_summary: previewApply.summary,
+      })
+    );
     return NextResponse.json({
       updated: true,
       suggestedContent: previewApply.suggestedContent,

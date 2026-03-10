@@ -30,7 +30,7 @@ type Message = {
   createdAt?: string;
   conversationId?: string;
   assistantMessageId?: string;
-  intentType?: 'qa' | 'doc_edit' | 'doc_replace';
+  assistantMode?: 'qa' | 'edit';
   previewPayload?: Record<string, unknown> | null;
   showUpdateButton?: boolean;
   action?:
@@ -39,6 +39,15 @@ type Message = {
         source: 'chat' | 'sources';
       }
     | undefined;
+};
+
+type LastAssistantState = {
+  mode: 'qa' | 'edit';
+  responseText: string;
+  previewContent?: string;
+  sourceSupported?: boolean;
+  activeDocId?: string;
+  applyMode?: 'patch' | 'replace';
 };
 
 type ResearchDirection = {
@@ -571,11 +580,9 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
   const applyKnowledgeDocUpdate = useCallback(
     async (input: {
       activeDocId: string;
-      lastIntentType: 'qa' | 'doc_edit' | 'doc_replace';
-      previewPayload: Record<string, unknown> | null;
+      lastState: LastAssistantState;
       messageId: string;
       lastUserMessage: string;
-      lastAssistantMessage: string;
       citations?: Citation[];
     }) => {
       if (!notebookId) throw new Error('notebookId is required');
@@ -598,11 +605,9 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               activeDocId: input.activeDocId,
-              lastIntentType: input.lastIntentType,
-              previewPayload: input.previewPayload,
+              lastState: input.lastState,
               messageId: input.messageId,
               lastUserMessage: input.lastUserMessage,
-              lastAssistantMessage: input.lastAssistantMessage,
               citations: input.citations ?? [],
             }),
           }
@@ -623,12 +628,11 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               role: 'assistant',
               content: hintMessage,
               showUpdateButton: true,
-              intentType: 'qa',
+              assistantMode: 'qa',
               previewPayload: {
                 mode: 'qa',
-                question: '',
-                answer: hintMessage,
-                sourceSufficient: false,
+                responseText: hintMessage,
+                sourceSupported: false,
               },
             },
           ]);
@@ -809,18 +813,14 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         const data = await res.json();
         setConversationId(data.conversationId);
         const normalizedCitations = Array.isArray(data.citations) ? data.citations : [];
-        const intentType =
-          data?.intentRouting?.intent_type === 'doc_edit' || data?.intentRouting?.intent_type === 'doc_replace'
-            ? (data.intentRouting.intent_type as 'doc_edit' | 'doc_replace')
-            : 'qa';
+        const assistantMode = data?.assistantMode === 'edit' ? 'edit' : 'qa';
         const previewPayload =
           data?.previewPayload && typeof data.previewPayload === 'object'
             ? (data.previewPayload as Record<string, unknown>)
             : ({
                 mode: 'qa',
-                question: text,
-                answer: typeof data?.answer === 'string' ? data.answer : '',
-                sourceSufficient: normalizedCitations.length > 0,
+                responseText: typeof data?.answer === 'string' ? data.answer : '',
+                sourceSupported: normalizedCitations.length > 0,
               } satisfies Record<string, unknown>);
         const assistantMessageId =
           typeof data?.assistantMessageId === 'string' && data.assistantMessageId.trim()
@@ -834,9 +834,9 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
             content: data.answer,
             citations: normalizedCitations,
             assistantMessageId,
-            intentType,
+            assistantMode,
             previewPayload,
-            showUpdateButton: data?.showUpdateButton !== false,
+            showUpdateButton: true,
           },
         ]);
         window.dispatchEvent(
@@ -1002,7 +1002,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
               {messages.map((m, idx) => {
                 const parsed = parseMessageActions(m.content);
                 const refineDone = isRefineCompletedMessage(parsed.displayContent);
-                const showUpdateButton = m.role === 'assistant' && (m.showUpdateButton ?? true);
+                const showUpdateButton = m.role === 'assistant';
                 const requiresCreateDoc = !knowledgeDocState.hasContent || m.action?.type === 'create_doc';
                 const applyMessageId = m.assistantMessageId ?? m.id;
                 const isApplyingUpdate = applyingUpdateMessageId === applyMessageId;
@@ -1058,20 +1058,39 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                       { cache: 'no-store' }
                                     );
                                     const docData = await docRes.json().catch(() => ({}));
+                                    const activeDocId = typeof docData?.id === 'string' ? docData.id : '';
+                                    const rawPreview = m.previewPayload as Record<string, unknown> | null;
+                                    const responseText =
+                                      typeof rawPreview?.responseText === 'string'
+                                        ? rawPreview.responseText
+                                        : parsed.displayContent;
+                                    const sourceSupported =
+                                      typeof rawPreview?.sourceSupported === 'boolean'
+                                        ? rawPreview.sourceSupported
+                                        : typeof rawPreview?.sourceSufficient === 'boolean'
+                                          ? rawPreview.sourceSufficient
+                                          : Boolean(m.citations?.length);
+                                    const previewContent =
+                                      typeof rawPreview?.previewContent === 'string'
+                                        ? rawPreview.previewContent
+                                        : typeof rawPreview?.suggestedContent === 'string'
+                                          ? rawPreview.suggestedContent
+                                          : typeof rawPreview?.suggested_markdown === 'string'
+                                            ? rawPreview.suggested_markdown
+                                            : undefined;
+                                    const lastState: LastAssistantState = {
+                                      mode: m.assistantMode === 'edit' ? 'edit' : 'qa',
+                                      responseText,
+                                      sourceSupported,
+                                      activeDocId,
+                                      previewContent,
+                                      applyMode: rawPreview?.applyMode === 'replace' ? 'replace' : 'patch',
+                                    };
                                     await applyKnowledgeDocUpdate({
-                                      activeDocId: typeof docData?.id === 'string' ? docData.id : '',
-                                      lastIntentType: m.intentType ?? 'qa',
-                                      previewPayload:
-                                        (m.previewPayload as Record<string, unknown> | null) ??
-                                        ({
-                                          mode: 'qa',
-                                          question: prevUser?.content ?? '',
-                                          answer: parsed.displayContent,
-                                          sourceSufficient: Boolean(m.citations?.length),
-                                        } as Record<string, unknown>),
+                                      activeDocId,
+                                      lastState,
                                       messageId: m.assistantMessageId ?? m.id,
                                       lastUserMessage: prevUser?.content ?? '',
-                                      lastAssistantMessage: parsed.displayContent,
                                       citations: m.citations,
                                     });
                                   } catch (error) {

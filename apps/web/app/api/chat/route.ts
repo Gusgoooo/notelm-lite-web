@@ -21,6 +21,7 @@ import {
   resolveKnowledgeDocScenario,
   type KnowledgeDocScenario,
 } from '@/lib/knowledge-doc-scenarios';
+import { detectAssistantMode, detectEditApplyMode, type AssistantMode, type EditApplyMode } from '@/lib/assistant-mode';
 import { getNotebookAccess } from '@/lib/notebook-access';
 import {
   KNOWLEDGE_DOC_NOTE_TITLE,
@@ -28,7 +29,6 @@ import {
 } from '@/lib/knowledge-unit';
 import { getLatestResearchState } from '@/lib/research-state';
 import { buildMainChatSystemPrompt } from '@/lib/chat-system-prompt';
-import { routeIntent, type IntentRoutingResult } from '@/lib/intent-router';
 
 const TOP_K = 8;
 const PER_SOURCE_CAP = 4;
@@ -252,19 +252,18 @@ function appendGuidanceTail(input: {
   return stripSectionsByHeading(input.answer.trim(), ['下一步建议', '待确认问题']);
 }
 
-type DocPreviewMode = 'doc_edit' | 'doc_replace';
-
 type ChatPreviewPayload =
   | {
       mode: 'qa';
-      question: string;
-      answer: string;
-      sourceSufficient: boolean;
+      responseText: string;
+      sourceSupported: boolean;
     }
   | {
-      mode: DocPreviewMode;
-      suggestedContent: string;
-      summary: string;
+      mode: 'edit';
+      responseText: string;
+      previewContent: string;
+      sourceSupported: boolean;
+      applyMode: EditApplyMode;
     };
 
 function normalizeMarkdownText(value: string): string {
@@ -280,49 +279,26 @@ function buildPreviewSnippet(markdown: string, maxLines = 14): string {
   return lines.length > maxLines ? `${snippet}\n...` : snippet;
 }
 
-function parseJsonObject(raw: string): unknown {
-  const trimmed = raw.trim();
-  const fenced = trimmed.match(/```json\s*([\s\S]*?)```/i)?.[1];
-  const candidate = fenced ?? trimmed;
-  try {
-    return JSON.parse(candidate);
-  } catch {
-    const start = candidate.indexOf('{');
-    const end = candidate.lastIndexOf('}');
-    if (start < 0 || end <= start) return null;
-    try {
-      return JSON.parse(candidate.slice(start, end + 1));
-    } catch {
-      return null;
-    }
-  }
-}
-
 async function buildKnowledgeDocPreview(input: {
-  mode: DocPreviewMode;
+  applyMode: EditApplyMode;
   userMessage: string;
   context: string;
   scriptContext: string;
   currentDocContent: string;
   activeScenario: KnowledgeDocScenario | null;
+  sourceSupported: boolean;
 }): Promise<{ answer: string; payload: ChatPreviewPayload }> {
-  const modeLabel = input.mode === 'doc_replace' ? '整篇替换预览' : '局部更新预览';
-  const systemPrompt = `你是知识文档预览助手。你的任务是生成预览，不得执行写入。
-必须严格输出 JSON，不要输出额外说明。JSON 结构如下：
-{
-  "summary": "一句话说明",
-  "suggested_markdown": "完整 Markdown 预览稿"
-}
+  const modeLabel = input.applyMode === 'replace' ? '整篇替换预览' : '局部更新预览';
+  const systemPrompt = `你是知识文档预览助手。你只负责输出“修改预览”，不得声称已更新文档。
 
 规则：
-1. 输入是用户请求、当前文档、来源证据和项目说明。
-2. ${
-    input.mode === 'doc_replace'
-      ? '本轮按整篇替换方式生成完整新稿，但仅作为预览。'
-      : '本轮按最小局部编辑方式生成完整新稿：尽量挂靠原章节，非必要不改动无关部分。'
+1. ${
+    input.applyMode === 'replace'
+      ? '本轮按整篇替换方式输出完整 Markdown 草稿。'
+      : '本轮按最小局部编辑方式输出可直接应用的 Markdown 草稿，优先挂靠原有章节。'
   }
-3. 只能基于来源证据与用户请求，不得编造。
-4. 输出 Markdown 要结构清晰，可直接用于知识文档渲染。`;
+2. 只基于用户请求、当前文档与已给出的来源信息。
+3. 输出只允许是 Markdown 正文，不要解释，不要 JSON，不要代码块。`;
 
   const userPrompt =
     `【用户请求】\n${input.userMessage}\n\n` +
@@ -330,32 +306,29 @@ async function buildKnowledgeDocPreview(input: {
     `【当前项目说明】\n${input.activeScenario?.label ?? '(无)'}\n${input.activeScenario?.structure ?? ''}\n\n` +
     `【来源证据】\n${input.context}\n\n` +
     `【脚本洞察】\n${input.scriptContext || '(none)'}\n\n` +
-    '请输出 JSON。';
+    '请直接输出可应用的 Markdown 预览稿。';
 
   const { content } = await chat([
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt },
   ]);
-  const parsed = parseJsonObject(content ?? '');
-  const row = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
-  const summary = typeof row?.summary === 'string' ? row.summary.trim() : '';
-  const suggestedMarkdown =
-    typeof row?.suggested_markdown === 'string' ? normalizeMarkdownText(row.suggested_markdown) : '';
+  const suggestedMarkdown = normalizeMarkdownText(content ?? '');
 
   if (!suggestedMarkdown) {
     const fallbackMarkdown = normalizeMarkdownText(
       (input.currentDocContent || '').replace(/<[^>]*>/g, '\n').replace(/\n{3,}/g, '\n\n')
     );
-    const fallbackSummary = input.mode === 'doc_replace' ? '已准备整篇替换预览（回退版本）' : '已准备局部更新预览（回退版本）';
     const fallbackAnswer =
       `已生成${modeLabel}，以下是可应用草稿：\n\n` +
       `${buildPreviewSnippet(fallbackMarkdown)}`;
     return {
       answer: fallbackAnswer,
       payload: {
-        mode: input.mode,
-        suggestedContent: fallbackMarkdown,
-        summary: fallbackSummary,
+        mode: 'edit',
+        responseText: fallbackAnswer,
+        previewContent: fallbackMarkdown,
+        sourceSupported: input.sourceSupported,
+        applyMode: input.applyMode,
       },
     };
   }
@@ -367,9 +340,11 @@ async function buildKnowledgeDocPreview(input: {
   return {
     answer,
     payload: {
-      mode: input.mode,
-      suggestedContent: suggestedMarkdown,
-      summary: summary || `已生成${modeLabel}`,
+      mode: 'edit',
+      responseText: answer,
+      previewContent: suggestedMarkdown,
+      sourceSupported: input.sourceSupported,
+      applyMode: input.applyMode,
     },
   };
 }
@@ -497,23 +472,14 @@ export async function POST(request: Request) {
         notebookId,
       });
     }
-    const intentRoutingOutput = await routeIntent({
-      userMessage: trimmedUserMessage,
-      hasActiveDoc: hasMeaningfulKnowledgeDoc(knowledgeDocRow?.content),
-      recentMessages: history.slice(-5),
-    });
-    const intentRoutingResult = intentRoutingOutput.result;
+    const assistantMode = detectAssistantMode(trimmedUserMessage);
+    const editApplyMode = detectEditApplyMode(trimmedUserMessage);
     console.info(
-      '[intent-router]',
+      '[assistant-mode]',
       JSON.stringify({
         userMessage: trimmedUserMessage,
-        intent_type: intentRoutingResult.intent_type,
-        answer_mode: intentRoutingResult.answer_mode,
-        on_confirm_update_mode: intentRoutingResult.on_confirm_update_mode,
-        qa_update_policy: intentRoutingResult.qa_update_policy,
-        show_update_button: intentRoutingResult.show_update_button,
-        schema_validation_result: intentRoutingOutput.validation.isValid ? 'valid' : 'fallback',
-        schema_validation_errors: intentRoutingOutput.validation.errors,
+        mode: assistantMode,
+        show_update_button: true,
       })
     );
 
@@ -540,9 +506,9 @@ export async function POST(request: Request) {
         distance?: number;
       }> = [],
       responseMeta: {
-        intentRouting: IntentRoutingResult;
+        assistantMode: AssistantMode;
         previewPayload: ChatPreviewPayload | null;
-        showUpdateButton: boolean;
+        showUpdateButton: true;
       }
     ) => {
       const userMsgId = `msg_${randomUUID()}`;
@@ -567,7 +533,7 @@ export async function POST(request: Request) {
         citations: citationsForClient,
         conversationId,
         assistantMessageId: assistantMsgId,
-        intentRouting: responseMeta.intentRouting,
+        assistantMode: responseMeta.assistantMode,
         previewPayload: responseMeta.previewPayload,
         showUpdateButton: responseMeta.showUpdateButton,
       });
@@ -871,14 +837,13 @@ export async function POST(request: Request) {
     let answerBase = '';
     let previewPayload: ChatPreviewPayload | null = null;
 
-    if (intentRoutingResult.intent_type === 'qa') {
+    if (assistantMode === 'qa') {
       if (selected.length === 0) {
         answerBase = '当前来源不足以支持回答。请先补充来源后再提问。';
         previewPayload = {
           mode: 'qa',
-          question: trimmedUserMessage,
-          answer: answerBase,
-          sourceSufficient: false,
+          responseText: answerBase,
+          sourceSupported: false,
         };
       } else {
         const skillExecutionRule = hasScriptCapability
@@ -921,19 +886,19 @@ export async function POST(request: Request) {
           : sanitizeNonCodeAnswer(processedAnswer);
         previewPayload = {
           mode: 'qa',
-          question: trimmedUserMessage,
-          answer: answerBase,
-          sourceSufficient: selected.length > 0,
+          responseText: answerBase,
+          sourceSupported: selected.length > 0,
         };
       }
     } else {
       const preview = await buildKnowledgeDocPreview({
-        mode: intentRoutingResult.intent_type,
+        applyMode: editApplyMode,
         userMessage: trimmedUserMessage,
         context,
         scriptContext,
         currentDocContent: knowledgeDocRow?.content ?? '',
         activeScenario: activeKnowledgeDocScenario,
+        sourceSupported: selected.length > 0,
       });
       answerBase = preview.answer;
       previewPayload = preview.payload;
@@ -954,7 +919,7 @@ export async function POST(request: Request) {
       hasKnowledgeDoc: hasMeaningfulKnowledgeDoc(knowledgeDocRow?.content),
       activeScenario: activeKnowledgeDocScenario,
     });
-    if (needBuiltinPaperStats && intentRoutingResult.intent_type === 'qa') {
+    if (needBuiltinPaperStats && assistantMode === 'qa') {
       answer += `\n\n${REPORT_ACTION_MARKER}`;
     }
 
@@ -991,9 +956,9 @@ export async function POST(request: Request) {
       })
     );
     return persistAndRespond(answer, citationsForDb, citationsForClient, {
-      intentRouting: intentRoutingResult,
+      assistantMode,
       previewPayload,
-      showUpdateButton: intentRoutingResult.show_update_button === true,
+      showUpdateButton: true,
     });
   } catch (e) {
     console.error(e);

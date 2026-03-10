@@ -1,5 +1,4 @@
-import { chat } from 'shared';
-import { markdownToKnowledgeDocHtml, normalizeKnowledgeDocMarkdown } from './knowledge-doc-markdown';
+import { normalizeKnowledgeDocMarkdown } from './knowledge-doc-markdown';
 
 export type QaKnowledgeCategory = 'new_concept' | 'new_fact' | 'minor_refinement' | 'duplicate';
 
@@ -14,18 +13,7 @@ export type QaMergeCitation = {
 type QaCandidate = {
   category: QaKnowledgeCategory;
   text: string;
-  target_section: string;
-  action: 'insert' | 'refine' | 'skip';
-};
-
-type QaMergeModelOutput = {
-  source_sufficient: boolean;
-  has_effective_new_info: boolean;
-  updated_markdown: string;
-  change_type: 'new_concept' | 'new_fact' | 'minor_refinement' | 'none';
-  changed_sections: string[];
-  summary: string;
-  candidates: QaCandidate[];
+  targetSection: string;
 };
 
 export type QaMergeResult = {
@@ -45,10 +33,7 @@ type MergeQaAnswerInput = {
   };
   currentDocContent: string;
   citations?: QaMergeCitation[];
-};
-
-type MergeQaAnswerDeps = {
-  chatFn?: typeof chat;
+  sourceSupported?: boolean;
 };
 
 const DEFAULT_CANDIDATE_STATS: Record<QaKnowledgeCategory, number> = {
@@ -58,107 +43,152 @@ const DEFAULT_CANDIDATE_STATS: Record<QaKnowledgeCategory, number> = {
   duplicate: 0,
 };
 
-function stripHtml(value: string): string {
-  return value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+const CONCEPT_PATTERN = /(是指|指的是|定义为|可定义为|称为|即|本质是|核心概念|概念)/;
+const FACT_PATTERN = /(显示|表明|发现|数据|证据|结果|实验|研究|统计|提升|降低|增长|下降|%|\d)/;
+const NOISE_PATTERN = /^(好的|明白|可以|总结如下|结论如下|我认为|建议|另外|此外)$/;
+
+function stripHtml(raw: string): string {
+  return raw
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr|table|ul|ol)>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '- ')
+    .replace(/<h1[^>]*>/gi, '# ')
+    .replace(/<h2[^>]*>/gi, '## ')
+    .replace(/<h3[^>]*>/gi, '### ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\r\n?/g, '\n');
 }
 
-function isSourceSufficient(citations: QaMergeCitation[] | undefined): boolean {
-  if (!Array.isArray(citations) || citations.length === 0) return false;
-  return citations.some((item) => typeof item.snippet === 'string' && item.snippet.trim().length > 0);
+function normalizeForCompare(raw: string): string {
+  return stripHtml(raw)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+    .replace(/\[(\d{1,3})]/g, ' ')
+    .replace(/[#>*`~_|-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/gi, '');
 }
 
-function buildCitationContext(citations: QaMergeCitation[] | undefined): string {
-  if (!Array.isArray(citations) || citations.length === 0) return '(无)';
-  return citations
-    .slice(0, 12)
-    .map((item, index) => {
-      const ref = item.refNumber ?? index + 1;
-      const page =
-        item.pageStart != null
-          ? ` p.${item.pageStart}${item.pageEnd != null && item.pageEnd !== item.pageStart ? `-${item.pageEnd}` : ''}`
-          : '';
-      return `[${ref}] ${item.sourceTitle}${page}: ${item.snippet}`;
-    })
-    .join('\n');
+function cleanSentence(raw: string): string {
+  return raw
+    .replace(/\[(\d{1,3})]/g, '')
+    .replace(/^\s*[-*+]\s*/, '')
+    .replace(/^#{1,6}\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
-function parseJsonObject(raw: string): unknown {
-  const trimmed = raw.trim();
-  const fenced = trimmed.match(/```json\s*([\s\S]*?)```/i)?.[1];
-  const candidate = fenced ?? trimmed;
-  try {
-    return JSON.parse(candidate);
-  } catch {
-    const start = candidate.indexOf('{');
-    const end = candidate.lastIndexOf('}');
-    if (start < 0 || end <= start) return null;
-    try {
-      return JSON.parse(candidate.slice(start, end + 1));
-    } catch {
-      return null;
-    }
-  }
-}
+function extractCandidates(answerText: string, currentDocContent: string): QaCandidate[] {
+  const currentNorm = normalizeForCompare(currentDocContent);
+  const pieces = stripHtml(answerText)
+    .split(/[\n。！？!?；;]+/g)
+    .map((item) => cleanSentence(item))
+    .filter(Boolean);
 
-function normalizeCandidates(value: unknown): QaCandidate[] {
-  if (!Array.isArray(value)) return [];
+  const dedupe = new Set<string>();
   const out: QaCandidate[] = [];
-  for (const item of value) {
-    if (!item || typeof item !== 'object') continue;
-    const row = item as Record<string, unknown>;
-    const category = row.category;
-    const text = row.text;
-    const targetSection = row.target_section;
-    const action = row.action;
-    if (
-      (category === 'new_concept' ||
-        category === 'new_fact' ||
-        category === 'minor_refinement' ||
-        category === 'duplicate') &&
-      typeof text === 'string' &&
-      text.trim() &&
-      typeof targetSection === 'string' &&
-      targetSection.trim() &&
-      (action === 'insert' || action === 'refine' || action === 'skip')
-    ) {
+
+  for (const piece of pieces) {
+    if (piece.length < 8 || piece.length > 160) continue;
+    if (NOISE_PATTERN.test(piece)) continue;
+    const normalized = normalizeForCompare(piece);
+    if (!normalized || normalized.length < 6) continue;
+    if (dedupe.has(normalized)) continue;
+    dedupe.add(normalized);
+
+    const duplicate = currentNorm.includes(normalized);
+    if (duplicate) {
       out.push({
-        category,
-        text: text.trim(),
-        target_section: targetSection.trim(),
-        action,
+        category: 'duplicate',
+        text: piece,
+        targetSection: '增量补充',
       });
+      continue;
     }
+
+    if (CONCEPT_PATTERN.test(piece)) {
+      out.push({
+        category: 'new_concept',
+        text: piece,
+        targetSection: '核心概念',
+      });
+      continue;
+    }
+
+    if (FACT_PATTERN.test(piece)) {
+      out.push({
+        category: 'new_fact',
+        text: piece,
+        targetSection: '关键事实',
+      });
+      continue;
+    }
+
+    out.push({
+      category: 'minor_refinement',
+      text: piece,
+      targetSection: '增量补充',
+    });
   }
-  return out;
+
+  return out.slice(0, 8);
 }
 
-function normalizeModelOutput(value: unknown): QaMergeModelOutput | null {
-  if (!value || typeof value !== 'object') return null;
-  const row = value as Record<string, unknown>;
-  const source_sufficient = row.source_sufficient === true;
-  const has_effective_new_info = row.has_effective_new_info === true;
-  const updated_markdown = typeof row.updated_markdown === 'string' ? row.updated_markdown : '';
-  const change_type =
-    row.change_type === 'new_concept' ||
-    row.change_type === 'new_fact' ||
-    row.change_type === 'minor_refinement' ||
-    row.change_type === 'none'
-      ? row.change_type
-      : 'none';
-  const changed_sections = Array.isArray(row.changed_sections)
-    ? row.changed_sections.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).slice(0, 8)
-    : [];
-  const summary = typeof row.summary === 'string' ? row.summary.trim() : '';
-  const candidates = normalizeCandidates(row.candidates);
-  return {
-    source_sufficient,
-    has_effective_new_info,
-    updated_markdown,
-    change_type,
-    changed_sections,
-    summary,
-    candidates,
-  };
+function pickSection(baseMarkdown: string, candidate: QaCandidate): string {
+  const headings = baseMarkdown
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^##\s+/.test(line))
+    .map((line) => line.replace(/^##\s+/, '').trim());
+
+  if (headings.length === 0) return candidate.targetSection;
+
+  const conceptHeading = headings.find((h) => /(概念|定义|术语)/.test(h));
+  const factHeading = headings.find((h) => /(事实|结论|证据|数据)/.test(h));
+  const refineHeading = headings.find((h) => /(建议|行动|策略|方案|补充)/.test(h));
+
+  if (candidate.category === 'new_concept' && conceptHeading) return conceptHeading;
+  if (candidate.category === 'new_fact' && factHeading) return factHeading;
+  if (candidate.category === 'minor_refinement' && refineHeading) return refineHeading;
+  return headings[0];
+}
+
+function insertBulletsIntoSection(markdown: string, section: string, bullets: string[]): string {
+  const cleanBullets = bullets
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => (item.startsWith('- ') ? item : `- ${item}`));
+  if (cleanBullets.length === 0) return markdown;
+
+  const lines = markdown.split('\n');
+  const headingIndex = lines.findIndex((line) => line.trim().toLowerCase() === `## ${section}`.toLowerCase());
+
+  if (headingIndex < 0) {
+    const appendix = [`## ${section}`, ...cleanBullets];
+    return `${markdown.trim()}\n\n${appendix.join('\n')}`.replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  let insertAt = lines.length;
+  for (let i = headingIndex + 1; i < lines.length; i += 1) {
+    if (/^##\s+/.test(lines[i].trim())) {
+      insertAt = i;
+      break;
+    }
+  }
+
+  const existingSectionText = lines.slice(headingIndex + 1, insertAt).join('\n');
+  const existingNorm = normalizeForCompare(existingSectionText);
+  const uniqueBullets = cleanBullets.filter((line) => !existingNorm.includes(normalizeForCompare(line)));
+  if (uniqueBullets.length === 0) return markdown;
+
+  const next = [...lines.slice(0, insertAt), ...uniqueBullets, ...lines.slice(insertAt)];
+  return next.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function summarizeCandidates(candidates: QaCandidate[]): Record<QaKnowledgeCategory, number> {
@@ -169,245 +199,103 @@ function summarizeCandidates(candidates: QaCandidate[]): Record<QaKnowledgeCateg
   return stats;
 }
 
-function buildFallbackMergePrompt(input: {
-  currentDocContent: string;
-  question: string;
-  answer: string;
-  citations?: QaMergeCitation[];
-  sourceSufficient: boolean;
-}): Array<{ role: 'system' | 'user'; content: string }> {
-  const systemPrompt = `你是“知识文档增量写入助手”。
-任务：把一次 QA 回答中的新增信息，以最小改动方式并入当前知识文档。
-
-规则：
-1. 输出必须是完整 Markdown，不要输出 JSON，不要额外解释。
-2. 严禁整段复制回答；仅抽取可复用知识点，做最小增量修改。
-3. 优先挂靠原有章节，非必要不重写无关内容。
-4. 若无有效新增，原样返回当前文档。
-5. ${
-    input.sourceSufficient
-      ? '有来源证据时可正常增量写入。'
-      : '当前无来源证据时也允许写入，但要更保守，只写明确且高置信新增点。'
-  }`;
-
-  const userPrompt =
-    `【当前知识文档】\n${input.currentDocContent || '(空)'}\n\n` +
-    `【用户问题】\n${input.question || '(空)'}\n\n` +
-    `【本轮回答】\n${input.answer || '(空)'}\n\n` +
-    `【来源证据】\n${buildCitationContext(input.citations)}\n\n` +
-    '请输出更新后的完整 Markdown。';
-
-  return [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userPrompt },
-  ];
+function ensureBaseMarkdown(content: string): string {
+  const normalized = normalizeKnowledgeDocMarkdown(stripHtml(content));
+  if (normalized) return normalized;
+  return '# 知识文档\n\n## 核心要点\n- 待补充';
 }
 
-async function runFallbackIncrementalMerge(input: {
-  runChat: typeof chat;
-  currentDocContent: string;
-  normalizedCurrent: string;
-  question: string;
-  answer: string;
-  citations?: QaMergeCitation[];
-  sourceSufficient: boolean;
-}): Promise<{
-  updated: boolean;
-  suggestedContent: string | null;
-}> {
-  const { content } = await input.runChat(
-    buildFallbackMergePrompt({
-      currentDocContent: input.currentDocContent,
-      question: input.question,
-      answer: input.answer,
-      citations: input.citations,
-      sourceSufficient: input.sourceSufficient,
-    })
-  );
-  const normalizedSuggested = normalizeKnowledgeDocMarkdown(content ?? '');
-  if (!normalizedSuggested) {
-    return {
-      updated: false,
-      suggestedContent: null,
-    };
-  }
-  const suggestedHtml = markdownToKnowledgeDocHtml(normalizedSuggested);
-  if (!stripHtml(suggestedHtml)) {
-    return {
-      updated: false,
-      suggestedContent: null,
-    };
-  }
-  if (normalizedSuggested === input.normalizedCurrent) {
-    return {
-      updated: false,
-      suggestedContent: null,
-    };
-  }
-  return {
-    updated: true,
-    suggestedContent: normalizedSuggested,
-  };
-}
-
-export async function mergeQaAnswerIntoKnowledgeDoc(
-  input: MergeQaAnswerInput,
-  deps: MergeQaAnswerDeps = {}
-): Promise<QaMergeResult> {
-  const currentDoc = input.currentDocContent || '';
-  const normalizedCurrent = normalizeKnowledgeDocMarkdown(stripHtml(currentDoc));
-  const sourceOk = isSourceSufficient(input.citations);
-
-  const runChat = deps.chatFn ?? chat;
-  const systemPrompt = `你是“知识文档最小增量写入助手”。
-你的任务：把一次 QA 回答中的有效新增信息，以最小改动方式并入当前知识文档。
-
-严格规则：
-1. 禁止把整段 QA 回答原样写入文档。
-2. 必须先抽取候选知识项，再与当前文档比对，分类为：
-   - new_concept
-   - new_fact
-   - minor_refinement
-   - duplicate
-3. 只允许写入 new_concept / new_fact / minor_refinement；duplicate 必须跳过。
-4. 若可挂靠现有章节，优先挂靠原位置，不新开大段。
-5. 默认最小编辑：优先新增一句、一个 bullet、一个定义补充或一个引用补强。
-6. 非必要不重写整段、非必要不改无关章节、非必要不改整体结构。
-7. 来源不足时也允许写入，但必须更保守：仅接受能直接从“本轮回答”抽取得到的明确新增点，且必须采用最小增量更新。
-8. 如果无有效新增，禁止写入。
-9. 输出必须是严格 JSON，不要输出额外解释。
-10. summary 必须是面向普通用户的简洁中文，不要输出实现细节、算法名、模块名或伪代码相关描述。
-
-JSON 结构：
-{
-  "source_sufficient": true|false,
-  "has_effective_new_info": true|false,
-  "updated_markdown": "完整更新后的 Markdown；若不更新则返回原文档",
-  "change_type": "new_concept|new_fact|minor_refinement|none",
-  "changed_sections": ["章节A", "章节B"],
-  "summary": "一句话更新说明",
-  "candidates": [
-    {
-      "category": "new_concept|new_fact|minor_refinement|duplicate",
-      "text": "候选知识项文本",
-      "target_section": "建议挂靠章节",
-      "action": "insert|refine|skip"
-    }
-  ]
-}`;
-
-  const userPrompt =
-    `【当前知识文档】\n${currentDoc || '(空)'}\n\n` +
-    `【用户问题】\n${input.answerPayload.question || '(空)'}\n\n` +
-    `【本轮回答】\n${input.answerPayload.answer || '(空)'}\n\n` +
-    `【可用来源证据】\n${buildCitationContext(input.citations)}\n` +
-    `【来源充分性】\n${sourceOk ? '有引用来源，可正常增量合并。' : '当前无可用引用来源，请采用更保守的最小增量策略。'}\n\n` +
-    '请按 JSON 结构输出。';
-
-  const { content } = await runChat([
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userPrompt },
-  ]);
-
-  const parsed = parseJsonObject(content ?? '');
-  const normalized = normalizeModelOutput(parsed);
-  if (!normalized) {
-    const fallback = await runFallbackIncrementalMerge({
-      runChat,
-      currentDocContent: currentDoc,
-      normalizedCurrent,
-      question: input.answerPayload.question,
-      answer: input.answerPayload.answer,
-      citations: input.citations,
-      sourceSufficient: sourceOk,
-    });
-    if (fallback.updated && fallback.suggestedContent) {
-      return {
-        updated: true,
-        suggestedContent: fallback.suggestedContent,
-        changeType: 'minor_refinement',
-        changedSections: ['增量补充'],
-        summary: '已将本轮回答中的新增信息增量写入知识文档。',
-        candidateStats: { ...DEFAULT_CANDIDATE_STATS, minor_refinement: 1 },
-      };
-    }
+export function mergeAnswerIntoKnowledgeDoc(
+  answerText: string,
+  currentDocContent: string,
+  sourceSupported: boolean
+): QaMergeResult {
+  if (!sourceSupported) {
     return {
       updated: false,
       suggestedContent: null,
       changeType: 'none',
       changedSections: [],
-      summary: '增量合并结果无效，未写入知识文档。',
-      blockedReason: 'INVALID_MERGE_PAYLOAD',
+      summary: '本轮来源支持不足，未写入知识文档。',
+      blockedReason: 'INSUFFICIENT_SOURCES',
       candidateStats: { ...DEFAULT_CANDIDATE_STATS },
     };
   }
 
-  const candidateStats = summarizeCandidates(normalized.candidates);
-  if (!normalized.has_effective_new_info) {
+  const baseMarkdown = ensureBaseMarkdown(currentDocContent);
+  const candidates = extractCandidates(answerText, baseMarkdown);
+  const candidateStats = summarizeCandidates(candidates);
+  const effective = candidates.filter((item) => item.category !== 'duplicate');
+  if (effective.length === 0) {
     return {
       updated: false,
       suggestedContent: null,
       changeType: 'none',
-      changedSections: normalized.changed_sections,
-      summary: normalized.summary || '本轮没有有效新增信息，未写入知识文档。',
+      changedSections: [],
+      summary: '本轮没有可写入的新增信息，知识文档保持不变。',
       blockedReason: 'NO_EFFECTIVE_NEW_INFO',
       candidateStats,
     };
   }
 
-  const normalizedSuggested = normalizeKnowledgeDocMarkdown(normalized.updated_markdown);
-  if (!normalizedSuggested || normalizedSuggested === normalizedCurrent) {
+  const grouped = new Map<string, string[]>();
+  for (const candidate of effective) {
+    const section = pickSection(baseMarkdown, candidate);
+    const rows = grouped.get(section) ?? [];
+    rows.push(candidate.text);
+    grouped.set(section, rows);
+  }
+
+  let merged = baseMarkdown;
+  const changedSections: string[] = [];
+  grouped.forEach((rows, section) => {
+    const next = insertBulletsIntoSection(merged, section, rows.slice(0, 2));
+    if (next !== merged) {
+      changedSections.push(section);
+      merged = next;
+    }
+  });
+
+  const normalizedMerged = normalizeKnowledgeDocMarkdown(merged);
+  if (!normalizedMerged || normalizeForCompare(normalizedMerged) === normalizeForCompare(baseMarkdown)) {
     return {
       updated: false,
       suggestedContent: null,
       changeType: 'none',
-      changedSections: normalized.changed_sections,
-      summary: normalized.summary || '本轮没有形成可应用改动，未写入知识文档。',
+      changedSections: [],
+      summary: '本轮没有可应用的最小增量改动。',
       blockedReason: 'NO_EFFECTIVE_NEW_INFO',
       candidateStats,
     };
   }
-  const suggestedHtml = markdownToKnowledgeDocHtml(normalizedSuggested);
-  if (!stripHtml(suggestedHtml)) {
-    const fallback = await runFallbackIncrementalMerge({
-      runChat,
-      currentDocContent: currentDoc,
-      normalizedCurrent,
-      question: input.answerPayload.question,
-      answer: input.answerPayload.answer,
-      citations: input.citations,
-      sourceSufficient: sourceOk,
-    });
-    if (fallback.updated && fallback.suggestedContent) {
-      return {
-        updated: true,
-        suggestedContent: fallback.suggestedContent,
-        changeType: normalized.change_type === 'none' ? 'minor_refinement' : normalized.change_type,
-        changedSections: normalized.changed_sections.length > 0 ? normalized.changed_sections : ['增量补充'],
-        summary: '已将本轮回答中的新增信息增量写入知识文档。',
-        candidateStats:
-          Object.values(candidateStats).some((value) => value > 0)
-            ? candidateStats
-            : { ...DEFAULT_CANDIDATE_STATS, minor_refinement: 1 },
-      };
-    }
-    return {
-      updated: false,
-      suggestedContent: null,
-      changeType: 'none',
-      changedSections: normalized.changed_sections,
-      summary: '本轮生成内容格式异常，未写入知识文档。',
-      blockedReason: 'INVALID_MERGE_PAYLOAD',
-      candidateStats,
-    };
-  }
+
+  const hasConcept = effective.some((item) => item.category === 'new_concept');
+  const hasFact = effective.some((item) => item.category === 'new_fact');
+  const changeType: QaMergeResult['changeType'] = hasConcept
+    ? 'new_concept'
+    : hasFact
+      ? 'new_fact'
+      : 'minor_refinement';
 
   return {
     updated: true,
-    suggestedContent: normalizedSuggested,
-    changeType: normalized.change_type,
-    changedSections: normalized.changed_sections,
-    summary: normalized.summary || '已按最小增量策略写入知识文档。',
+    suggestedContent: normalizedMerged,
+    changeType,
+    changedSections,
+    summary: `已按最小增量方式补充 ${effective.length} 条信息。`,
     candidateStats,
   };
+}
+
+function isSourceSufficient(citations: QaMergeCitation[] | undefined): boolean {
+  if (!Array.isArray(citations) || citations.length === 0) return false;
+  return citations.some((item) => typeof item.snippet === 'string' && item.snippet.trim().length > 0);
+}
+
+export async function mergeQaAnswerIntoKnowledgeDoc(input: MergeQaAnswerInput): Promise<QaMergeResult> {
+  return mergeAnswerIntoKnowledgeDoc(
+    input.answerPayload.answer || '',
+    input.currentDocContent || '',
+    typeof input.sourceSupported === 'boolean' ? input.sourceSupported : isSourceSufficient(input.citations)
+  );
 }
