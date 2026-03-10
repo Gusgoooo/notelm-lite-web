@@ -193,15 +193,18 @@ export async function PATCH(
         scenarioState: hasScenarioState ? scenarioState : parseStoredScenarioState(existingScenarioState?.content),
       });
     }
-    const id = `note_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    await db.insert(notes).values({
-      id,
-      notebookId,
-      title: KNOWLEDGE_DOC_NOTE_TITLE,
-      content,
-      createdAt: now,
-      updatedAt: now,
-    });
+    let id: string | null = null;
+    if (hasContent) {
+      id = `note_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      await db.insert(notes).values({
+        id,
+        notebookId,
+        title: KNOWLEDGE_DOC_NOTE_TITLE,
+        content,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
     if (hasHistory) {
       await db.insert(notes).values({
         id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
@@ -224,7 +227,7 @@ export async function PATCH(
     }
     return NextResponse.json({
       id,
-      content,
+      content: hasContent ? content : '',
       history,
       scenarioState,
     });

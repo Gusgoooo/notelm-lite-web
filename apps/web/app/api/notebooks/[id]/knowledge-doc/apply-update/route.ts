@@ -37,6 +37,20 @@ function normalizeCitations(value: unknown): QaMergeCitation[] {
   return out;
 }
 
+function toUserFacingBlockedSummary(blockedReason: string | undefined, fallbackSummary: string): string {
+  if (blockedReason === 'INSUFFICIENT_SOURCES') {
+    return '当前回答证据不足，暂未写入知识文档。请先补充来源后再更新。';
+  }
+  if (blockedReason === 'NO_EFFECTIVE_NEW_INFO') {
+    return '本轮没有可写入的新增信息，知识文档保持不变。';
+  }
+  if (blockedReason === 'INVALID_MERGE_PAYLOAD') {
+    return '本轮更新结果解析失败，暂未写入知识文档，请重试。';
+  }
+  const normalized = fallbackSummary.trim();
+  return normalized || '本轮没有可应用的更新，知识文档保持不变。';
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -74,11 +88,12 @@ export async function POST(
         citations: normalizeCitations(body?.citations),
       });
       if (!mergeResult.updated || !mergeResult.suggestedContent) {
+        const blockedSummary = toUserFacingBlockedSummary(mergeResult.blockedReason, mergeResult.summary);
         return NextResponse.json({
           updated: false,
           changeType: mergeResult.changeType,
           changedSections: mergeResult.changedSections,
-          summary: mergeResult.summary,
+          summary: blockedSummary,
           blockedReason: mergeResult.blockedReason ?? null,
           candidateStats: mergeResult.candidateStats,
         });
@@ -100,11 +115,12 @@ export async function POST(
       currentDocContent: currentContent,
     });
     if (!previewApply.updated || !previewApply.suggestedContent) {
+      const blockedSummary = toUserFacingBlockedSummary(previewApply.blockedReason, previewApply.summary);
       return NextResponse.json({
         updated: false,
         changeType: previewApply.changeType,
         changedSections: [],
-        summary: previewApply.summary,
+        summary: blockedSummary,
         blockedReason: previewApply.blockedReason ?? 'NO_EFFECTIVE_NEW_INFO',
       });
     }

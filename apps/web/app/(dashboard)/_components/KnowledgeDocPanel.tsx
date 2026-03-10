@@ -211,6 +211,14 @@ function hasMeaningfulHtml(html: string): boolean {
   return stripHtml(html).length > 0;
 }
 
+function toSafeDocHtmlFromSuggestedMarkdown(suggestedMarkdown: string, currentHtml: string): string | null {
+  const nextHtml = markdownToKnowledgeDocHtml(suggestedMarkdown);
+  if (!hasMeaningfulHtml(nextHtml) && suggestedMarkdown.trim() && hasMeaningfulHtml(currentHtml)) {
+    return null;
+  }
+  return nextHtml || '<p></p>';
+}
+
 function normalizeHistoryEntries(value: unknown): KnowledgeDocHistoryEntry[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -653,13 +661,6 @@ export function KnowledgeDocPanel({
     [docId, emitDocStatus, notebookId, saving]
   );
 
-  const ensureDocExists = useCallback(async () => {
-    if (docId) return docId;
-    const currentHtml = content || '<p></p>';
-    const saved = await saveDoc(currentHtml);
-    return saved?.id ?? null;
-  }, [content, docId, saveDoc]);
-
   const saveScenarioState = useCallback(
     async (nextScenarioState: KnowledgeDocScenarioState) => {
       if (!notebookId) return;
@@ -838,11 +839,15 @@ export function KnowledgeDocPanel({
 
   const applyGeneratedText = useCallback(
     async (nextText: string, options: SaveDocOptions = {}) => {
-      const newHtml = markdownToKnowledgeDocHtml(nextText);
+      const currentHtml = editor?.getHTML() ?? content ?? '<p></p>';
+      const newHtml = toSafeDocHtmlFromSuggestedMarkdown(nextText, currentHtml);
+      if (!newHtml) {
+        throw new Error('生成内容格式异常，已保留当前知识文档。');
+      }
       editor?.commands.setContent(newHtml || '<p></p>', false);
       await saveDoc(newHtml || '<p></p>', options);
     },
-    [editor, saveDoc]
+    [content, editor, saveDoc]
   );
 
   const runDraftGeneration = useCallback(
@@ -869,7 +874,6 @@ export function KnowledgeDocPanel({
       const scenarioLabel = scenarioConfig.label;
       const previousScenarioState = baseScenarioState;
       try {
-        await ensureDocExists();
         const nextScenarioState: KnowledgeDocScenarioState = {
           ...baseScenarioState,
           activeScenarioId: scenarioConfig.id,
@@ -902,7 +906,7 @@ export function KnowledgeDocPanel({
         setDraftScenarioLoading(null);
       }
     },
-    [applyGeneratedText, draftScenarioLoading, ensureDocExists, notebookId, saveScenarioState, scenarioState]
+    [applyGeneratedText, draftScenarioLoading, notebookId, saveScenarioState, scenarioState]
   );
 
   const handleApplyStructure = useCallback(
@@ -1066,11 +1070,10 @@ export function KnowledgeDocPanel({
     [content, creationGenerating, editor, notebookId]
   );
 
-  const openDraftSheet = useCallback(async () => {
+  const openDraftSheet = useCallback(() => {
     if (draftScenarioLoading || creationGenerating) return;
-    await ensureDocExists();
     setSheetMode('draft');
-  }, [creationGenerating, draftScenarioLoading, ensureDocExists]);
+  }, [creationGenerating, draftScenarioLoading]);
 
   const requestPreviewDownload = useCallback(() => {
     const markdown = normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(editor?.getHTML() ?? content ?? ''));
@@ -1091,7 +1094,12 @@ export function KnowledgeDocPanel({
       const previous = editor ? stripHtml(editor.getHTML()) : '';
       if (detail?.autoApply || autoUpdate) {
         setUpdatingFromChat(true);
-        const newHtml = markdownToKnowledgeDocHtml(suggested);
+        const currentHtml = editor?.getHTML() ?? content ?? '<p></p>';
+        const newHtml = toSafeDocHtmlFromSuggestedMarkdown(suggested, currentHtml);
+        if (!newHtml) {
+          setUpdatingFromChat(false);
+          return;
+        }
         editor?.commands.setContent(newHtml || '<p></p>', false);
         void saveDoc(newHtml || '<p></p>', {
           historyMode: 'append',
@@ -1140,7 +1148,11 @@ export function KnowledgeDocPanel({
           setUpdatingFromChat(false);
           return;
         }
-        const newHtml = markdownToKnowledgeDocHtml(String(data.suggestedContent));
+        const newHtml = toSafeDocHtmlFromSuggestedMarkdown(String(data.suggestedContent), currentContent);
+        if (!newHtml) {
+          setUpdatingFromChat(false);
+          return;
+        }
         editor.commands.setContent(newHtml || '<p></p>', false);
         void saveDoc(newHtml || '<p></p>', {
           historyMode: 'append',
@@ -1195,7 +1207,13 @@ export function KnowledgeDocPanel({
 
   const confirmPending = useCallback(() => {
     if (!pendingDiff || !editor) return;
-    const newHtml = markdownToKnowledgeDocHtml(pendingDiff.suggested);
+    const currentEditorHtml = editor.getHTML();
+    const newHtml = toSafeDocHtmlFromSuggestedMarkdown(pendingDiff.suggested, currentEditorHtml);
+    if (!newHtml) {
+      alert('本次建议内容格式异常，未应用到知识文档。');
+      setPendingDiff(null);
+      return;
+    }
     editor.commands.setContent(newHtml || '<p></p>', false);
     void saveDoc(newHtml || '<p></p>', {
       historyMode: 'append',

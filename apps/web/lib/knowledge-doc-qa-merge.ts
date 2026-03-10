@@ -1,5 +1,5 @@
 import { chat } from 'shared';
-import { normalizeKnowledgeDocMarkdown } from './knowledge-doc-markdown';
+import { markdownToKnowledgeDocHtml, normalizeKnowledgeDocMarkdown } from './knowledge-doc-markdown';
 
 export type QaKnowledgeCategory = 'new_concept' | 'new_fact' | 'minor_refinement' | 'duplicate';
 
@@ -176,17 +176,6 @@ export async function mergeQaAnswerIntoKnowledgeDoc(
   const currentDoc = input.currentDocContent || '';
   const normalizedCurrent = normalizeKnowledgeDocMarkdown(stripHtml(currentDoc));
   const sourceOk = isSourceSufficient(input.citations);
-  if (!sourceOk) {
-    return {
-      updated: false,
-      suggestedContent: null,
-      changeType: 'none',
-      changedSections: [],
-      summary: '当前回答来源不足，未写入知识文档。',
-      blockedReason: 'INSUFFICIENT_SOURCES',
-      candidateStats: { ...DEFAULT_CANDIDATE_STATS },
-    };
-  }
 
   const runChat = deps.chatFn ?? chat;
   const systemPrompt = `你是“知识文档最小增量写入助手”。
@@ -203,8 +192,10 @@ export async function mergeQaAnswerIntoKnowledgeDoc(
 4. 若可挂靠现有章节，优先挂靠原位置，不新开大段。
 5. 默认最小编辑：优先新增一句、一个 bullet、一个定义补充或一个引用补强。
 6. 非必要不重写整段、非必要不改无关章节、非必要不改整体结构。
-7. 如果来源不足或无有效新增，禁止写入。
-8. 输出必须是严格 JSON，不要输出额外解释。
+7. 来源不足时也允许写入，但必须更保守：仅接受能直接从“本轮回答”抽取得到的明确新增点，且必须采用最小增量更新。
+8. 如果无有效新增，禁止写入。
+9. 输出必须是严格 JSON，不要输出额外解释。
+10. summary 必须是面向普通用户的简洁中文，不要输出实现细节、算法名、模块名或伪代码相关描述。
 
 JSON 结构：
 {
@@ -228,7 +219,8 @@ JSON 结构：
     `【当前知识文档】\n${currentDoc || '(空)'}\n\n` +
     `【用户问题】\n${input.answerPayload.question || '(空)'}\n\n` +
     `【本轮回答】\n${input.answerPayload.answer || '(空)'}\n\n` +
-    `【可用来源证据】\n${buildCitationContext(input.citations)}\n\n` +
+    `【可用来源证据】\n${buildCitationContext(input.citations)}\n` +
+    `【来源充分性】\n${sourceOk ? '有引用来源，可正常增量合并。' : '当前无可用引用来源，请采用更保守的最小增量策略。'}\n\n` +
     '请按 JSON 结构输出。';
 
   const { content } = await runChat([
@@ -251,18 +243,6 @@ JSON 结构：
   }
 
   const candidateStats = summarizeCandidates(normalized.candidates);
-  if (!normalized.source_sufficient) {
-    return {
-      updated: false,
-      suggestedContent: null,
-      changeType: 'none',
-      changedSections: [],
-      summary: normalized.summary || '当前回答来源不足，未写入知识文档。',
-      blockedReason: 'INSUFFICIENT_SOURCES',
-      candidateStats,
-    };
-  }
-
   if (!normalized.has_effective_new_info) {
     return {
       updated: false,
@@ -284,6 +264,18 @@ JSON 结构：
       changedSections: normalized.changed_sections,
       summary: normalized.summary || '本轮没有形成可应用改动，未写入知识文档。',
       blockedReason: 'NO_EFFECTIVE_NEW_INFO',
+      candidateStats,
+    };
+  }
+  const suggestedHtml = markdownToKnowledgeDocHtml(normalizedSuggested);
+  if (!stripHtml(suggestedHtml)) {
+    return {
+      updated: false,
+      suggestedContent: null,
+      changeType: 'none',
+      changedSections: normalized.changed_sections,
+      summary: '本轮生成内容格式异常，未写入知识文档。',
+      blockedReason: 'INVALID_MERGE_PAYLOAD',
       candidateStats,
     };
   }

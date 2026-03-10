@@ -160,6 +160,21 @@ function sanitizeSkillAnswer(answer: string, allowScriptExecution: boolean): str
   return text.replace(/\n{3,}/g, '\n\n').trim();
 }
 
+function userExplicitlyRequestsCode(userMessage: string): boolean {
+  return /(代码|示例代码|伪代码|pseudo-?code|code\s*snippet|python|javascript|typescript|java|c\+\+|go|rust|sql|bash|shell|命令行)/i.test(
+    userMessage
+  );
+}
+
+function sanitizeNonCodeAnswer(answer: string): string {
+  const withoutFencedCode = answer.replace(/```[\s\S]*?```/g, '\n');
+  const withoutPseudoHeadings = withoutFencedCode.replace(
+    /(^|\n)(?:#{1,6}\s*)?(?:伪代码|pseudo-?code|示例代码)\s*[:：]?\s*(?=\n|$)/gim,
+    '\n'
+  );
+  return withoutPseudoHeadings.replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function extractCitationNumbers(answer: string, max: number): number[] {
   const seen = new Set<number>();
   const out: number[] = [];
@@ -334,7 +349,7 @@ async function buildKnowledgeDocPreview(input: {
     const fallbackSummary = input.mode === 'doc_replace' ? '已准备整篇替换预览（回退版本）' : '已准备局部更新预览（回退版本）';
     const fallbackAnswer =
       `已生成${modeLabel}，以下是可应用草稿：\n\n` +
-      `\`\`\`markdown\n${buildPreviewSnippet(fallbackMarkdown)}\n\`\`\``;
+      `${buildPreviewSnippet(fallbackMarkdown)}`;
     return {
       answer: fallbackAnswer,
       payload: {
@@ -347,7 +362,7 @@ async function buildKnowledgeDocPreview(input: {
 
   const answer =
     `已生成${modeLabel}，请先确认预览后再点击「更新知识文档」应用：\n\n` +
-    `\`\`\`markdown\n${buildPreviewSnippet(suggestedMarkdown)}\n\`\`\``;
+    `${buildPreviewSnippet(suggestedMarkdown)}`;
 
   return {
     answer,
@@ -898,9 +913,12 @@ export async function POST(request: Request) {
           { role: 'user' as const, content: userPrompt },
         ];
         const { content: rawAnswer } = await chat(chatMessages);
-        answerBase = useSkillPlanningTemplate
+        const processedAnswer = useSkillPlanningTemplate
           ? sanitizeSkillAnswer(rawAnswer, hasScriptCapability)
           : rawAnswer;
+        answerBase = userExplicitlyRequestsCode(trimmedUserMessage)
+          ? processedAnswer
+          : sanitizeNonCodeAnswer(processedAnswer);
         previewPayload = {
           mode: 'qa',
           question: trimmedUserMessage,

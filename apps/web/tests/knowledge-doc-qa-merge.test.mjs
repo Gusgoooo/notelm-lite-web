@@ -45,6 +45,47 @@ describe('knowledge doc apply + qa merge', () => {
     expect(result.changedSections).toContain('核心概念');
   });
 
+  it('qa 合并产出为无效格式时不应覆盖文档', async () => {
+    const result = await mergeQaAnswerIntoKnowledgeDoc(
+      {
+        answerPayload: {
+          question: '补充这个结论',
+          answer: '补充一个执行建议。',
+        },
+        currentDocContent: '# 决策建议\n- 保留原内容',
+        citations: [
+          {
+            sourceTitle: 'paper-a',
+            snippet: 'keep original content',
+            refNumber: 1,
+          },
+        ],
+      },
+      {
+        chatFn: async () => ({
+          content: JSON.stringify({
+            source_sufficient: true,
+            has_effective_new_info: true,
+            updated_markdown: '<div><span>这是 HTML 不是 markdown</span></div>',
+            change_type: 'minor_refinement',
+            changed_sections: ['决策建议'],
+            summary: '新增执行建议',
+            candidates: [
+              {
+                category: 'minor_refinement',
+                text: '新增执行建议',
+                target_section: '决策建议',
+                action: 'insert',
+              },
+            ],
+          }),
+        }),
+      }
+    );
+    expect(result.updated).toBe(false);
+    expect(result.blockedReason).toBe('INVALID_MERGE_PAYLOAD');
+  });
+
   it('qa 点击更新但无新增时不更新', async () => {
     const result = await mergeQaAnswerIntoKnowledgeDoc(
       {
@@ -86,17 +127,40 @@ describe('knowledge doc apply + qa merge', () => {
     expect(result.blockedReason).toBe('NO_EFFECTIVE_NEW_INFO');
   });
 
-  it('qa 来源不足时不写入', async () => {
-    const result = await mergeQaAnswerIntoKnowledgeDoc({
-      answerPayload: {
-        question: '这个结论靠谱吗？',
-        answer: '目前看起来靠谱。',
+  it('qa 无来源时也可执行最小增量写入', async () => {
+    const result = await mergeQaAnswerIntoKnowledgeDoc(
+      {
+        answerPayload: {
+          question: '这个结论靠谱吗？',
+          answer: '当前看法是先做小范围试点，再根据反馈扩大范围。',
+        },
+        currentDocContent: '# 决策建议\n- 先确认目标',
+        citations: [],
       },
-      currentDocContent: '# 概要\n- 现有内容',
-      citations: [],
-    });
-    expect(result.updated).toBe(false);
-    expect(result.blockedReason).toBe('INSUFFICIENT_SOURCES');
+      {
+        chatFn: async () => ({
+          content: JSON.stringify({
+            source_sufficient: false,
+            has_effective_new_info: true,
+            updated_markdown: '# 决策建议\n- 先确认目标\n- 先做小范围试点，再根据反馈扩大范围',
+            change_type: 'minor_refinement',
+            changed_sections: ['决策建议'],
+            summary: '新增了试点推进的执行建议',
+            candidates: [
+              {
+                category: 'minor_refinement',
+                text: '先做小范围试点，再根据反馈扩大范围',
+                target_section: '决策建议',
+                action: 'insert',
+              },
+            ],
+          }),
+        }),
+      }
+    );
+    expect(result.updated).toBe(true);
+    expect(result.changeType).toBe('minor_refinement');
+    expect(result.changedSections).toContain('决策建议');
   });
 
   it('doc_edit 点击按钮后应用局部更新', () => {
@@ -123,4 +187,3 @@ describe('knowledge doc apply + qa merge', () => {
     expect(result.changeType).toBe('new_fact');
   });
 });
-

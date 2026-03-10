@@ -164,6 +164,22 @@ function compactMarkdown(value: string): string {
   return value.replace(/\n{3,}/g, '\n\n').trim();
 }
 
+function toApplyUpdateHintMessage(input: {
+  blockedReason?: unknown;
+}): string {
+  const reason = typeof input.blockedReason === 'string' ? input.blockedReason : '';
+  if (reason === 'INSUFFICIENT_SOURCES') {
+    return '当前回答证据不足，暂未写入知识文档。请先补充来源后再更新。';
+  }
+  if (reason === 'NO_EFFECTIVE_NEW_INFO') {
+    return '本轮没有可写入的新增信息，知识文档保持不变。';
+  }
+  if (reason === 'INVALID_MERGE_PAYLOAD') {
+    return '本轮更新结果解析失败，暂未写入知识文档，请重试。';
+  }
+  return '本轮没有可应用的更新，知识文档保持不变。';
+}
+
 function MarkdownContent({ content }: { content: string }) {
   const normalizedContent = compactMarkdown(content);
 
@@ -426,7 +442,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       const detail = (event as CustomEvent<{ addedCount?: number }>).detail;
       const addedCount = Number(detail?.addedCount ?? 0);
       if (addedCount <= 0) return;
-      const docActionType = knowledgeDocState.exists ? 'update_doc' : 'create_doc';
+      const docActionType = knowledgeDocState.hasContent ? 'update_doc' : 'create_doc';
       const docVerb = docActionType === 'update_doc' ? '更新' : '创建';
       setMessages((prev) => [
         ...prev,
@@ -449,7 +465,7 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
       window.removeEventListener('knowledge-doc-saved', onKnowledgeDocSaved as EventListener);
       window.removeEventListener('sources-added', onSourcesAdded as EventListener);
     };
-  }, [fetchKnowledgeDocState, knowledgeDocState.exists]);
+  }, [fetchKnowledgeDocState, knowledgeDocState.hasContent]);
 
   useEffect(() => {
     if (entryMode !== 'bootstrap') return;
@@ -597,25 +613,26 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
         }
 
         if (!applyData?.updated || typeof applyData?.suggestedContent !== 'string') {
-          if (typeof applyData?.summary === 'string' && applyData.summary.trim()) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: `doc-update-hint-${Date.now()}`,
-                role: 'assistant',
-                content: applyData.summary.trim(),
-                showUpdateButton: true,
-                intentType: 'qa',
-                previewPayload: {
-                  mode: 'qa',
-                  question: '',
-                  answer: applyData.summary.trim(),
-                  sourceSufficient: false,
-                },
+          const hintMessage = toApplyUpdateHintMessage({
+            blockedReason: applyData?.blockedReason,
+          });
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `doc-update-hint-${Date.now()}`,
+              role: 'assistant',
+              content: hintMessage,
+              showUpdateButton: true,
+              intentType: 'qa',
+              previewPayload: {
+                mode: 'qa',
+                question: '',
+                answer: hintMessage,
+                sourceSufficient: false,
               },
-            ]);
-            setTailVersion((v) => v + 1);
-          }
+            },
+          ]);
+          setTailVersion((v) => v + 1);
           return;
         }
 
@@ -986,6 +1003,9 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                 const parsed = parseMessageActions(m.content);
                 const refineDone = isRefineCompletedMessage(parsed.displayContent);
                 const showUpdateButton = m.role === 'assistant' && (m.showUpdateButton ?? true);
+                const requiresCreateDoc = !knowledgeDocState.hasContent || m.action?.type === 'create_doc';
+                const applyMessageId = m.assistantMessageId ?? m.id;
+                const isApplyingUpdate = applyingUpdateMessageId === applyMessageId;
                 return (
                   <div
                     key={m.id}
@@ -1010,12 +1030,17 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                 onClick={async () => {
                                   try {
                                     if (!notebookId) return;
+                                    if (requiresCreateDoc) {
+                                      window.dispatchEvent(new CustomEvent('knowledge-doc-expand'));
+                                      window.dispatchEvent(new CustomEvent('knowledge-doc-create-request'));
+                                      return;
+                                    }
                                     if (m.action?.source === 'sources') {
                                       window.dispatchEvent(new CustomEvent('knowledge-doc-expand'));
                                       window.dispatchEvent(
                                         new CustomEvent('knowledge-doc-generate-request', {
                                           detail: {
-                                            mode: knowledgeDocState.exists ? 'update' : 'create',
+                                            mode: 'update',
                                           },
                                         })
                                       );
@@ -1053,9 +1078,9 @@ export function ChatPanel({ notebookId }: { notebookId: string | null }) {
                                     alert(error instanceof Error ? error.message : '更新知识文档失败');
                                   }
                                 }}
-                                disabled={applyingUpdateMessageId === (m.assistantMessageId ?? m.id)}
+                                disabled={!requiresCreateDoc && isApplyingUpdate}
                               >
-                                {applyingUpdateMessageId === (m.assistantMessageId ?? m.id) ? '更新中…' : '更新知识文档'}
+                                {requiresCreateDoc ? '新建知识文档' : isApplyingUpdate ? '更新中…' : '更新知识文档'}
                               </button>
                             </div>
                           </div>

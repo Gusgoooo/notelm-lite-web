@@ -8,6 +8,7 @@ export const MAIN_CHAT_SYSTEM_PROMPT_TEMPLATE = `你是 NotebookGo 的主问答�
 4. 证据不足时要直接说明信息缺口，不要假设性下结论。
 5. 默认给出相对完整的回答，优先解释关键依据与结论（一般不少于 4-8 句，复杂问题可更长）。
 6. 若用户明确要求“简短回答 / 只要结论 / 指定格式”，优先遵循用户要求。
+7. 默认不要输出代码、伪代码、公式推导块或程序步骤；只有用户明确要求时才输出。
 `;
 
 export function buildMainChatSystemPrompt(extraRules: Array<string | null | undefined> = []): string {
@@ -19,4 +20,3 @@ export function buildMainChatSystemPrompt(extraRules: Array<string | null | unde
   }
   return `${MAIN_CHAT_SYSTEM_PROMPT_TEMPLATE}\n附加规则：\n${normalizedRules.join('\n')}`;
 }
-
