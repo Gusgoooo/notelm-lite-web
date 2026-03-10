@@ -570,15 +570,24 @@ export function WorkspaceShell({
       }
     };
 
+    const onOpenWorksList = () => {
+      if (pendingWorks.length > 0) {
+        setSelectedWorkId((prev) => prev ?? pendingWorks[0]?.id ?? null);
+      }
+      setWorksOpen(true);
+    };
+
     window.addEventListener('artifact-notice', onArtifactNotice as EventListener);
     window.addEventListener('artifact-output-created', onArtifactOutputCreated as EventListener);
     window.addEventListener('notes-updated', onNotesUpdated);
+    window.addEventListener('workspace-open-works-list', onOpenWorksList as EventListener);
     return () => {
       window.removeEventListener('artifact-notice', onArtifactNotice as EventListener);
       window.removeEventListener('artifact-output-created', onArtifactOutputCreated as EventListener);
       window.removeEventListener('notes-updated', onNotesUpdated);
+      window.removeEventListener('workspace-open-works-list', onOpenWorksList as EventListener);
     };
-  }, [fetchWorks, queueArtifactNotice, worksOpen]);
+  }, [fetchWorks, pendingWorks, queueArtifactNotice, worksOpen]);
 
   useEffect(() => {
     if (!worksOpen) return;
@@ -934,7 +943,7 @@ export function WorkspaceShell({
                   type="button"
                   onClick={() => void handleCreateNotebookCopy()}
                   disabled={creatingNotebookCopy || creatingNotebook || publishSaving}
-                  className="inline-flex h-7 items-center rounded-[12px] border border-black/20 bg-white px-3 text-xs font-medium text-gray-800 transition hover:bg-gray-50 disabled:opacity-60 dark:border-white/20 dark:bg-transparent dark:text-gray-100 dark:hover:bg-white/10"
+                  className="inline-flex h-7 items-center rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200 disabled:opacity-60 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
                 >
                   {creatingNotebookCopy ? '创建中…' : '创建副本'}
                 </button>
@@ -942,7 +951,7 @@ export function WorkspaceShell({
                   type="button"
                   onClick={() => setPublishOpen(true)}
                   disabled={publishSaving || creatingNotebook || creatingNotebookCopy}
-                  className="inline-flex h-7 items-center rounded-[12px] border border-black/20 bg-white px-3 text-xs font-medium text-gray-800 transition hover:bg-gray-50 disabled:opacity-60 dark:border-white/20 dark:bg-transparent dark:text-gray-100 dark:hover:bg-white/10"
+                  className="inline-flex h-7 items-center rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200 disabled:opacity-60 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
                 >
                   {publishSaving ? '分享中…' : '分享'}
                 </button>
@@ -950,7 +959,7 @@ export function WorkspaceShell({
                   type="button"
                   onClick={() => void handleCreateNotebook()}
                   disabled={creatingNotebook || creatingNotebookCopy || publishSaving}
-                  className="inline-flex h-7 items-center rounded-[12px] border border-black/20 bg-white px-3 text-xs font-medium text-gray-800 transition hover:bg-gray-50 disabled:opacity-60 dark:border-white/20 dark:bg-transparent dark:text-gray-100 dark:hover:bg-white/10"
+                  className="inline-flex h-7 items-center rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200 disabled:opacity-60 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
                 >
                   {creatingNotebook ? '新建中…' : '新建 Notebook'}
                 </button>

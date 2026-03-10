@@ -32,13 +32,6 @@ type SheetMode = 'draft' | 'create' | null;
 type HistoryMode = 'append' | 'merge-edit' | 'skip';
 type ScenarioEditorMode = 'create' | 'clone' | 'edit';
 
-type KnowledgeDocCitation = {
-  sourceTitle: string;
-  pageStart?: number;
-  pageEnd?: number;
-  snippet: string;
-};
-
 type KnowledgeDocHistoryEntry = {
   id: string;
   content: string;
@@ -189,22 +182,6 @@ function stripHtml(html: string): string {
   const div = document.createElement('div');
   div.innerHTML = html;
   return (div.textContent ?? div.innerText ?? '').replace(/\s+/g, ' ').trim();
-}
-
-function buildHighlightedMaterials(citations: KnowledgeDocCitation[] | undefined): string {
-  if (!Array.isArray(citations) || citations.length === 0) return '';
-  return citations
-    .map(
-      (citation) =>
-        `- ${citation.sourceTitle}${
-          citation.pageStart != null
-            ? `（p.${citation.pageStart}${
-                citation.pageEnd != null && citation.pageEnd !== citation.pageStart ? `-${citation.pageEnd}` : ''
-              }）`
-            : ''
-        }：${citation.snippet}`
-    )
-    .join('\n');
 }
 
 function hasMeaningfulHtml(html: string): boolean {
@@ -502,11 +479,9 @@ export function KnowledgeDocPanel({
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [autoUpdate, setAutoUpdate] = useState(false);
   const [pendingDiff, setPendingDiff] = useState<{ previous: string; suggested: string } | null>(null);
   const [updatingFromChat, setUpdatingFromChat] = useState(false);
   const [sheetMode, setSheetMode] = useState<SheetMode>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [docHistory, setDocHistory] = useState<KnowledgeDocHistoryEntry[]>([]);
   const [scenarioState, setScenarioState] = useState<KnowledgeDocScenarioState>(getDefaultKnowledgeDocScenarioState);
@@ -1075,24 +1050,13 @@ export function KnowledgeDocPanel({
     setSheetMode('draft');
   }, [creationGenerating, draftScenarioLoading]);
 
-  const requestPreviewDownload = useCallback(() => {
-    const markdown = normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(editor?.getHTML() ?? content ?? ''));
-    const blob = new Blob([markdown || stripHtml(content)], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'knowledge-doc.md';
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }, [content, editor]);
-
   useEffect(() => {
     const onUpdate = (event: Event) => {
       const detail = (event as CustomEvent<{ suggestedContent: string; autoApply?: boolean }>).detail;
       const suggested = typeof detail?.suggestedContent === 'string' ? detail.suggestedContent : '';
       if (!suggested) return;
       const previous = editor ? stripHtml(editor.getHTML()) : '';
-      if (detail?.autoApply || autoUpdate) {
+      if (detail?.autoApply) {
         setUpdatingFromChat(true);
         const currentHtml = editor?.getHTML() ?? content ?? '<p></p>';
         const newHtml = toSafeDocHtmlFromSuggestedMarkdown(suggested, currentHtml);
@@ -1103,7 +1067,7 @@ export function KnowledgeDocPanel({
         editor?.commands.setContent(newHtml || '<p></p>', false);
         void saveDoc(newHtml || '<p></p>', {
           historyMode: 'append',
-          summary: '根据对话自动更新知识文档',
+          summary: '根据本轮回答更新知识文档',
         });
         setPendingDiff(null);
         setUpdatingFromChat(false);
@@ -1113,58 +1077,7 @@ export function KnowledgeDocPanel({
     };
     window.addEventListener('knowledge-doc-update-from-chat', onUpdate as EventListener);
     return () => window.removeEventListener('knowledge-doc-update-from-chat', onUpdate as EventListener);
-  }, [autoUpdate, editor, saveDoc]);
-
-  useEffect(() => {
-    if (!autoUpdate || !notebookId || !editor) return;
-    const onAnswer = async (event: Event) => {
-      const detail = (event as CustomEvent<{
-        user_question?: string;
-        assistant_answer?: string;
-        citations?: KnowledgeDocCitation[];
-      }>).detail;
-      const userQ = typeof detail?.user_question === 'string' ? detail.user_question : '';
-      const assistantA = typeof detail?.assistant_answer === 'string' ? detail.assistant_answer : '';
-      const highlightedMaterials = buildHighlightedMaterials(detail?.citations);
-      if (!userQ.trim() && !assistantA.trim()) return;
-      setUpdatingFromChat(true);
-      try {
-        const currentContent = editor.getHTML();
-        const res = await fetch(
-          `/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc/update-from-chat`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              currentContent,
-              lastUserMessage: userQ,
-              lastAssistantMessage: assistantA,
-              highlightedMaterials,
-            }),
-          }
-        );
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data?.suggestedContent) {
-          setUpdatingFromChat(false);
-          return;
-        }
-        const newHtml = toSafeDocHtmlFromSuggestedMarkdown(String(data.suggestedContent), currentContent);
-        if (!newHtml) {
-          setUpdatingFromChat(false);
-          return;
-        }
-        editor.commands.setContent(newHtml || '<p></p>', false);
-        void saveDoc(newHtml || '<p></p>', {
-          historyMode: 'append',
-          summary: '根据最新对话自动更新知识文档',
-        });
-      } finally {
-        setUpdatingFromChat(false);
-      }
-    };
-    window.addEventListener('knowledge-unit-trigger', onAnswer as EventListener);
-    return () => window.removeEventListener('knowledge-unit-trigger', onAnswer as EventListener);
-  }, [autoUpdate, editor, notebookId, saveDoc]);
+  }, [content, editor, saveDoc]);
 
   useEffect(() => {
     const onCreateRequest = () => {
@@ -1317,15 +1230,6 @@ export function KnowledgeDocPanel({
             <HistoryIcon />
             历史
           </button>
-          <label className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-[12px] bg-gray-100 px-2.5 text-xs text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700">
-            <span className="font-medium text-gray-600 dark:text-gray-300">自动更新</span>
-            <input
-              type="checkbox"
-              checked={autoUpdate}
-              onChange={(e) => setAutoUpdate(e.target.checked)}
-              className="h-4 w-4 rounded border border-gray-300 accent-gray-900 dark:border-gray-600"
-            />
-          </label>
           {onToggleCollapse ? (
             <button
               type="button"
@@ -1421,10 +1325,10 @@ export function KnowledgeDocPanel({
         <div className="relative z-10 flex shrink-0 items-center justify-center gap-2 px-3 pb-3 pt-0">
           <button
             type="button"
-            onClick={() => setPreviewOpen(true)}
+            onClick={() => window.dispatchEvent(new CustomEvent('workspace-open-works-list'))}
             className="inline-flex h-10 items-center rounded-[12px] bg-gray-100 px-4 text-sm font-medium text-gray-700 transition hover:bg-gray-200"
           >
-            预览
+            作品列表
           </button>
           <button
             type="button"
@@ -1775,41 +1679,6 @@ export function KnowledgeDocPanel({
                       ? '保存场景'
                       : '保存新场景'}
               </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {previewOpen ? (
-        <div className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-[24px] bg-white shadow-xl dark:bg-gray-900">
-            <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-800">
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">知识文档预览</h3>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">完整查看当前渲染后的文档内容。</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={requestPreviewDownload}
-                  className="inline-flex h-8 items-center rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200"
-                >
-                  下载
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewOpen(false)}
-                  className="inline-flex h-8 items-center rounded-[12px] bg-gray-100 px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-200"
-                >
-                  关闭
-                </button>
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto bg-[#f7f7f8] p-5 dark:bg-gray-950">
-              <div
-                className="knowledge-doc-editor mx-auto min-h-[60vh] max-w-3xl rounded-[20px] bg-[#f8f7f1] px-8 py-8 shadow-sm dark:bg-gray-900"
-                dangerouslySetInnerHTML={{ __html: currentHtml }}
-              />
             </div>
           </div>
         </div>

@@ -175,7 +175,7 @@ function toApplyUpdateHintMessage(input: {
     return '本轮没有可写入的新增信息，知识文档保持不变。';
   }
   if (reason === 'INVALID_MERGE_PAYLOAD') {
-    return '本轮更新结果解析失败，暂未写入知识文档，请重试。';
+    return '本轮暂无可应用改动，知识文档保持不变。';
   }
   return '本轮没有可应用的更新，知识文档保持不变。';
 }

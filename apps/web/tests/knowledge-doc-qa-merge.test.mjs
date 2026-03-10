@@ -45,7 +45,8 @@ describe('knowledge doc apply + qa merge', () => {
     expect(result.changedSections).toContain('核心概念');
   });
 
-  it('qa 合并产出为无效格式时不应覆盖文档', async () => {
+  it('qa 合并 JSON 解析失败时走兜底增量写入', async () => {
+    let callCount = 0;
     const result = await mergeQaAnswerIntoKnowledgeDoc(
       {
         answerPayload: {
@@ -62,28 +63,21 @@ describe('knowledge doc apply + qa merge', () => {
         ],
       },
       {
-        chatFn: async () => ({
-          content: JSON.stringify({
-            source_sufficient: true,
-            has_effective_new_info: true,
-            updated_markdown: '<div><span>这是 HTML 不是 markdown</span></div>',
-            change_type: 'minor_refinement',
-            changed_sections: ['决策建议'],
-            summary: '新增执行建议',
-            candidates: [
-              {
-                category: 'minor_refinement',
-                text: '新增执行建议',
-                target_section: '决策建议',
-                action: 'insert',
-              },
-            ],
-          }),
-        }),
+        chatFn: async () => {
+          callCount += 1;
+          if (callCount === 1) {
+            return {
+              content: 'not a valid json payload',
+            };
+          }
+          return {
+            content: '# 决策建议\n- 保留原内容\n- 新增执行建议',
+          };
+        },
       }
     );
-    expect(result.updated).toBe(false);
-    expect(result.blockedReason).toBe('INVALID_MERGE_PAYLOAD');
+    expect(result.updated).toBe(true);
+    expect(result.changeType).toBe('minor_refinement');
   });
 
   it('qa 点击更新但无新增时不更新', async () => {

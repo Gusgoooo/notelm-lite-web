@@ -169,6 +169,87 @@ function summarizeCandidates(candidates: QaCandidate[]): Record<QaKnowledgeCateg
   return stats;
 }
 
+function buildFallbackMergePrompt(input: {
+  currentDocContent: string;
+  question: string;
+  answer: string;
+  citations?: QaMergeCitation[];
+  sourceSufficient: boolean;
+}): Array<{ role: 'system' | 'user'; content: string }> {
+  const systemPrompt = `你是“知识文档增量写入助手”。
+任务：把一次 QA 回答中的新增信息，以最小改动方式并入当前知识文档。
+
+规则：
+1. 输出必须是完整 Markdown，不要输出 JSON，不要额外解释。
+2. 严禁整段复制回答；仅抽取可复用知识点，做最小增量修改。
+3. 优先挂靠原有章节，非必要不重写无关内容。
+4. 若无有效新增，原样返回当前文档。
+5. ${
+    input.sourceSufficient
+      ? '有来源证据时可正常增量写入。'
+      : '当前无来源证据时也允许写入，但要更保守，只写明确且高置信新增点。'
+  }`;
+
+  const userPrompt =
+    `【当前知识文档】\n${input.currentDocContent || '(空)'}\n\n` +
+    `【用户问题】\n${input.question || '(空)'}\n\n` +
+    `【本轮回答】\n${input.answer || '(空)'}\n\n` +
+    `【来源证据】\n${buildCitationContext(input.citations)}\n\n` +
+    '请输出更新后的完整 Markdown。';
+
+  return [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt },
+  ];
+}
+
+async function runFallbackIncrementalMerge(input: {
+  runChat: typeof chat;
+  currentDocContent: string;
+  normalizedCurrent: string;
+  question: string;
+  answer: string;
+  citations?: QaMergeCitation[];
+  sourceSufficient: boolean;
+}): Promise<{
+  updated: boolean;
+  suggestedContent: string | null;
+}> {
+  const { content } = await input.runChat(
+    buildFallbackMergePrompt({
+      currentDocContent: input.currentDocContent,
+      question: input.question,
+      answer: input.answer,
+      citations: input.citations,
+      sourceSufficient: input.sourceSufficient,
+    })
+  );
+  const normalizedSuggested = normalizeKnowledgeDocMarkdown(content ?? '');
+  if (!normalizedSuggested) {
+    return {
+      updated: false,
+      suggestedContent: null,
+    };
+  }
+  const suggestedHtml = markdownToKnowledgeDocHtml(normalizedSuggested);
+  if (!stripHtml(suggestedHtml)) {
+    return {
+      updated: false,
+      suggestedContent: null,
+    };
+  }
+  if (normalizedSuggested === input.normalizedCurrent) {
+    return {
+      updated: false,
+      suggestedContent: null,
+    };
+  }
+  return {
+    updated: true,
+    suggestedContent: normalizedSuggested,
+  };
+}
+
 export async function mergeQaAnswerIntoKnowledgeDoc(
   input: MergeQaAnswerInput,
   deps: MergeQaAnswerDeps = {}
@@ -231,6 +312,25 @@ JSON 结构：
   const parsed = parseJsonObject(content ?? '');
   const normalized = normalizeModelOutput(parsed);
   if (!normalized) {
+    const fallback = await runFallbackIncrementalMerge({
+      runChat,
+      currentDocContent: currentDoc,
+      normalizedCurrent,
+      question: input.answerPayload.question,
+      answer: input.answerPayload.answer,
+      citations: input.citations,
+      sourceSufficient: sourceOk,
+    });
+    if (fallback.updated && fallback.suggestedContent) {
+      return {
+        updated: true,
+        suggestedContent: fallback.suggestedContent,
+        changeType: 'minor_refinement',
+        changedSections: ['增量补充'],
+        summary: '已将本轮回答中的新增信息增量写入知识文档。',
+        candidateStats: { ...DEFAULT_CANDIDATE_STATS, minor_refinement: 1 },
+      };
+    }
     return {
       updated: false,
       suggestedContent: null,
@@ -269,6 +369,28 @@ JSON 结构：
   }
   const suggestedHtml = markdownToKnowledgeDocHtml(normalizedSuggested);
   if (!stripHtml(suggestedHtml)) {
+    const fallback = await runFallbackIncrementalMerge({
+      runChat,
+      currentDocContent: currentDoc,
+      normalizedCurrent,
+      question: input.answerPayload.question,
+      answer: input.answerPayload.answer,
+      citations: input.citations,
+      sourceSufficient: sourceOk,
+    });
+    if (fallback.updated && fallback.suggestedContent) {
+      return {
+        updated: true,
+        suggestedContent: fallback.suggestedContent,
+        changeType: normalized.change_type === 'none' ? 'minor_refinement' : normalized.change_type,
+        changedSections: normalized.changed_sections.length > 0 ? normalized.changed_sections : ['增量补充'],
+        summary: '已将本轮回答中的新增信息增量写入知识文档。',
+        candidateStats:
+          Object.values(candidateStats).some((value) => value > 0)
+            ? candidateStats
+            : { ...DEFAULT_CANDIDATE_STATS, minor_refinement: 1 },
+      };
+    }
     return {
       updated: false,
       suggestedContent: null,
