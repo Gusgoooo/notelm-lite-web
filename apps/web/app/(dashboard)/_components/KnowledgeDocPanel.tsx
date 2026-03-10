@@ -44,6 +44,7 @@ type ArtifactNoticeState = 'running' | 'success' | 'error';
 type SaveDocOptions = {
   historyMode?: HistoryMode;
   summary?: string;
+  saveOrigin?: 'manual' | 'system';
 };
 
 type DraftDialogState =
@@ -479,6 +480,7 @@ export function KnowledgeDocPanel({
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [activeSaveOrigin, setActiveSaveOrigin] = useState<'manual' | 'system' | null>(null);
   const [pendingDiff, setPendingDiff] = useState<{ previous: string; suggested: string } | null>(null);
   const [updatingFromChat, setUpdatingFromChat] = useState(false);
   const [sheetMode, setSheetMode] = useState<SheetMode>(null);
@@ -615,6 +617,7 @@ export function KnowledgeDocPanel({
       const previous = initialContentRef.current ?? '';
       const nextHistory = appendHistoryEntry(docHistoryRef.current, previous, html, options);
       const nextMarkdown = normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(html));
+      setActiveSaveOrigin(options.saveOrigin === 'manual' ? 'manual' : 'system');
       setSaving(true);
       try {
         const res = await fetch(`/api/notebooks/${encodeURIComponent(notebookId)}/knowledge-doc`, {
@@ -643,6 +646,7 @@ export function KnowledgeDocPanel({
         return { id: nextId ?? null, content: next };
       } finally {
         setSaving(false);
+        setActiveSaveOrigin(null);
       }
     },
     [docId, emitDocStatus, notebookId, saving]
@@ -683,7 +687,7 @@ export function KnowledgeDocPanel({
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
         saveTimeoutRef.current = null;
-        void saveDoc(html, { historyMode: 'merge-edit' });
+        void saveDoc(html, { historyMode: 'merge-edit', saveOrigin: 'manual' });
       }, 800);
     },
     editorProps: {
@@ -716,6 +720,7 @@ export function KnowledgeDocPanel({
   const currentMarkdown = normalizeKnowledgeDocMarkdown(htmlToMarkdownLike(currentHtml));
   const docHasContent = hasMeaningfulHtml(currentHtml);
   const panelBusy = updatingFromChat || externalBusy;
+  const manualSavingBusy = saving && activeSaveOrigin === 'manual';
 
   const openStructureSwitch = useCallback(() => {
     const scenario = activeScenario ?? draftScenarios[0];
@@ -1295,7 +1300,6 @@ export function KnowledgeDocPanel({
               <EditorContent editor={editor} />
             </div>
           </div>
-          {saving ? <p className="px-3 pb-2 pt-2 text-[10px] text-gray-400 dark:text-gray-500">保存中…</p> : null}
         </div>
       ) : (
         <div className="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
@@ -1397,6 +1401,18 @@ export function KnowledgeDocPanel({
             <div className="relative z-10 space-y-2">
               <div className="mx-auto h-9 w-9 rounded-full border-2 border-gray-200 border-t-gray-700 animate-spin dark:border-gray-700 dark:border-t-gray-100" />
               <p className="text-sm font-medium text-gray-800 dark:text-gray-100">{externalBusyLabel}</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {manualSavingBusy ? (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-white/82 px-4 dark:bg-gray-950/82">
+          <div className="relative overflow-hidden rounded-[22px] border border-gray-200 bg-white px-6 py-5 text-center shadow-lg dark:border-gray-800 dark:bg-gray-900">
+            <div className="knowledge-doc-busy absolute inset-0" />
+            <div className="relative z-10 space-y-2">
+              <div className="mx-auto h-9 w-9 animate-spin rounded-full border-2 border-gray-200 border-t-gray-700 dark:border-gray-700 dark:border-t-gray-100" />
+              <p className="text-sm font-medium text-gray-800 dark:text-gray-100">保存中...</p>
             </div>
           </div>
         </div>
